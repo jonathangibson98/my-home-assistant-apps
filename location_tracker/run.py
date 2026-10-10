@@ -147,13 +147,27 @@ async def setup_mqtt(s):
             mq_warned = True
         return
     try:
-        async with s.get("http://supervisor/services/mqtt", headers=H,
-                         timeout=aiohttp.ClientTimeout(total=5)) as r:
-            if r.status != 200:
-                raise RuntimeError(f"Supervisor returned {r.status}")
-            creds = (await r.json()).get("data") or {}
+        manual_host = (opts.get("mqtt_host") or "").strip()
+        if manual_host:
+            # External broker (another Pi, another subnet, etc.)
+            creds = {
+                "host": manual_host,
+                "port": opts.get("mqtt_port") or 1883,
+                "username": (opts.get("mqtt_username") or "").strip() or None,
+                "password": opts.get("mqtt_password") or None,
+                "ssl": False,
+            }
+            logging.info(f"Using external MQTT broker at {manual_host}")
+        else:
+            # Mosquitto add-on on this same HA machine
+            async with s.get("http://supervisor/services/mqtt", headers=H,
+                             timeout=aiohttp.ClientTimeout(total=5)) as r:
+                if r.status != 200:
+                    raise RuntimeError(f"Supervisor returned {r.status}")
+                creds = (await r.json()).get("data") or {}
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-        client.username_pw_set(creds.get("username"), creds.get("password"))
+        if creds.get("username"):
+            client.username_pw_set(creds.get("username"), creds.get("password"))
         if creds.get("ssl"):
             client.tls_set()
         client.will_set(AVAIL_T, "offline", qos=1, retain=True)
