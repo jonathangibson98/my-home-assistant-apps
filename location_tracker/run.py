@@ -3,6 +3,7 @@ from aiohttp import web
 from math import radians, sin, cos, sqrt, atan2
 
 CONFIG_PATH = "/data/options.json"
+DEVICES_PATH = "/data/devices.json"
 
 def load_options():
     try:
@@ -12,13 +13,22 @@ def load_options():
         return {
             "sensor_name": "sensor.location_tracker",
             "log_level": "INFO",
-            "log_location_updates": True,
-            "entities": []
+            "log_location_updates": True
         }
 
-def save_options(data):
-    with open(CONFIG_PATH, "w") as f:
-        json.dump(data, f, indent=2)
+def load_devices():
+    if os.path.exists(DEVICES_PATH):
+        try:
+            with open(DEVICES_PATH, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    # Default initial device if file doesn't exist yet
+    return [{"label": "Jon", "entity_id": "device_tracker.jon_phone", "home_state": "home"}]
+
+def save_devices(entities):
+    with open(DEVICES_PATH, "w") as f:
+        json.dump(entities, f, indent=2)
 
 opts = load_options()
 
@@ -37,7 +47,6 @@ H = {"Authorization": f"Bearer {TOKEN}"}
 API = "http://supervisor/core/api"
 WS = "ws://supervisor/core/websocket"
 
-# Dynamic Sensor Entity ID from configuration
 SENSOR = opts.get("sensor_name", "sensor.location_tracker").strip()
 if not SENSOR.startswith("sensor."):
     SENSOR = f"sensor.{SENSOR}"
@@ -45,9 +54,10 @@ if not SENSOR.startswith("sensor."):
 cache = {}
 
 def refresh_entities_map():
+    entities = load_devices()
     return {
         e["label"]: (e["entity_id"], (e.get("home_state") or "").strip())
-        for e in opts.get("entities", [])
+        for e in entities
     }
 
 ENT = refresh_entities_map()
@@ -108,6 +118,8 @@ async def resolve(s, eid, home_state):
     return st, False
 
 async def update(s):
+    global ENT
+    ENT = refresh_entities_map()
     attrs, count = {"friendly_name": "Location Tracker"}, 0
     for label, (eid, home_state) in ENT.items():
         val, home = await resolve(s, eid, home_state)
@@ -219,12 +231,16 @@ HTML_PAGE = """<!DOCTYPE html>
                     });
                 }
             });
-            await fetch('api/devices', {
+            let res = await fetch('api/devices', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ entities })
             });
-            alert('Saved successfully!');
+            if (res.ok) {
+                alert('Saved successfully!');
+            } else {
+                alert('Failed to save.');
+            }
         }
 
         loadData();
@@ -237,13 +253,13 @@ async def handle_index(request):
     return web.Response(text=HTML_PAGE, content_type='text/html')
 
 async def handle_get_devices(request):
-    return web.json_response(opts.get("entities", []))
+    return web.json_response(load_devices())
 
 async def handle_post_devices(request):
-    global opts, ENT
+    global ENT
     data = await request.json()
-    opts["entities"] = data.get("entities", [])
-    save_options(opts)
+    entities = data.get("entities", [])
+    save_devices(entities)
     ENT = refresh_entities_map()
     logging.info("Updated device list via Web UI")
     return web.json_response({"status": "ok"})
