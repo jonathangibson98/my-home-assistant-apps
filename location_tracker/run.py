@@ -10,6 +10,7 @@ except ImportError:
 CONFIG_PATH = "/data/options.json"
 DEVICES_PATH = "/data/devices.json"
 SETTINGS_PATH = "/data/settings.json"
+PLACES_PATH = "/data/places.json"
 
 def load_options():
     try:
@@ -36,7 +37,21 @@ def save_devices(entities):
     with open(DEVICES_PATH, "w") as f:
         json.dump(entities, f, indent=2)
 
+def load_places():
+    if os.path.exists(PLACES_PATH):
+        try:
+            with open(PLACES_PATH, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []
+
+def save_places(places):
+    with open(PLACES_PATH, "w") as f:
+        json.dump(places, f, indent=2)
+
 opts = load_options()
+PLACES = load_places()
 
 # Logging Configuration
 LOG_LEVEL_MAP = {
@@ -216,6 +231,18 @@ def dist(a, b, c, d):
     x = sin(p/2)**2 + cos(radians(a))*cos(radians(c))*sin(q/2)**2
     return 6371000 * 2 * atan2(sqrt(x), sqrt(1 - x))
 
+def match_place(lat, lon):
+    """Return the name of the closest custom place whose radius contains this point, else None."""
+    best, best_d = None, None
+    for p in PLACES:
+        try:
+            d = dist(lat, lon, float(p["latitude"]), float(p["longitude"]))
+            if d <= float(p.get("radius") or 100) and (best_d is None or d < best_d):
+                best, best_d = p["name"], d
+        except (KeyError, ValueError, TypeError):
+            continue
+    return best
+
 async def state(s, eid):
     async with s.get(f"{API}/states/{eid}", headers=H) as r:
         return await r.json() if r.status == 200 else None
@@ -258,6 +285,9 @@ async def resolve(s, eid, home_state):
                 if dist(lat, lon, za["latitude"], za["longitude"]) <= za.get("radius", 100):
                     return "Home", True
         if st.lower() in ("home", "not_home"):
+            place = match_place(lat, lon)
+            if place:
+                return place, False
             return await city_state(s, lat, lon), False
         return st, False
 
@@ -268,8 +298,9 @@ async def resolve(s, eid, home_state):
     return st, False
 
 async def update(s):
-    global ENT
+    global ENT, PLACES
     ENT = refresh_entities_map()
+    PLACES = load_places()
     attrs, count = {}, 0
     for label, (eid, home_state) in ENT.items():
         val, home = await resolve(s, eid, home_state)
@@ -348,6 +379,27 @@ HTML_PAGE = """<!DOCTYPE html>
         </thead>
         <tbody id="rows"></tbody>
     </table>
+    <h2>Places</h2>
+    <p style="color:#94a3b8; font-size:13px;">
+        Custom zones. If a tracked entity with GPS is inside one, the sensor shows that place's name
+        instead of City, State. Radius is in meters. Tip: paste "lat, lon" from Google Maps into the Latitude box.
+    </p>
+    <table>
+        <thead>
+            <tr>
+                <th>Place Name</th>
+                <th>Latitude</th>
+                <th>Longitude</th>
+                <th>Radius (m)</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody id="places-rows"></tbody>
+    </table>
+    <button onclick="addPlaceRow()">+ Add Place</button>
+    <button onclick="addHereRow()">Add Place at My Location</button>
+    <br><br>
+
     <button onclick="addRow()">+ Add Device</button>
     <button onclick="saveData()">Save Changes</button>
 
@@ -363,6 +415,32 @@ HTML_PAGE = """<!DOCTYPE html>
             let tbody = document.getElementById('rows');
             tbody.innerHTML = '';
             data.forEach(item => addRow(item.label, item.entity_id, item.home_state));
+
+            let pres = await fetch('api/places');
+            let pdata = await pres.json();
+            document.getElementById('places-rows').innerHTML = '';
+            pdata.forEach(p => addPlaceRow(p.name, p.latitude, p.longitude, p.radius));
+        }
+
+        function addPlaceRow(name = '', lat = '', lon = '', radius = 100) {
+            let tbody = document.getElementById('places-rows');
+            let tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><input type="text" value="${name}" placeholder="e.g. Noah's House"></td>
+                <td><input type="text" inputmode="decimal" value="${lat}" placeholder="34.5"></td>
+                <td><input type="text" inputmode="decimal" value="${lon}" placeholder="-82.5"></td>
+                <td><input type="text" inputmode="numeric" value="${radius}" placeholder="100"></td>
+                <td><button class="delete" onclick="this.closest('tr').remove()">Delete</button></td>
+            `;
+            tbody.appendChild(tr);
+        }
+
+        function addHereRow() {
+            if (!navigator.geolocation) { alert('Location not available here. Enter coordinates by hand.'); return; }
+            navigator.geolocation.getCurrentPosition(
+                pos => addPlaceRow('', pos.coords.latitude.toFixed(6), pos.coords.longitude.toFixed(6), 100),
+                () => alert('Could not get your location (the browser may block it here). Enter coordinates by hand.')
+            );
         }
 
         function addRow(label = '', entity = '', homeState = '') {
@@ -400,8 +478,33 @@ HTML_PAGE = """<!DOCTYPE html>
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: document.getElementById('sensor-name').value.trim() })
             });
-            if (res.ok && sres.ok) {
-                alert('Saved successfully!');
+            let places = [];
+            document.querySelectorAll('#places-rows tr').forEach(tr => {
+                let inputs = tr.querySelectorAll('input');
+                let lat = inputs[1].value.trim();
+                let lon = inputs[2].value.trim();
+                if (lat.includes(',') && !lon) {
+                    let parts = lat.split(',');
+                    lat = parts[0].trim();
+                    lon = (parts[1] || '').trim();
+                }
+                if (inputs[0].value.trim() || lat || lon) {
+                    places.push({
+                        name: inputs[0].value.trim(),
+                        latitude: lat,
+                        longitude: lon,
+                        radius: inputs[3].value.trim() || '100'
+                    });
+                }
+            });
+            let pres = await fetch('api/places', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ places })
+            });
+            let pinfo = pres.ok ? await pres.json() : { skipped: 0 };
+            if (res.ok && sres.ok && pres.ok) {
+                alert(pinfo.skipped ? ('Saved, but ' + pinfo.skipped + ' place(s) were skipped. Check the name and coordinates.') : 'Saved successfully!');
                 loadData();
             } else {
                 alert('Failed to save.');
@@ -430,6 +533,30 @@ async def handle_post_devices(request):
     await safe_update(request.app["session"])
     return web.json_response({"status": "ok"})
 
+async def handle_get_places(request):
+    return web.json_response(load_places())
+
+async def handle_post_places(request):
+    global PLACES
+    data = await request.json()
+    clean, skipped = [], 0
+    for p in data.get("places", []):
+        try:
+            name = str(p.get("name", "")).strip()
+            lat = float(p["latitude"])
+            lon = float(p["longitude"])
+            radius = float(p.get("radius") or 100)
+            if not name or not (-90 <= lat <= 90) or not (-180 <= lon <= 180) or radius <= 0:
+                raise ValueError("bad place")
+            clean.append({"name": name, "latitude": lat, "longitude": lon, "radius": radius})
+        except (KeyError, ValueError, TypeError):
+            skipped += 1
+    save_places(clean)
+    PLACES = load_places()
+    logging.info(f"Updated places via Web UI: {[p['name'] for p in clean]}")
+    await safe_update(request.app["session"])
+    return web.json_response({"status": "ok", "saved": len(clean), "skipped": skipped})
+
 async def handle_get_settings(request):
     return web.json_response({
         "name": SETTINGS["name"],
@@ -456,6 +583,8 @@ async def start_web_server(s):
     app.router.add_get('/', handle_index)
     app.router.add_get('/api/devices', handle_get_devices)
     app.router.add_post('/api/devices', handle_post_devices)
+    app.router.add_get('/api/places', handle_get_places)
+    app.router.add_post('/api/places', handle_post_places)
     app.router.add_get('/api/settings', handle_get_settings)
     app.router.add_post('/api/settings', handle_post_settings)
     
