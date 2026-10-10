@@ -9,6 +9,7 @@ Shows everyone's location as a single Home Assistant sensor. Anyone who's away g
 - Checks GPS coordinates against **your** `zone.home`, so someone at another house that also reports "home" doesn't count as home at yours
 - Entities with no GPS (simple presence sensors) are trusted at their word
 - Named HA zones (like "Work") are shown as-is
+- **Custom places:** add your own spots (name, coordinates, radius) in the Web UI and anyone inside one shows that name instead of City, State
 - Updates instantly when any tracked entity changes, plus a 30-minute safety refresh
 - Creates a real sensor with a **unique ID** (via MQTT discovery), so you can rename it, change its icon, and assign it an area from the HA UI
 
@@ -40,7 +41,15 @@ No MQTT? The add-on still works. It falls back to a plain sensor with no unique 
    - **Label:** a name like `Jon` (saved lowercase, spaces become underscores)
    - **Entity ID:** for example `device_tracker.jon_phone` or `sensor.mj_presence`
    - **Home State Override:** only if the entity reports something other than `home` when someone's there (like `on` or `present`). Not case sensitive.
-5. Click **Save Changes**.
+5. (Optional) Under **Places**, click **+ Add Place** for spots you want named. Enter a name, coordinates, and a radius in meters (100 is a good start). Copy coordinates from your maps app and paste the whole `34.5123, -82.4567` into Latitude, leaving Longitude blank. Standing at the spot? Tap **Add Place at My Location**.
+6. Click **Save Changes**.
+
+## Places
+
+- A place only applies to entities that report GPS coordinates.
+- If a tracker is already inside a named HA zone, that zone name wins. Places replace the City, State lookup.
+- If places overlap, the one whose center is closest wins.
+- Your home is still handled by `zone.home`, not by places.
 
 ## Tips
 
