@@ -1,9 +1,15 @@
-import asyncio, json, os, logging, aiohttp
+import asyncio, json, os, logging, aiohttp, re, uuid, time
 from aiohttp import web
 from math import radians, sin, cos, sqrt, atan2
 
+try:
+    import paho.mqtt.client as mqtt
+except ImportError:
+    mqtt = None
+
 CONFIG_PATH = "/data/options.json"
 DEVICES_PATH = "/data/devices.json"
+SETTINGS_PATH = "/data/settings.json"
 
 def load_options():
     try:
@@ -47,11 +53,135 @@ H = {"Authorization": f"Bearer {TOKEN}"}
 API = "http://supervisor/core/api"
 WS = "ws://supervisor/core/websocket"
 
-SENSOR = opts.get("sensor_name", "sensor.location_tracker").strip()
-if not SENSOR.startswith("sensor."):
-    SENSOR = f"sensor.{SENSOR}"
+# ---------------- Sensor settings (name + permanent unique ID) ----------------
+def slugify(text):
+    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_") or "location_tracker"
+
+def load_settings():
+    data = {}
+    if os.path.exists(SETTINGS_PATH):
+        try:
+            with open(SETTINGS_PATH, "r") as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+    changed = False
+    if not data.get("uid"):
+        # Generated once and never changes, so renaming never creates a duplicate sensor
+        data["uid"] = "location_tracker_" + uuid.uuid4().hex[:8]
+        changed = True
+    if not data.get("name"):
+        default = opts.get("sensor_name", "sensor.location_tracker").strip()
+        default = default.split(".", 1)[-1]
+        data["name"] = default.replace("_", " ").title()
+        changed = True
+    if changed:
+        save_settings(data)
+    return data
+
+def save_settings(data):
+    with open(SETTINGS_PATH, "w") as f:
+        json.dump(data, f, indent=2)
+
+SETTINGS = load_settings()
+
+def entity_id():
+    return f"sensor.{slugify(SETTINGS['name'])}"
 
 cache = {}
+
+# ---------------- MQTT discovery (gives the sensor a real unique ID) ----------------
+UID = SETTINGS["uid"]
+BASE_TOPIC = f"locationtracker/{UID}"
+STATE_T = f"{BASE_TOPIC}/state"
+ATTR_T = f"{BASE_TOPIC}/attributes"
+AVAIL_T = f"{BASE_TOPIC}/availability"
+CONFIG_T = f"homeassistant/sensor/{UID}/config"
+
+mq = None
+mq_ready = False
+mq_warned = False
+mq_last_try = 0
+last = {"count": 0, "attrs": {}}
+
+def discovery_payload():
+    return {
+        "name": SETTINGS["name"],
+        "unique_id": UID,
+        "default_entity_id": entity_id(),
+        "state_topic": STATE_T,
+        "json_attributes_topic": ATTR_T,
+        "availability_topic": AVAIL_T,
+        "icon": "mdi:map-marker-multiple",
+    }
+
+def mq_publish_discovery():
+    mq.publish(CONFIG_T, json.dumps(discovery_payload()), qos=1, retain=True)
+    mq.publish(AVAIL_T, "online", qos=1, retain=True)
+
+def mq_publish_state():
+    mq.publish(STATE_T, str(last["count"]), qos=1, retain=True)
+    mq.publish(ATTR_T, json.dumps(last["attrs"]), qos=1, retain=True)
+
+def on_mq_connect(client, userdata, flags, reason_code, properties=None):
+    global mq_ready
+    mq_ready = True
+    logging.info("Connected to MQTT broker, publishing discovery")
+    mq_publish_discovery()
+    mq_publish_state()
+
+def on_mq_disconnect(client, userdata, *args, **kwargs):
+    global mq_ready
+    mq_ready = False
+    logging.warning("Disconnected from MQTT broker")
+
+async def setup_mqtt(s):
+    global mq, mq_warned, mq_last_try
+    if time.time() - mq_last_try < 60:
+        return
+    mq_last_try = time.time()
+
+    if mqtt is None:
+        if not mq_warned:
+            logging.warning("paho-mqtt not installed, falling back to REST sensor (no unique ID)")
+            mq_warned = True
+        return
+    try:
+        async with s.get("http://supervisor/services/mqtt", headers=H,
+                         timeout=aiohttp.ClientTimeout(total=5)) as r:
+            if r.status != 200:
+                raise RuntimeError(f"Supervisor returned {r.status}")
+            creds = (await r.json()).get("data") or {}
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        client.username_pw_set(creds.get("username"), creds.get("password"))
+        if creds.get("ssl"):
+            client.tls_set()
+        client.will_set(AVAIL_T, "offline", qos=1, retain=True)
+        client.on_connect = on_mq_connect
+        client.on_disconnect = on_mq_disconnect
+        client.connect_async(creds["host"], int(creds.get("port", 1883)), 60)
+        client.loop_start()
+        mq = client
+        logging.info("MQTT client started")
+    except Exception as e:
+        if not mq_warned:
+            logging.warning(f"MQTT not available ({e}), falling back to REST sensor (no unique ID)")
+            mq_warned = True
+
+async def publish(s, count, attrs):
+    global last
+    last = {"count": count, "attrs": attrs}
+    if mq is None:
+        await setup_mqtt(s)
+    if mq is not None:
+        if mq_ready:
+            mq_publish_state()
+        return  # on_connect publishes everything once the broker is up
+    # REST fallback: works, but HA can't give this sensor a unique ID
+    rest_attrs = dict(attrs)
+    rest_attrs["friendly_name"] = SETTINGS["name"]
+    await s.post(f"{API}/states/{entity_id()}", headers=H,
+                 json={"state": count, "attributes": rest_attrs})
 
 def refresh_entities_map():
     # Labels, entity IDs, and home-state overrides are all forced to lowercase.
@@ -126,18 +256,18 @@ async def resolve(s, eid, home_state):
 async def update(s):
     global ENT
     ENT = refresh_entities_map()
-    attrs, count = {"friendly_name": "Location Tracker"}, 0
+    attrs, count = {}, 0
     for label, (eid, home_state) in ENT.items():
         val, home = await resolve(s, eid, home_state)
         attrs[label] = val
         count += home
 
     if opts.get("log_location_updates", True):
-        logging.info(f"Updated {SENSOR} states: {attrs} (Home Count: {count})")
+        logging.info(f"Updated {entity_id()} states: {attrs} (Home Count: {count})")
     else:
-        logging.debug(f"Updated {SENSOR} state silently: {attrs}")
+        logging.debug(f"Updated {entity_id()} state silently: {attrs}")
 
-    await s.post(f"{API}/states/{SENSOR}", headers=H, json={"state": count, "attributes": attrs})
+    await publish(s, count, attrs)
 
 async def safe_update(s):
     try:
@@ -188,6 +318,10 @@ HTML_PAGE = """<!DOCTYPE html>
     </style>
 </head>
 <body>
+    <h2>Sensor</h2>
+    <p>Sensor name: <input type="text" id="sensor-name" placeholder="e.g. Everybody's Locations" style="width:60%"></p>
+    <p id="info" style="color:#94a3b8; font-size:13px;"></p>
+
     <h2>Location Tracker Devices</h2>
     <table id="device-table">
         <thead>
@@ -205,6 +339,11 @@ HTML_PAGE = """<!DOCTYPE html>
 
     <script>
         async function loadData() {
+            let sres = await fetch('api/settings');
+            let sdata = await sres.json();
+            document.getElementById('sensor-name').value = sdata.name;
+            document.getElementById('info').innerText =
+                'Entity ID: ' + sdata.entity_id + '  |  Unique ID: ' + sdata.unique_id + '  |  Mode: ' + sdata.mode;
             let res = await fetch('api/devices');
             let data = await res.json();
             let tbody = document.getElementById('rows');
@@ -242,8 +381,14 @@ HTML_PAGE = """<!DOCTYPE html>
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ entities })
             });
-            if (res.ok) {
+            let sres = await fetch('api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: document.getElementById('sensor-name').value.trim() })
+            });
+            if (res.ok && sres.ok) {
                 alert('Saved successfully!');
+                loadData();
             } else {
                 alert('Failed to save.');
             }
@@ -268,13 +413,37 @@ async def handle_post_devices(request):
     save_devices(entities)
     ENT = refresh_entities_map()
     logging.info("Updated device list via Web UI")
+    await safe_update(request.app["session"])
+    return web.json_response({"status": "ok"})
+
+async def handle_get_settings(request):
+    return web.json_response({
+        "name": SETTINGS["name"],
+        "entity_id": entity_id(),
+        "unique_id": UID,
+        "mode": "MQTT (has unique ID)" if mq is not None else "REST (no unique ID)",
+    })
+
+async def handle_post_settings(request):
+    data = await request.json()
+    name = (data.get("name") or "").strip()
+    if name and name != SETTINGS["name"]:
+        SETTINGS["name"] = name
+        save_settings(SETTINGS)
+        logging.info(f"Sensor renamed to: {name}")
+        if mq is not None and mq_ready:
+            mq_publish_discovery()  # same unique ID, so HA just updates the name
+    await safe_update(request.app["session"])
     return web.json_response({"status": "ok"})
 
 async def start_web_server(s):
     app = web.Application()
+    app["session"] = s
     app.router.add_get('/', handle_index)
     app.router.add_get('/api/devices', handle_get_devices)
     app.router.add_post('/api/devices', handle_post_devices)
+    app.router.add_get('/api/settings', handle_get_settings)
+    app.router.add_post('/api/settings', handle_post_settings)
     
     runner = web.AppRunner(app)
     await runner.setup()
