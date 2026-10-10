@@ -1,5 +1,4 @@
-ARG BUILD_FROM
-FROM $BUILD_FROM
+FROM alpine:3.22
 RUN apk add --no-cache python3 py3-aiohttp py3-yaml
 COPY run.py index.html /
 CMD ["python3", "/run.py"]
