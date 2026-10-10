@@ -1,153 +1,307 @@
-<!DOCTYPE html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Household Info</title>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Personalized Info</title>
 <style>
-:root{--bg:#111827;--card:#1f2937;--line:#374151;--txt:#f3f4f6;--dim:#9ca3af;--acc:#3b82f6}
+:root{
+  --bg:#0f172a; --card:#1e293b; --field:#0b1222; --line:#334155;
+  --txt:#f1f5f9; --dim:#94a3b8; --acc:#3b82f6; --accsoft:#1d3a6e;
+  --red:#991b1b; --warn:#fbbf24; --ok:#4ade80;
+}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--txt);font:16px system-ui,sans-serif;padding-bottom:80px}
-nav{display:flex;gap:6px;padding:10px;position:sticky;top:0;background:var(--bg);z-index:5}
-nav button{flex:1}
-button{background:var(--line);color:var(--txt);border:0;border-radius:8px;padding:10px 12px;font-size:15px}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--txt);
+  font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  padding-bottom:calc(84px + env(safe-area-inset-bottom,0px))}
+nav{display:flex;gap:6px;padding:10px;position:sticky;top:0;background:var(--bg);z-index:5;
+  border-bottom:1px solid var(--line)}
+nav button{flex:1;padding:10px 4px}
+button{background:var(--line);color:var(--txt);border:0;border-radius:8px;padding:10px 14px;
+  font:inherit;font-size:15px;cursor:pointer}
+button:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-visible{
+  outline:2px solid var(--acc);outline-offset:2px}
 button.on,button.pri{background:var(--acc)}
-button.del{background:#7f1d1d;padding:4px 10px}
-main{padding:0 10px;max-width:800px;margin:auto}
-h2{margin:18px 0 8px;font-size:14px;color:var(--dim);text-transform:uppercase}
-details{background:var(--card);border-radius:10px;margin-bottom:8px;padding:10px}
+button.del{background:var(--red);padding:4px 10px;font-size:14px}
+button.ghost{background:transparent;border:1px dashed var(--line);color:var(--dim)}
+main{padding:4px 10px 0;max-width:820px;margin:auto}
+h2{margin:22px 0 8px;font-size:17px;font-weight:600;color:var(--dim)}
+p.note{color:var(--dim);font-size:14px;margin:12px 0}
+details{background:var(--card);border-radius:10px;margin-bottom:8px;padding:12px}
 summary{font-weight:600;cursor:pointer}
-label{font-size:13px;color:var(--dim);margin:10px 0 3px;display:block}
-input[type=text],textarea{width:100%;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit}
-textarea{min-height:90px}
+label{font-size:13px;color:var(--dim);margin:12px 0 4px;display:block}
+input[type=text],input[type=number],textarea{
+  width:100%;background:var(--field);color:var(--txt);border:1px solid var(--line);
+  border-radius:8px;padding:9px;font:inherit}
+textarea{min-height:96px;resize:vertical}
+input[type=checkbox]{width:22px;height:22px}
 .grp{border-left:2px solid var(--line);margin-left:6px;padding-left:10px}
-.hd{display:flex;justify-content:space-between;align-items:flex-end}
-.add{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
-.add button{font-size:13px;padding:6px 10px}
-#bar{position:fixed;bottom:0;left:0;right:0;background:var(--card);padding:10px;display:flex;justify-content:space-between;align-items:center}
-</style></head><body>
+.hd{display:flex;justify-content:space-between;align-items:flex-end;gap:8px}
+.add{display:flex;gap:6px;margin-top:12px;flex-wrap:wrap}
+.add button{font-size:13px;padding:7px 11px}
+.row{margin-top:10px}
+.meta{font-size:12px;color:var(--dim);margin-top:6px;word-break:break-all}
+#bar{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);
+  padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));
+  display:flex;justify-content:space-between;align-items:center;gap:10px}
+#st{font-size:14px;color:var(--dim)}
+#st.warn{color:var(--warn)} #st.ok{color:var(--ok)} #st.bad{color:#f87171}
+</style>
+</head>
+<body>
+
 <nav>
-<button data-t="people" onclick="tab='people';draw()">People</button>
-<button data-t="music" onclick="tab='music';draw()">Music</button>
-<button data-t="other" onclick="tab='other';draw()">Other</button>
+  <button data-t="people" onclick="go('people')">People</button>
+  <button data-t="music" onclick="go('music')">Music</button>
+  <button data-t="sensors" onclick="go('sensors')">Sensors</button>
+  <button data-t="other" onclick="go('other')">Other</button>
 </nav>
-<main></main>
-<div id="bar"><span id="st">Loaded</span><button class="pri" onclick="save()">Save</button></div>
+
+<main id="main"></main>
+
+<div id="bar">
+  <span id="st">Loading...</span>
+  <button class="pri" onclick="saveData()">Save changes</button>
+</div>
+
 <script>
-let D, tab = 'people';
+let D = null, S = null, tab = 'people', dirty = false;
 const open = new Set();
 const $ = s => document.querySelector(s);
 const slug = t => t.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-const touch = () => $('#st').textContent = 'Unsaved changes';
-function h(t, a = {}, ...k) {
-  const e = document.createElement(t);
-  Object.assign(e, a);
-  k.flat().forEach(c => e.append(c));
+
+function status(text, cls) {
+  const el = $('#st');
+  el.textContent = text;
+  el.className = cls || '';
+}
+function touch() { dirty = true; status('Unsaved changes', 'warn'); }
+
+function h(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  Object.assign(e, attrs);
+  kids.flat().forEach(k => { if (k) e.append(k); });
   return e;
 }
 const lines = t => t.value.split('\n').map(s => s.trim()).filter(Boolean);
+const pretty = k => k.replace(/_/g, ' ');
 
+/* ---------- generic editor for nested data ---------- */
 function adder(obj) {
-  const b = (label, val) => h('button', {textContent: label, onclick: () => {
-    const n = prompt('Field name?');
-    if (!n) return;
-    obj[slug(n)] = val();
-    touch(); draw();
-  }});
-  return h('div', {className: 'add'}, b('+ field', () => ''), b('+ list', () => []), b('+ group', () => ({})));
+  const mk = (label, make) => h('button', {
+    textContent: label,
+    onclick: () => {
+      const n = prompt('Name for the new ' + label.replace('+ ', '') + '?');
+      if (!n) return;
+      const key = slug(n);
+      if (!key) return;
+      obj[key] = make();
+      touch(); draw();
+    }
+  });
+  return h('div', {className: 'add'},
+    mk('+ field', () => ''), mk('+ list', () => []), mk('+ group', () => ({})));
 }
 
 function fields(obj) {
-  const w = h('div');
+  const wrap = h('div');
   for (const k of Object.keys(obj)) {
     const v = obj[k];
-    w.append(h('div', {className: 'hd'},
-      h('label', {textContent: k.replace(/_/g, ' ')}),
-      h('button', {className: 'del', textContent: '✕', onclick: () => {
-        if (confirm('Delete "' + k + '"?')) { delete obj[k]; touch(); draw(); }
+    wrap.append(h('div', {className: 'hd'},
+      h('label', {textContent: pretty(k)}),
+      h('button', {className: 'del', textContent: 'Remove', onclick: () => {
+        if (confirm('Remove "' + pretty(k) + '"?')) { delete obj[k]; touch(); draw(); }
       }})));
+
     if (v && typeof v === 'object' && !Array.isArray(v)) {
-      w.append(h('div', {className: 'grp'}, fields(v), adder(v)));
+      wrap.append(h('div', {className: 'grp'}, fields(v), adder(v)));
     } else if (Array.isArray(v)) {
       const simple = v.every(x => x === null || typeof x !== 'object');
-      const t = h('textarea', {value: simple ? v.join('\n') : JSON.stringify(v, null, 1),
+      const ta = h('textarea', {
+        value: simple ? v.join('\n') : JSON.stringify(v, null, 1),
         oninput: () => {
-          if (simple) obj[k] = lines(t);
-          else { try { obj[k] = JSON.parse(t.value); } catch (e) {} }
+          if (simple) obj[k] = lines(ta);
+          else { try { obj[k] = JSON.parse(ta.value); } catch (e) { return; } }
           touch();
-        }});
-      w.append(t);
+        }
+      });
+      wrap.append(ta);
+      if (simple) wrap.append(h('div', {className: 'meta', textContent: 'One item per line'}));
     } else if (typeof v === 'boolean') {
-      w.append(h('input', {type: 'checkbox', checked: v, onchange: e => { obj[k] = e.target.checked; touch(); }}));
+      wrap.append(h('input', {type: 'checkbox', checked: v,
+        onchange: e => { obj[k] = e.target.checked; touch(); }}));
+    } else if (typeof v === 'number') {
+      wrap.append(h('input', {type: 'number', value: v, step: 'any',
+        oninput: e => { obj[k] = e.target.value === '' ? 0 : Number(e.target.value); touch(); }}));
     } else {
-      w.append(h('input', {type: 'text', value: v ?? '', oninput: e => { obj[k] = e.target.value; touch(); }}));
+      wrap.append(h('input', {type: 'text', value: v ?? '',
+        oninput: e => { obj[k] = e.target.value; touch(); }}));
     }
   }
-  return w;
+  return wrap;
 }
 
 function card(id, title, body, extra) {
-  return h('details', {open: open.has(id), ontoggle: e => { e.target.open ? open.add(id) : open.delete(id); }},
-    h('summary', {textContent: title}), body, extra || '');
+  return h('details', {
+    open: open.has(id),
+    ontoggle: e => { e.target.open ? open.add(id) : open.delete(id); }
+  }, h('summary', {textContent: title}), body, extra);
 }
 
+/* ---------- People tab ---------- */
 function people() {
   const f = h('div');
   for (const g of ['household', 'friends']) {
-    f.append(h('h2', {textContent: g}));
+    f.append(h('h2', {textContent: g === 'household' ? 'Household' : 'Friends'}));
     for (const k of Object.keys(D[g])) {
       const p = D[g][k];
       if (!p || typeof p !== 'object') continue;
-      f.append(card(g + k, p.name || k, h('div', {}, fields(p), adder(p)),
-        h('div', {className: 'add'}, h('button', {className: 'del', textContent: 'Delete person', onclick: () => {
-          if (confirm('Delete ' + (p.name || k) + '?')) { delete D[g][k]; touch(); draw(); }
-        }}))));
+      f.append(card(g + k, p.name || k,
+        h('div', {}, fields(p), adder(p)),
+        h('div', {className: 'add'},
+          h('button', {className: 'del', textContent: 'Delete person', onclick: () => {
+            if (confirm('Delete ' + (p.name || k) + '?')) { delete D[g][k]; touch(); draw(); }
+          }}))));
     }
-    f.append(h('button', {textContent: '+ Add to ' + g, onclick: () => {
-      const n = prompt('Name?');
-      if (!n) return;
-      D[g][slug(n)] = {name: n};
-      touch(); draw();
-    }}));
+    f.append(h('div', {className: 'row'},
+      h('button', {className: 'ghost', textContent: '+ Add to ' + g, onclick: () => {
+        const n = prompt('Name?');
+        if (!n || !slug(n)) return;
+        D[g][slug(n)] = {name: n};
+        open.add(g + slug(n));
+        touch(); draw();
+      }})));
   }
   return f;
 }
 
+/* ---------- Music tab ---------- */
 function music() {
   const f = h('div');
   const ids = [...Object.keys(D.household), ...Object.keys(D.friends), ...Object.keys(D.music)]
-    .filter((x, i, a) => a.indexOf(x) === i);
+    .filter((x, i, a) => a.indexOf(x) === i)
+    .filter(k => D.music[k] || (D.household[k] && typeof D.household[k] === 'object')
+                              || (D.friends[k] && typeof D.friends[k] === 'object'));
   for (const k of ids) {
     const m = D.music[k] || {genres: [], artists: []};
     const p = D.household[k] || D.friends[k] || {};
     const box = (lbl, key) => {
-      const t = h('textarea', {value: (m[key] || []).join('\n'), oninput: () => {
-        m[key] = lines(t); D.music[k] = m; touch();
-      }});
-      return [h('label', {textContent: lbl}), t];
+      const ta = h('textarea', {
+        value: (m[key] || []).join('\n'),
+        oninput: () => { m[key] = lines(ta); D.music[k] = m; touch(); }
+      });
+      return [h('label', {textContent: lbl}), ta];
     };
-    f.append(card('m' + k, (p.name || k) + ' (' + (m.artists || []).length + ' artists)',
-      h('div', {}, ...box('Genres (one per line)', 'genres'), ...box('Artists (one per line)', 'artists'))));
+    const count = (m.artists || []).length;
+    f.append(card('m' + k, (p.name || k) + ' (' + count + ' artist' + (count === 1 ? '' : 's') + ')',
+      h('div', {}, ...box('Genres, one per line', 'genres'), ...box('Artists, one per line', 'artists'))));
   }
+  f.append(h('div', {className: 'row'},
+    h('button', {className: 'ghost', textContent: '+ Add music profile', onclick: () => {
+      const n = prompt('Name for this profile (a person or a group)?');
+      if (!n || !slug(n)) return;
+      D.music[slug(n)] = {genres: [], artists: []};
+      open.add('m' + slug(n));
+      touch(); draw();
+    }})));
   return f;
 }
 
+/* ---------- Sensors tab ---------- */
+function sensors() {
+  const f = h('div');
+  if (!S) {
+    f.append(h('p', {className: 'note', textContent: 'Loading sensors...'}));
+    fetch('api/settings').then(r => r.json()).then(s => { S = s; if (tab === 'sensors') draw(); })
+      .catch(() => { f.replaceChildren(h('p', {className: 'note', textContent: 'Could not load sensor settings. Check the app log.'})); });
+    return f;
+  }
+  for (const k of ['info', 'music']) {
+    const x = S[k];
+    f.append(h('h2', {textContent: k === 'info' ? 'Info sensor' : 'Music sensor'}),
+      h('label', {textContent: 'Display name'}),
+      h('input', {type: 'text', value: x.name, oninput: e => { x.name = e.target.value; }}),
+      h('div', {className: 'meta', textContent: 'Entity ID: ' + x.entity_id}),
+      h('div', {className: 'meta', textContent: 'Unique ID: ' + x.unique_id}));
+  }
+  f.append(
+    h('p', {className: 'note', textContent: 'Mode: ' + S.mode + '. Renaming changes the display name only. The entity ID stays as it was created. To change it, use Settings, Entities, then the sensor.'}),
+    h('button', {className: 'pri', textContent: 'Save names', onclick: saveNames}));
+  return f;
+}
+
+async function saveNames() {
+  try {
+    const r = await fetch('api/settings', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({info: S.info.name, music: S.music.name})
+    });
+    S = null;
+    if (r.ok) status('Names saved ' + new Date().toLocaleTimeString(), 'ok');
+    else status('Saving names failed', 'bad');
+  } catch (e) { status('Saving names failed', 'bad'); }
+  draw();
+}
+
+/* ---------- Other tab ---------- */
 function other() {
   const f = h('div');
-  for (const k of Object.keys(D.other)) {
+  const keys = Object.keys(D.other);
+  if (!keys.length) {
+    f.append(h('p', {className: 'note', textContent: 'Nothing here. Sections that are not household, friends, or music show up in this tab.'}));
+    return f;
+  }
+  for (const k of keys) {
     const o = D.other[k];
-    if (o && typeof o === 'object' && !Array.isArray(o))
-      f.append(card('o' + k, k.replace(/_/g, ' '), h('div', {}, fields(o), adder(o))));
+    if (o && typeof o === 'object' && !Array.isArray(o)) {
+      f.append(card('o' + k, pretty(k), h('div', {}, fields(o), adder(o))));
+    } else {
+      const ta = h('textarea', {
+        value: JSON.stringify(o, null, 1),
+        oninput: () => { try { D.other[k] = JSON.parse(ta.value); touch(); } catch (e) {} }
+      });
+      f.append(card('o' + k, pretty(k), h('div', {}, ta)));
+    }
   }
   return f;
 }
 
+/* ---------- shell ---------- */
+function go(t) { tab = t; draw(); window.scrollTo(0, 0); }
+
 function draw() {
-  $('main').replaceChildren(tab === 'people' ? people() : tab === 'music' ? music() : other());
-  document.querySelectorAll('nav button').forEach(b => b.className = b.dataset.t === tab ? 'on' : '');
+  if (!D) return;
+  const view = tab === 'people' ? people()
+    : tab === 'music' ? music()
+    : tab === 'sensors' ? sensors()
+    : other();
+  $('#main').replaceChildren(view);
+  document.querySelectorAll('nav button').forEach(b => {
+    b.className = b.dataset.t === tab ? 'on' : '';
+  });
 }
 
-async function save() {
-  const r = await fetch('api/data', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(D)});
-  $('#st').textContent = r.ok ? 'Saved ' + new Date().toLocaleTimeString() : 'Save FAILED';
+async function saveData() {
+  if (!D) return;
+  status('Saving...');
+  try {
+    const r = await fetch('api/data', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(D)
+    });
+    if (r.ok) { dirty = false; status('Saved ' + new Date().toLocaleTimeString(), 'ok'); }
+    else status('Save failed. Check the app log.', 'bad');
+  } catch (e) { status('Save failed. Check the app log.', 'bad'); }
 }
 
-fetch('api/data').then(r => r.json()).then(d => { D = d; draw(); });
-</script></body></html>
+window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+
+fetch('api/data').then(r => r.json()).then(d => {
+  D = d;
+  for (const k of ['household', 'friends', 'music', 'other']) D[k] = D[k] || {};
+  status('Loaded', 'ok');
+  draw();
+}).catch(() => status('Could not load data. Check the app log.', 'bad'));
+</script>
+</body>
+</html>
