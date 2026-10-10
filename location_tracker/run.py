@@ -54,9 +54,14 @@ if not SENSOR.startswith("sensor."):
 cache = {}
 
 def refresh_entities_map():
+    # Labels, entity IDs, and home-state overrides are all forced to lowercase.
+    # Spaces in labels become underscores ("MJ Phone" -> "mj_phone").
     entities = load_devices()
     return {
-        e["label"]: (e["entity_id"], (e.get("home_state") or "").strip())
+        e["label"].strip().lower().replace(" ", "_"): (
+            e["entity_id"].strip().lower(),
+            (e.get("home_state") or "").strip().lower(),
+        )
         for e in entities
     }
 
@@ -96,6 +101,7 @@ async def resolve(s, eid, home_state):
         return "unknown", False
     st, at = d["state"], d["attributes"]
 
+    # Case-insensitive on both sides: Home / HOME / home all match
     if home_state and st.strip().lower() == home_state.lower():
         return "Home", True
 
