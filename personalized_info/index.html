@@ -25,6 +25,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-vi
 button.on,button.pri{background:var(--acc)}
 button.del{background:var(--red);padding:4px 10px;font-size:14px}
 button.ghost{background:transparent;border:1px dashed var(--line);color:var(--dim)}
+#sensors-panel{max-width:820px;margin:0 auto;padding:10px 10px 0}
 main{padding:4px 10px 0;max-width:820px;margin:auto}
 h2{margin:22px 0 8px;font-size:17px;font-weight:600;color:var(--dim)}
 p.note{color:var(--dim);font-size:14px;margin:12px 0}
@@ -51,10 +52,11 @@ input[type=checkbox]{width:22px;height:22px}
 </head>
 <body>
 
+<section id="sensors-panel"></section>
+
 <nav>
   <button data-t="people" onclick="go('people')">People</button>
   <button data-t="music" onclick="go('music')">Music</button>
-  <button data-t="sensors" onclick="go('sensors')">Sensors</button>
   <button data-t="other" onclick="go('other')">Other</button>
 </nav>
 
@@ -208,27 +210,39 @@ function music() {
   return f;
 }
 
-/* ---------- Sensors tab ---------- */
-function sensors() {
-  const f = h('div');
-  if (!S) {
-    f.append(h('p', {className: 'note', textContent: 'Loading sensors...'}));
-    fetch('api/settings').then(r => r.json()).then(s => { S = s; if (tab === 'sensors') draw(); })
-      .catch(() => { f.replaceChildren(h('p', {className: 'note', textContent: 'Could not load sensor settings. Check the app log.'})); });
-    return f;
-  }
+/* ---------- Sensors section (top of page) ---------- */
+let sensorsOpen = true;
+
+function sensorsPanel() {
+  const box = $('#sensors-panel');
+  if (!S) { box.replaceChildren(h('p', {className: 'note', textContent: 'Loading sensors...'})); return; }
+  const body = h('div');
   for (const k of ['info', 'music']) {
     const x = S[k];
-    f.append(h('h2', {textContent: k === 'info' ? 'Info sensor' : 'Music sensor'}),
-      h('label', {textContent: 'Display name'}),
+    body.append(
+      h('label', {textContent: k === 'info' ? 'Info sensor name' : 'Music sensor name'}),
       h('input', {type: 'text', value: x.name, oninput: e => { x.name = e.target.value; }}),
-      h('div', {className: 'meta', textContent: 'Entity ID: ' + x.entity_id}),
-      h('div', {className: 'meta', textContent: 'Unique ID: ' + x.unique_id}));
+      h('div', {className: 'meta', textContent: 'Entity ID: ' + x.entity_id + '  |  Unique ID: ' + x.unique_id}));
   }
-  f.append(
+  body.append(
     h('p', {className: 'note', textContent: 'Mode: ' + S.mode + '. Renaming changes the display name only. The entity ID stays as it was created. To change it, use Settings, Entities, then the sensor.'}),
     h('button', {className: 'pri', textContent: 'Save names', onclick: saveNames}));
-  return f;
+  box.replaceChildren(h('details', {
+    open: sensorsOpen,
+    ontoggle: e => { sensorsOpen = e.target.open; }
+  }, h('summary', {textContent: 'Sensors'}), body));
+}
+
+async function loadSensors() {
+  try {
+    const r = await fetch('api/settings');
+    S = await r.json();
+  } catch (e) {
+    S = null;
+    $('#sensors-panel').replaceChildren(h('p', {className: 'note', textContent: 'Could not load sensor settings. Check the app log.'}));
+    return;
+  }
+  sensorsPanel();
 }
 
 async function saveNames() {
@@ -237,11 +251,10 @@ async function saveNames() {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({info: S.info.name, music: S.music.name})
     });
-    S = null;
     if (r.ok) status('Names saved ' + new Date().toLocaleTimeString(), 'ok');
     else status('Saving names failed', 'bad');
   } catch (e) { status('Saving names failed', 'bad'); }
-  draw();
+  await loadSensors();
 }
 
 /* ---------- Other tab ---------- */
@@ -274,7 +287,6 @@ function draw() {
   if (!D) return;
   const view = tab === 'people' ? people()
     : tab === 'music' ? music()
-    : tab === 'sensors' ? sensors()
     : other();
   $('#main').replaceChildren(view);
   document.querySelectorAll('nav button').forEach(b => {
@@ -301,6 +313,7 @@ fetch('api/data').then(r => r.json()).then(d => {
   for (const k of ['household', 'friends', 'music', 'other']) D[k] = D[k] || {};
   status('Loaded', 'ok');
   draw();
+  loadSensors();
 }).catch(() => status('Could not load data. Check the app log.', 'bad'));
 </script>
 </body>
