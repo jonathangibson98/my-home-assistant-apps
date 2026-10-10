@@ -1,0 +1,153 @@
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Household Info</title>
+<style>
+:root{--bg:#111827;--card:#1f2937;--line:#374151;--txt:#f3f4f6;--dim:#9ca3af;--acc:#3b82f6}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);font:16px system-ui,sans-serif;padding-bottom:80px}
+nav{display:flex;gap:6px;padding:10px;position:sticky;top:0;background:var(--bg);z-index:5}
+nav button{flex:1}
+button{background:var(--line);color:var(--txt);border:0;border-radius:8px;padding:10px 12px;font-size:15px}
+button.on,button.pri{background:var(--acc)}
+button.del{background:#7f1d1d;padding:4px 10px}
+main{padding:0 10px;max-width:800px;margin:auto}
+h2{margin:18px 0 8px;font-size:14px;color:var(--dim);text-transform:uppercase}
+details{background:var(--card);border-radius:10px;margin-bottom:8px;padding:10px}
+summary{font-weight:600;cursor:pointer}
+label{font-size:13px;color:var(--dim);margin:10px 0 3px;display:block}
+input[type=text],textarea{width:100%;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit}
+textarea{min-height:90px}
+.grp{border-left:2px solid var(--line);margin-left:6px;padding-left:10px}
+.hd{display:flex;justify-content:space-between;align-items:flex-end}
+.add{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.add button{font-size:13px;padding:6px 10px}
+#bar{position:fixed;bottom:0;left:0;right:0;background:var(--card);padding:10px;display:flex;justify-content:space-between;align-items:center}
+</style></head><body>
+<nav>
+<button data-t="people" onclick="tab='people';draw()">People</button>
+<button data-t="music" onclick="tab='music';draw()">Music</button>
+<button data-t="other" onclick="tab='other';draw()">Other</button>
+</nav>
+<main></main>
+<div id="bar"><span id="st">Loaded</span><button class="pri" onclick="save()">Save</button></div>
+<script>
+let D, tab = 'people';
+const open = new Set();
+const $ = s => document.querySelector(s);
+const slug = t => t.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+const touch = () => $('#st').textContent = 'Unsaved changes';
+function h(t, a = {}, ...k) {
+  const e = document.createElement(t);
+  Object.assign(e, a);
+  k.flat().forEach(c => e.append(c));
+  return e;
+}
+const lines = t => t.value.split('\n').map(s => s.trim()).filter(Boolean);
+
+function adder(obj) {
+  const b = (label, val) => h('button', {textContent: label, onclick: () => {
+    const n = prompt('Field name?');
+    if (!n) return;
+    obj[slug(n)] = val();
+    touch(); draw();
+  }});
+  return h('div', {className: 'add'}, b('+ field', () => ''), b('+ list', () => []), b('+ group', () => ({})));
+}
+
+function fields(obj) {
+  const w = h('div');
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    w.append(h('div', {className: 'hd'},
+      h('label', {textContent: k.replace(/_/g, ' ')}),
+      h('button', {className: 'del', textContent: '✕', onclick: () => {
+        if (confirm('Delete "' + k + '"?')) { delete obj[k]; touch(); draw(); }
+      }})));
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      w.append(h('div', {className: 'grp'}, fields(v), adder(v)));
+    } else if (Array.isArray(v)) {
+      const simple = v.every(x => x === null || typeof x !== 'object');
+      const t = h('textarea', {value: simple ? v.join('\n') : JSON.stringify(v, null, 1),
+        oninput: () => {
+          if (simple) obj[k] = lines(t);
+          else { try { obj[k] = JSON.parse(t.value); } catch (e) {} }
+          touch();
+        }});
+      w.append(t);
+    } else if (typeof v === 'boolean') {
+      w.append(h('input', {type: 'checkbox', checked: v, onchange: e => { obj[k] = e.target.checked; touch(); }}));
+    } else {
+      w.append(h('input', {type: 'text', value: v ?? '', oninput: e => { obj[k] = e.target.value; touch(); }}));
+    }
+  }
+  return w;
+}
+
+function card(id, title, body, extra) {
+  return h('details', {open: open.has(id), ontoggle: e => { e.target.open ? open.add(id) : open.delete(id); }},
+    h('summary', {textContent: title}), body, extra || '');
+}
+
+function people() {
+  const f = h('div');
+  for (const g of ['household', 'friends']) {
+    f.append(h('h2', {textContent: g}));
+    for (const k of Object.keys(D[g])) {
+      const p = D[g][k];
+      if (!p || typeof p !== 'object') continue;
+      f.append(card(g + k, p.name || k, h('div', {}, fields(p), adder(p)),
+        h('div', {className: 'add'}, h('button', {className: 'del', textContent: 'Delete person', onclick: () => {
+          if (confirm('Delete ' + (p.name || k) + '?')) { delete D[g][k]; touch(); draw(); }
+        }}))));
+    }
+    f.append(h('button', {textContent: '+ Add to ' + g, onclick: () => {
+      const n = prompt('Name?');
+      if (!n) return;
+      D[g][slug(n)] = {name: n};
+      touch(); draw();
+    }}));
+  }
+  return f;
+}
+
+function music() {
+  const f = h('div');
+  const ids = [...Object.keys(D.household), ...Object.keys(D.friends), ...Object.keys(D.music)]
+    .filter((x, i, a) => a.indexOf(x) === i);
+  for (const k of ids) {
+    const m = D.music[k] || {genres: [], artists: []};
+    const p = D.household[k] || D.friends[k] || {};
+    const box = (lbl, key) => {
+      const t = h('textarea', {value: (m[key] || []).join('\n'), oninput: () => {
+        m[key] = lines(t); D.music[k] = m; touch();
+      }});
+      return [h('label', {textContent: lbl}), t];
+    };
+    f.append(card('m' + k, (p.name || k) + ' (' + (m.artists || []).length + ' artists)',
+      h('div', {}, ...box('Genres (one per line)', 'genres'), ...box('Artists (one per line)', 'artists'))));
+  }
+  return f;
+}
+
+function other() {
+  const f = h('div');
+  for (const k of Object.keys(D.other)) {
+    const o = D.other[k];
+    if (o && typeof o === 'object' && !Array.isArray(o))
+      f.append(card('o' + k, k.replace(/_/g, ' '), h('div', {}, fields(o), adder(o))));
+  }
+  return f;
+}
+
+function draw() {
+  $('main').replaceChildren(tab === 'people' ? people() : tab === 'music' ? music() : other());
+  document.querySelectorAll('nav button').forEach(b => b.className = b.dataset.t === tab ? 'on' : '');
+}
+
+async function save() {
+  const r = await fetch('api/data', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(D)});
+  $('#st').textContent = r.ok ? 'Saved ' + new Date().toLocaleTimeString() : 'Save FAILED';
+}
+
+fetch('api/data').then(r => r.json()).then(d => { D = d; draw(); });
+</script></body></html>
