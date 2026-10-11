@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.3
+- Updated how the music section works.
+
 ## 0.1.2
 - Added icon, logo, README, and docs.
 
