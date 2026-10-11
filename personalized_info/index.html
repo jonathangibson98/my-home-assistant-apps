@@ -70,6 +70,8 @@ input[type=checkbox]{width:22px;height:22px}
 <script>
 let D = null, S = null, tab = 'people', dirty = false;
 const open = new Set();
+// Keys that belong to the Music tab. They are hidden in People and can't be added there.
+const MUSIC_KEYS = ['music', 'top_artists'];
 const $ = s => document.querySelector(s);
 const slug = t => t.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 
@@ -90,7 +92,7 @@ const lines = t => t.value.split('\n').map(s => s.trim()).filter(Boolean);
 const pretty = k => k.replace(/_/g, ' ');
 
 /* ---------- generic editor for nested data ---------- */
-function adder(obj) {
+function adder(obj, reserved = []) {
   const mk = (label, make) => h('button', {
     textContent: label,
     onclick: () => {
@@ -98,6 +100,7 @@ function adder(obj) {
       if (!n) return;
       const key = slug(n);
       if (!key) return;
+      if (reserved.includes(key)) { alert('Music is edited in the Music tab.'); return; }
       obj[key] = make();
       touch(); draw();
     }
@@ -106,9 +109,10 @@ function adder(obj) {
     mk('+ field', () => ''), mk('+ list', () => []), mk('+ group', () => ({})));
 }
 
-function fields(obj) {
+function fields(obj, skip = []) {
   const wrap = h('div');
   for (const k of Object.keys(obj)) {
+    if (skip.includes(k)) continue;
     const v = obj[k];
     wrap.append(h('div', {className: 'hd'},
       h('label', {textContent: pretty(k)}),
@@ -151,19 +155,22 @@ function card(id, title, body, extra) {
   }, h('summary', {textContent: title}), body, extra);
 }
 
-/* ---------- People tab ---------- */
+/* ---------- People tab (no music here) ---------- */
 function people() {
   const f = h('div');
+  f.append(h('p', {className: 'note', textContent: 'Music is edited in the Music tab. It still shows up on each person in the sensor.'}));
   for (const g of ['household', 'friends']) {
     f.append(h('h2', {textContent: g === 'household' ? 'Household' : 'Friends'}));
     for (const k of Object.keys(D[g])) {
       const p = D[g][k];
       if (!p || typeof p !== 'object') continue;
       f.append(card(g + k, p.name || k,
-        h('div', {}, fields(p), adder(p)),
+        h('div', {}, fields(p, MUSIC_KEYS), adder(p, MUSIC_KEYS)),
         h('div', {className: 'add'},
           h('button', {className: 'del', textContent: 'Delete person', onclick: () => {
-            if (confirm('Delete ' + (p.name || k) + '?')) { delete D[g][k]; touch(); draw(); }
+            if (confirm('Delete ' + (p.name || k) + ' and their music?')) {
+              delete D[g][k]; delete D.music[k]; touch(); draw();
+            }
           }}))));
     }
     f.append(h('div', {className: 'row'},
@@ -178,13 +185,15 @@ function people() {
   return f;
 }
 
-/* ---------- Music tab ---------- */
+/* ---------- Music tab (the only place music is edited) ---------- */
 function music() {
   const f = h('div');
-  const ids = [...Object.keys(D.household), ...Object.keys(D.friends), ...Object.keys(D.music)]
+  f.append(h('p', {className: 'note', textContent: 'Everything music lives here and saves to music.yaml. Each person\'s genres and artists also appear on that person in the info sensor. The profile name has to match the person\'s key (jon, mj, and so on).'}));
+  const isPerson = k => (D.household[k] && typeof D.household[k] === 'object')
+                     || (D.friends[k] && typeof D.friends[k] === 'object');
+  const ids = ['shared', ...Object.keys(D.household), ...Object.keys(D.friends), ...Object.keys(D.music)]
     .filter((x, i, a) => a.indexOf(x) === i)
-    .filter(k => D.music[k] || (D.household[k] && typeof D.household[k] === 'object')
-                              || (D.friends[k] && typeof D.friends[k] === 'object'));
+    .filter(k => D.music[k] || isPerson(k));
   for (const k of ids) {
     const m = D.music[k] || {genres: [], artists: []};
     const p = D.household[k] || D.friends[k] || {};
@@ -196,8 +205,18 @@ function music() {
       return [h('label', {textContent: lbl}), ta];
     };
     const count = (m.artists || []).length;
-    f.append(card('m' + k, (p.name || k) + ' (' + count + ' artist' + (count === 1 ? '' : 's') + ')',
-      h('div', {}, ...box('Genres, one per line', 'genres'), ...box('Artists, one per line', 'artists'))));
+    const name = k === 'shared' ? 'Shared favorites' : (p.name || k);
+    const del = D.music[k]
+      ? h('div', {className: 'add'},
+          h('button', {className: 'del', textContent: 'Delete music profile', onclick: () => {
+            if (confirm('Delete the music profile for ' + name + '?')) {
+              delete D.music[k]; touch(); draw();
+            }
+          }}))
+      : null;
+    f.append(card('m' + k, name + ' (' + count + ' artist' + (count === 1 ? '' : 's') + ')',
+      h('div', {}, ...box('Genres, one per line', 'genres'), ...box('Artists, one per line', 'artists')),
+      del));
   }
   f.append(h('div', {className: 'row'},
     h('button', {className: 'ghost', textContent: '+ Add music profile', onclick: () => {
