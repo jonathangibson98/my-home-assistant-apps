@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.3.5
+- Bug Fixes
+
 ## 0.3.4
 - Made linking for places and person so info is linked.
 
