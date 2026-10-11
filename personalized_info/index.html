@@ -36,6 +36,8 @@ input[type=text],input[type=number],textarea{
   width:100%;background:var(--field);color:var(--txt);border:1px solid var(--line);
   border-radius:8px;padding:9px;font:inherit}
 textarea{min-height:96px;resize:vertical}
+select{width:100%;background:var(--field);color:var(--txt);border:1px solid var(--line);
+  border-radius:8px;padding:9px;font:inherit;margin-top:6px}
 input[type=checkbox]{width:22px;height:22px}
 .grp{border-left:2px solid var(--line);margin-left:6px;padding-left:10px}
 .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:8px}
@@ -57,6 +59,7 @@ input[type=checkbox]{width:22px;height:22px}
 <nav>
   <button data-t="people" onclick="go('people')">People</button>
   <button data-t="music" onclick="go('music')">Music</button>
+  <button data-t="places" onclick="go('places')">Places</button>
   <button data-t="other" onclick="go('other')">Other</button>
 </nav>
 
@@ -70,8 +73,12 @@ input[type=checkbox]{width:22px;height:22px}
 <script>
 let D = null, S = null, tab = 'people', dirty = false;
 const open = new Set();
-// Keys that belong to the Music tab. They are hidden in People and can't be added there.
-const MUSIC_KEYS = ['music', 'top_artists'];
+// Keys with their own editor. They are hidden in the plain fields and can't be added by hand.
+const RESERVED = {
+  music: 'Music is edited in the Music tab.',
+  top_artists: 'Music is edited in the Music tab.',
+  places: 'Places are linked in the Places section of the person. Add the places themselves in the Places tab.'
+};
 const $ = s => document.querySelector(s);
 const slug = t => t.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 
@@ -92,7 +99,7 @@ const lines = t => t.value.split('\n').map(s => s.trim()).filter(Boolean);
 const pretty = k => k.replace(/_/g, ' ');
 
 /* ---------- generic editor for nested data ---------- */
-function adder(obj, reserved = []) {
+function adder(obj, reserved = {}) {
   const mk = (label, make) => h('button', {
     textContent: label,
     onclick: () => {
@@ -100,7 +107,7 @@ function adder(obj, reserved = []) {
       if (!n) return;
       const key = slug(n);
       if (!key) return;
-      if (reserved.includes(key)) { alert('Music is edited in the Music tab.'); return; }
+      if (Object.prototype.hasOwnProperty.call(reserved, key)) { alert(reserved[key]); return; }
       obj[key] = make();
       touch(); draw();
     }
@@ -158,14 +165,14 @@ function card(id, title, body, extra) {
 /* ---------- People tab (no music here) ---------- */
 function people() {
   const f = h('div');
-  f.append(h('p', {className: 'note', textContent: 'Music is edited in the Music tab. It still shows up on each person in the sensor.'}));
+  f.append(h('p', {className: 'note', textContent: 'Music is edited in the Music tab and places in the Places tab. Both show up on each person in the sensor.'}));
   for (const g of ['household', 'friends']) {
     f.append(h('h2', {textContent: g === 'household' ? 'Household' : 'Friends'}));
     for (const k of Object.keys(D[g])) {
       const p = D[g][k];
       if (!p || typeof p !== 'object') continue;
       f.append(card(g + k, p.name || k,
-        h('div', {}, fields(p, MUSIC_KEYS), adder(p, MUSIC_KEYS)),
+        h('div', {}, fields(p, Object.keys(RESERVED)), adder(p, RESERVED), placeLinks(p)),
         h('div', {className: 'add'},
           h('button', {className: 'del', textContent: 'Delete person', onclick: () => {
             if (confirm('Delete ' + (p.name || k) + ' and their music?')) {
@@ -182,6 +189,98 @@ function people() {
         touch(); draw();
       }})));
   }
+  return f;
+}
+
+/* ---------- Places: links on a person ---------- */
+function placeLinks(p) {
+  const box = h('div', {className: 'grp'});
+  box.append(h('label', {textContent: 'Places'}));
+  const links = (p.places && typeof p.places === 'object') ? p.places : {};
+  const keys = Object.keys(D.places);
+  const optName = k => (D.places[k] && D.places[k].name) || k;
+  for (const label of Object.keys(links)) {
+    box.append(h('div', {className: 'hd'},
+      h('label', {textContent: pretty(label)}),
+      h('button', {className: 'del', textContent: 'Remove', onclick: () => {
+        delete p.places[label];
+        if (!Object.keys(p.places).length) delete p.places;
+        touch(); draw();
+      }})));
+    const sel = h('select', {onchange: e => { p.places[label] = e.target.value; touch(); }});
+    const cur = links[label];
+    const opts = keys.includes(cur) ? keys : [cur, ...keys];
+    for (const k of opts) {
+      sel.append(h('option', {value: k, textContent: keys.includes(k) ? optName(k) : k + ' (missing)'}));
+    }
+    sel.value = cur;
+    box.append(sel);
+  }
+  if (!Object.keys(links).length) {
+    box.append(h('div', {className: 'meta', textContent: keys.length ? 'No places linked yet.' : 'Add places in the Places tab first, then link them here.'}));
+  }
+  box.append(h('div', {className: 'add'}, h('button', {textContent: '+ Link a place', onclick: () => {
+    if (!keys.length) { alert('Add a place in the Places tab first.'); return; }
+    const n = prompt('What is this place to them? (home, work, hangout...)');
+    const label = n ? slug(n) : '';
+    if (!label) return;
+    if (links[label]) { alert('They already have a "' + pretty(label) + '". Remove it first or use a different name.'); return; }
+    if (!p.places || typeof p.places !== 'object') p.places = {};
+    p.places[label] = keys[0];
+    touch(); draw();
+  }})));
+  return box;
+}
+
+/* ---------- Places tab (the only place addresses are edited) ---------- */
+function places() {
+  const f = h('div');
+  f.append(h('p', {className: 'note', textContent: 'Add places here (houses, workplaces, hangouts) and they save to places.yaml. Then link them to people on the People tab. The sensor shows the full place info on each person.'}));
+  const users = k => {
+    const out = [];
+    for (const g of ['household', 'friends']) {
+      for (const pk of Object.keys(D[g])) {
+        const p = D[g][pk];
+        if (!p || typeof p !== 'object' || !p.places) continue;
+        for (const label of Object.keys(p.places)) {
+          if (p.places[label] === k) out.push((p.name || pk) + ' (' + pretty(label) + ')');
+        }
+      }
+    }
+    return out;
+  };
+  for (const k of Object.keys(D.places)) {
+    const pl = D.places[k];
+    if (!pl || typeof pl !== 'object') continue;
+    const used = users(k);
+    f.append(card('p' + k, pl.name || k,
+      h('div', {},
+        h('div', {className: 'meta', textContent: 'Used by: ' + (used.length ? used.join(', ') : 'nobody yet')}),
+        fields(pl), adder(pl)),
+      h('div', {className: 'add'},
+        h('button', {className: 'del', textContent: 'Delete place', onclick: () => {
+          if (!confirm('Delete ' + (pl.name || k) + '? People linked to it will lose that link.')) return;
+          delete D.places[k];
+          for (const g of ['household', 'friends']) {
+            for (const p of Object.values(D[g])) {
+              if (!p || !p.places) continue;
+              for (const label of Object.keys(p.places)) if (p.places[label] === k) delete p.places[label];
+              if (!Object.keys(p.places).length) delete p.places;
+            }
+          }
+          touch(); draw();
+        }}))));
+  }
+  f.append(h('div', {className: 'row'},
+    h('button', {className: 'ghost', textContent: '+ Add place', onclick: () => {
+      const n = prompt('Name of the place? (like "Rafter G" or "Jon and MJ\'s house")');
+      const key = n ? slug(n) : '';
+      if (!key) return;
+      if (D.places[key]) { alert('That place already exists.'); return; }
+      D.places[key] = {name: n, address: ''};
+      open.add('p' + key);
+      touch(); draw();
+    }})));
   return f;
 }
 
@@ -306,6 +405,7 @@ function draw() {
   if (!D) return;
   const view = tab === 'people' ? people()
     : tab === 'music' ? music()
+    : tab === 'places' ? places()
     : other();
   $('#main').replaceChildren(view);
   document.querySelectorAll('nav button').forEach(b => {
@@ -329,7 +429,7 @@ window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); 
 
 fetch('api/data').then(r => r.json()).then(d => {
   D = d;
-  for (const k of ['household', 'friends', 'music', 'other']) D[k] = D[k] || {};
+  for (const k of ['household', 'friends', 'music', 'places', 'other']) D[k] = D[k] || {};
   status('Loaded', 'ok');
   draw();
   loadSensors();
