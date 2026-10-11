@@ -259,6 +259,16 @@ def person_music(d, k):
     m = {"genres": flat(v.get("genres", [])), "artists": flat(v.get("artists", []))}
     return m if (m["genres"] or m["artists"]) else None
 
+def prune(o):
+    """Drop blank fields so unfilled template fields stay out of the sensor."""
+    empty = ("", None, [], {})
+    if isinstance(o, dict):
+        out = {k: prune(v) for k, v in o.items()}
+        return {k: v for k, v in out.items() if v not in empty}
+    if isinstance(o, list):
+        return [x for x in (prune(i) for i in o) if x not in empty]
+    return o
+
 def resolve_places(d, p):
     """Turn a person's place links (label: place key) into the full place info."""
     links = p.get("places")
@@ -267,7 +277,7 @@ def resolve_places(d, p):
     out = {}
     for label, key in links.items():
         pl = d["places"].get(key)
-        out[label] = {"key": key, **pl} if isinstance(pl, dict) else {"key": key, "missing": True}
+        out[label] = {"key": key, **prune(pl)} if isinstance(pl, dict) else {"key": key, "missing": True}
     return out or None
 
 def with_extras(d, group):
@@ -308,7 +318,7 @@ def build_info(d):
         "sections": ["household", "friends"] + list(other.keys()),
         "household": hh, "friends": fr, "everyone": everyone,
         "music_by_person": music_by_person,
-        "places": d["places"],
+        "places": prune(d["places"]),
         "core_text": people_text(hh, only=CORE),
         "household_text": people_text(hh),
         "friends_text": people_text(fr),
