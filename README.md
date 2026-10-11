@@ -1,7 +1,5 @@
 # my-home-assistant-apps
 
-Welcome to the **my-home-assistant-apps** repository! This repository contains custom apps, scripts, and utilities designed to extend Home Assistant.
-
 ---
 
 ## 🚀 Included Applications & Tools
