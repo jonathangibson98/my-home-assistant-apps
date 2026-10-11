@@ -6,6 +6,7 @@ from aiohttp import web
 DIR = "/homeassistant/ai_memory"
 FILE = f"{DIR}/people.yaml"          # household, friends, other
 MUSIC_FILE = f"{DIR}/music.yaml"     # music lives in its own file now
+PLACES_FILE = f"{DIR}/places.yaml"   # places (addresses, workplaces) live here
 SRC = f"{DIR}/memory/merged.yaml"
 BAK = f"{DIR}/backups"
 SETTINGS_PATH = "/data/settings.json"
@@ -115,6 +116,9 @@ def save(d):
                "# Edited via the Personalized Info app. Safe to hand-edit.\n")
     write_yaml(MUSIC_FILE, d.get("music", {}),
                "# Music for the Personalized Music sensor. Safe to hand-edit.\n")
+    if "places" in d:  # an older web page won't send places, so don't wipe the file
+        write_yaml(PLACES_FILE, d["places"],
+                   "# Places that people link to (home, work, hangouts). Safe to hand-edit.\n")
 
 def clean_music(m):
     """Accepts the app's own layout, or the by_person layout from the first conversion."""
@@ -185,8 +189,28 @@ def load():
     d["music"] = music
     for k in KEYS:
         d.setdefault(k, {})
+    # places live in places.yaml
+    if os.path.exists(PLACES_FILE):
+        try:
+            places = yaml.safe_load(open(PLACES_FILE)) or {}
+        except Exception as e:
+            print("places.yaml unreadable:", e, flush=True)
+            places = {}
+    else:
+        places, migrate = {}, True
+    if not isinstance(places, dict):
+        places = {}
+    # an old "places" section under other moves into places.yaml
+    moved = False
+    if "places" in d["other"]:
+        legacy = d["other"].pop("places")
+        moved = True
+        if isinstance(legacy, dict):
+            for k, v in legacy.items():
+                places.setdefault(k, v)
+    d["places"] = places
     # music written inside a person (top_artists / music) moves to the music file
-    moved = fold_person_music(d)
+    moved = fold_person_music(d) or moved
     if migrate or moved:
         save(d)
     return d
@@ -235,18 +259,39 @@ def person_music(d, k):
     m = {"genres": flat(v.get("genres", [])), "artists": flat(v.get("artists", []))}
     return m if (m["genres"] or m["artists"]) else None
 
-def with_music(d, group):
-    """Copy of a group (household/friends) with each person's music added."""
+def resolve_places(d, p):
+    """Turn a person's place links (label: place key) into the full place info."""
+    links = p.get("places")
+    if not isinstance(links, dict):
+        return None
+    out = {}
+    for label, key in links.items():
+        pl = d["places"].get(key)
+        out[label] = {"key": key, **pl} if isinstance(pl, dict) else {"key": key, "missing": True}
+    return out or None
+
+def with_extras(d, group):
+    """Copy of a group (household/friends) with each person's music and full place info."""
     out = {}
     for k, p in group.items():
-        m = person_music(d, k) if isinstance(p, dict) else None
-        out[k] = {**p, "music": m} if m else p
+        if not isinstance(p, dict):
+            out[k] = p
+            continue
+        q = dict(p)
+        q.pop("places", None)
+        pl = resolve_places(d, p)
+        if pl:
+            q["places"] = pl
+        m = person_music(d, k)
+        if m:
+            q["music"] = m
+        out[k] = q
     return out
 
 def build_info(d):
     raw_hh, raw_fr, other = d["household"], d["friends"], d["other"]
     total = count_facts({"household": raw_hh, "friends": raw_fr, **other})
-    hh, fr = with_music(d, raw_hh), with_music(d, raw_fr)
+    hh, fr = with_extras(d, raw_hh), with_extras(d, raw_fr)
     now = datetime.datetime.now()
     ts = f"{now.strftime('%m/%d/%y')} - {now.strftime('%I:%M%p').lstrip('0').lower()}"
     everyone = {}
@@ -263,6 +308,7 @@ def build_info(d):
         "sections": ["household", "friends"] + list(other.keys()),
         "household": hh, "friends": fr, "everyone": everyone,
         "music_by_person": music_by_person,
+        "places": d["places"],
         "core_text": people_text(hh, only=CORE),
         "household_text": people_text(hh),
         "friends_text": people_text(fr),
