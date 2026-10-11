@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.3
+## 0.3.4
 - Updated how the music section works.
 
 ## 0.1.2
