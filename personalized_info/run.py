@@ -4,7 +4,8 @@ import paho.mqtt.client as mqtt
 from aiohttp import web
 
 DIR = "/homeassistant/ai_memory"
-FILE = f"{DIR}/people.yaml"
+FILE = f"{DIR}/people.yaml"          # household, friends, other
+MUSIC_FILE = f"{DIR}/music.yaml"     # music lives in its own file now
 SRC = f"{DIR}/memory/merged.yaml"
 BAK = f"{DIR}/backups"
 SETTINGS_PATH = "/data/settings.json"
@@ -47,7 +48,7 @@ def load_settings():
 
 SET = load_settings()
 
-# ---------- data file ----------
+# ---------- data files ----------
 def flat(o):
     if isinstance(o, dict):
         return [x for v in o.values() for x in flat(v)]
@@ -94,29 +95,100 @@ def import_merged():
                     data["music"][k] = {"genres": [], "artists": flat(m)}
     return data
 
-def save(d):
+def write_yaml(path, data, header):
+    """Write a yaml file safely, keeping the last 20 backups of that file."""
     os.makedirs(BAK, exist_ok=True)
-    if os.path.exists(FILE):
-        shutil.copy(FILE, f"{BAK}/people-{time.strftime('%Y%m%d-%H%M%S')}.yaml")
-        for old in sorted(os.listdir(BAK))[:-20]:
+    stem = os.path.basename(path)[:-5]  # "people" or "music"
+    if os.path.exists(path):
+        shutil.copy(path, f"{BAK}/{stem}-{time.strftime('%Y%m%d-%H%M%S')}.yaml")
+        mine = sorted(f for f in os.listdir(BAK) if f.startswith(stem + "-"))
+        for old in mine[:-20]:
             os.remove(f"{BAK}/{old}")
-    tmp = FILE + ".tmp"
+    tmp = path + ".tmp"
     with open(tmp, "w") as f:
-        f.write("# Edited via the Personalized Info app. Safe to hand-edit.\n")
-        yaml.dump(d, f, sort_keys=False, allow_unicode=True, default_flow_style=False)
-    os.replace(tmp, FILE)
+        f.write(header)
+        yaml.dump(data, f, sort_keys=False, allow_unicode=True, default_flow_style=False)
+    os.replace(tmp, path)
+
+def save(d):
+    write_yaml(FILE, {k: d.get(k, {}) for k in ("household", "friends", "other")},
+               "# Edited via the Personalized Info app. Safe to hand-edit.\n")
+    write_yaml(MUSIC_FILE, d.get("music", {}),
+               "# Music for the Personalized Music sensor. Safe to hand-edit.\n")
+
+def clean_music(m):
+    """Accepts the app's own layout, or the by_person layout from the first conversion."""
+    if not isinstance(m, dict):
+        return {}
+    m = m.get("music", m)
+    if isinstance(m, dict) and "by_person" in m:
+        out = {"shared": {"genres": [],
+                          "artists": flat(m.get("jon_and_mj_favorites", {}).get("artists", []))}}
+        for k, v in m["by_person"].items():
+            out[k] = {"genres": [g for g in v if g != "other"] if isinstance(v, dict) else [],
+                      "artists": flat(v)}
+        return out
+    return m if isinstance(m, dict) else {}
+
+def fold_music(v):
+    """Turn any music shape into (genres, artists)."""
+    if isinstance(v, dict):
+        if "artists" in v or "genres" in v or "favorite_artists" in v:
+            return (flat(v.get("genres", [])),
+                    flat(v.get("artists", v.get("favorite_artists", []))))
+        return [g for g in v if str(g).lower() != "other"], flat(v)
+    return [], flat(v)
+
+def fold_person_music(d):
+    """Pull music keys out of people and into d["music"]. True if anything moved."""
+    moved = False
+    for g in ("household", "friends"):
+        for k, p in d[g].items():
+            if not isinstance(p, dict):
+                continue
+            for key in ("top_artists", "music"):
+                if key not in p:
+                    continue
+                genres, artists = fold_music(p.pop(key))
+                moved = True
+                prof = d["music"].get(k)
+                if not isinstance(prof, dict):
+                    prof = d["music"][k] = {"genres": [], "artists": []}
+                for field, new in (("genres", genres), ("artists", artists)):
+                    cur = flat(prof.get(field, []))
+                    prof[field] = cur + [x for x in new if x not in cur]
+    return moved
 
 def load():
+    d = None
     if os.path.exists(FILE):
         try:
             d = yaml.safe_load(open(FILE)) or {}
-            for k in KEYS:
-                d.setdefault(k, {})
-            return d
         except Exception as e:
             print("people.yaml unreadable, re-importing:", e, flush=True)
-    d = import_merged()
-    save(d)
+    if d is None:
+        d = import_merged()
+        save(d)
+        return d
+    migrate = False
+    if os.path.exists(MUSIC_FILE):
+        d.pop("music", None)  # music.yaml is the source of truth now
+        try:
+            music = clean_music(yaml.safe_load(open(MUSIC_FILE)) or {})
+        except Exception as e:
+            print("music.yaml unreadable:", e, flush=True)
+            music = {}
+    else:
+        # first run after the update: move music out of people.yaml into music.yaml
+        music = clean_music(d.pop("music", None) or {})
+        migrate = True
+    d["music"] = music
+    for k in KEYS:
+        d.setdefault(k, {})
+    # music written inside a person (top_artists / music) moves to the music file
+    moved = fold_person_music(d)
+    if migrate or moved:
+        save(d)
     return d
 
 # ---------- sensor content ----------
@@ -156,9 +228,25 @@ def pname(d, k):
     p = d["household"].get(k) or d["friends"].get(k)
     return p.get("name", k) if isinstance(p, dict) else k
 
+def person_music(d, k):
+    v = d["music"].get(k)
+    if not isinstance(v, dict):
+        return None
+    m = {"genres": flat(v.get("genres", [])), "artists": flat(v.get("artists", []))}
+    return m if (m["genres"] or m["artists"]) else None
+
+def with_music(d, group):
+    """Copy of a group (household/friends) with each person's music added."""
+    out = {}
+    for k, p in group.items():
+        m = person_music(d, k) if isinstance(p, dict) else None
+        out[k] = {**p, "music": m} if m else p
+    return out
+
 def build_info(d):
-    hh, fr, other = d["household"], d["friends"], d["other"]
-    total = count_facts({"household": hh, "friends": fr, **other})
+    raw_hh, raw_fr, other = d["household"], d["friends"], d["other"]
+    total = count_facts({"household": raw_hh, "friends": raw_fr, **other})
+    hh, fr = with_music(d, raw_hh), with_music(d, raw_fr)
     now = datetime.datetime.now()
     ts = f"{now.strftime('%m/%d/%y')} - {now.strftime('%I:%M%p').lstrip('0').lower()}"
     everyone = {}
@@ -168,11 +256,13 @@ def build_info(d):
     for k, v in fr.items():
         if isinstance(v, dict):
             everyone[k] = {"group": "friends", **v}
+    music_by_person = {k: v["music"] for k, v in everyone.items() if "music" in v}
     attrs = {
         "total_facts": total, "last_update": ts,
         "household_count": len(hh), "friends_count": len(fr),
         "sections": ["household", "friends"] + list(other.keys()),
         "household": hh, "friends": fr, "everyone": everyone,
+        "music_by_person": music_by_person,
         "core_text": people_text(hh, only=CORE),
         "household_text": people_text(hh),
         "friends_text": people_text(fr),
