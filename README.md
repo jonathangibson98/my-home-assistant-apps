@@ -4,16 +4,6 @@ Welcome to the **my-home-assistant-apps** repository! This repository contains c
 
 ---
 
-## 📁 Repository Contents
-
-* `location_tracker/`
-* `personalized_info/`
-* `svg_maker/`
-* `repository.yaml`
-* `README.md`
-
----
-
 ## 🚀 Included Applications & Tools
 
 1. 📍 **Location Tracker** (`/location_tracker`)
