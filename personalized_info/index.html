@@ -39,6 +39,8 @@ textarea{min-height:96px;resize:vertical}
 select{width:100%;background:var(--field);color:var(--txt);border:1px solid var(--line);
   border-radius:8px;padding:9px;font:inherit;margin-top:6px}
 input[type=checkbox]{width:22px;height:22px}
+.panel{background:var(--card);border-radius:10px;padding:12px;margin-top:10px}
+.panel .add button{font-size:15px;padding:10px 14px}
 .grp{border-left:2px solid var(--line);margin-left:6px;padding-left:10px}
 .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:8px}
 .add{display:flex;gap:6px;margin-top:12px;flex-wrap:wrap}
@@ -72,6 +74,7 @@ input[type=checkbox]{width:22px;height:22px}
 
 <script>
 let D = null, S = null, tab = 'people', dirty = false;
+let adding = false, newName = '';
 const open = new Set();
 // Keys with their own editor. They are hidden in the plain fields and can't be added by hand.
 const RESERVED = {
@@ -192,6 +195,20 @@ function people() {
   return f;
 }
 
+/* ---------- Place templates ---------- */
+const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+const blankHours = () => Object.fromEntries(DAYS.map(d => [d, '']));
+const TEMPLATES = {
+  residence: () => ({
+    type: 'Private residence', address: '',
+    residents: [], pets: [], parking: '', notes: ''
+  }),
+  business: () => ({
+    type: 'Business', category: '', address: '', phone: '', website: '',
+    hours: blankHours(), features: [], notes: ''
+  })
+};
+
 /* ---------- Places: links on a person ---------- */
 function placeLinks(p) {
   const box = h('div', {className: 'grp'});
@@ -258,6 +275,9 @@ function places() {
         h('div', {className: 'meta', textContent: 'Used by: ' + (used.length ? used.join(', ') : 'nobody yet')}),
         fields(pl), adder(pl)),
       h('div', {className: 'add'},
+        pl.hours ? null : h('button', {textContent: '+ Weekly hours', onclick: () => {
+          pl.hours = blankHours(); touch(); draw();
+        }}),
         h('button', {className: 'del', textContent: 'Delete place', onclick: () => {
           if (!confirm('Delete ' + (pl.name || k) + '? People linked to it will lose that link.')) return;
           delete D.places[k];
@@ -271,16 +291,32 @@ function places() {
           touch(); draw();
         }}))));
   }
-  f.append(h('div', {className: 'row'},
-    h('button', {className: 'ghost', textContent: '+ Add place', onclick: () => {
-      const n = prompt('Name of the place? (like "Rafter G" or "Jon and MJ\'s house")');
-      const key = n ? slug(n) : '';
-      if (!key) return;
+  if (adding) {
+    const nm = h('input', {type: 'text', value: newName, placeholder: 'Name of the place',
+      oninput: e => { newName = e.target.value; }});
+    setTimeout(() => nm.focus(), 0);
+    const pick = kind => {
+      const name = newName.trim();
+      const key = slug(name);
+      if (!key) { alert('Type a name for the place first.'); return; }
       if (D.places[key]) { alert('That place already exists.'); return; }
-      D.places[key] = {name: n, address: ''};
+      D.places[key] = {name, ...TEMPLATES[kind]()};
+      adding = false; newName = '';
       open.add('p' + key);
       touch(); draw();
-    }})));
+    };
+    f.append(h('div', {className: 'panel'},
+      h('label', {textContent: 'Name of the place'}), nm,
+      h('label', {textContent: 'What kind of place is it?'}),
+      h('div', {className: 'add'},
+        h('button', {className: 'pri', textContent: 'Private residence', onclick: () => pick('residence')}),
+        h('button', {className: 'pri', textContent: 'Business', onclick: () => pick('business')}),
+        h('button', {className: 'ghost', textContent: 'Cancel', onclick: () => { adding = false; newName = ''; draw(); }})),
+      h('div', {className: 'meta', textContent: 'Each one starts with fields that fit. Leave anything blank and it stays out of the sensor. You can still add or remove fields after.'})));
+  } else {
+    f.append(h('div', {className: 'row'},
+      h('button', {className: 'ghost', textContent: '+ Add place', onclick: () => { adding = true; draw(); }})));
+  }
   return f;
 }
 
@@ -399,7 +435,7 @@ function other() {
 }
 
 /* ---------- shell ---------- */
-function go(t) { tab = t; draw(); window.scrollTo(0, 0); }
+function go(t) { tab = t; adding = false; draw(); window.scrollTo(0, 0); }
 
 function draw() {
   if (!D) return;
