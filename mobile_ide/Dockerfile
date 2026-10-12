@@ -11,8 +11,8 @@ RUN apk add --no-cache \
     unzip \
     jq
 
-# Install code-server globally with Node version override
-RUN export FORCE_NODE_VERSION=1 && curl -fsSL https://code-server.dev/install.sh | sh
+# Install code-server globally matching Node v20
+RUN export FORCE_NODE_VERSION=20 && curl -fsSL https://code-server.dev/install.sh | sh
 
 # Copy startup script
 COPY run.sh /run.sh
