@@ -72,6 +72,7 @@ class Account:
         self.password = cfg["password"]
         self.interval = int(cfg.get("interval", 5))
         self.selected = list(cfg.get("devices", []))
+        self.names = dict(cfg.get("names", {}))  # device_id -> custom name for HA
         self.api = None
         self.status = "login"  # login | needs_2fa | ok | error
         self.message = ""
@@ -91,6 +92,7 @@ class Account:
             "password": self.password,
             "interval": self.interval,
             "devices": self.selected,
+            "names": self.names,
         }
 
     # ---- blocking pyicloud calls (always run in a thread) ----
@@ -212,7 +214,7 @@ class App:
         info = acct.info.get(dev_id, {})
         device = {
             "identifiers": [f"{PREFIX}_{key}"],
-            "name": acct.devices.get(dev_id, "Apple device"),
+            "name": acct.names.get(dev_id) or acct.devices.get(dev_id, "Apple device"),
             "manufacturer": "Apple",
             "model": info.get("model"),
         }
@@ -349,7 +351,7 @@ h1{font-size:1.3em}.card{background:#1c1c24;border-radius:12px;padding:14px;marg
 .ok{color:#4caf50}.warn{color:#ffb300}.bad{color:#ef5350}.muted{color:#999;font-size:.85em}
 input[type=text],input[type=password],input[type=number]{width:100%;box-sizing:border-box;padding:10px;margin:4px 0 8px;border-radius:8px;border:1px solid #333;background:#0d0d0d;color:#eee;font-size:1em}
 button{padding:10px 14px;border:0;border-radius:8px;background:#3b82f6;color:#fff;font-size:1em;margin:4px 4px 0 0}
-button.red{background:#b3261e}button.grey{background:#444}label.dev{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #2a2a33}label.dev input{width:20px;height:20px}.ico{font-size:1.5em}.sub{margin-top:2px}
+button.red{background:#b3261e}button.grey{background:#444}label.dev{display:flex;align-items:center;gap:10px;padding:8px 0}.devrow{border-bottom:1px solid #2a2a33;padding-bottom:6px}.nm{margin:0 0 4px 0!important;font-size:.9em!important}label.dev input{width:20px;height:20px}.ico{font-size:1.5em}.sub{margin-top:2px}
 """
 
 
@@ -422,15 +424,20 @@ def render(app):
             for d, n in sorted(acct.devices.items(), key=lambda x: x[1].lower()):
                 info = acct.info.get(d, {})
                 sub = f"<div class='muted sub'>{esc(describe(info))}</div>"
+                custom = acct.names.get(d, "")
                 rows.append(
+                    "<div class='devrow'>"
                     f"<label class='dev'><input type='checkbox' name='devices' value='{esc(d)}'"
                     f"{' checked' if d in acct.selected else ''}>"
                     f"<span class='ico'>{device_icon(info)}</span>"
                     f"<span><b>{esc(n)}</b>{sub}</span></label>"
+                    f"<input class='nm' type='text' name='name_{esc(d)}' value='{esc(custom)}' "
+                    f"placeholder='Name in Home Assistant (blank = {esc(n)})' autocomplete='off'>"
+                    "</div>"
                 )
             boxes = "".join(rows) or "<div class='muted'>No devices found.</div>"
             body.append(
-                f"<form method='post' action='save'>{hidden}<div class='muted'>Devices to track</div>{boxes}"
+                f"<form method='post' action='save'>{hidden}<div class='muted'>Devices to track (optional: type the name you want in Home Assistant)</div>{boxes}"
                 f"<div class='muted'>Update every (minutes)</div>"
                 f"<input type='number' name='interval' min='1' max='60' value='{acct.interval}'>"
                 "<button>Save</button></form>"
@@ -511,6 +518,14 @@ def build_web(app_state):
         data, acct = await get_acct(request)
         if acct:
             acct.selected = data.getall("devices", [])
+            for dev_id in list(acct.devices):
+                new_name = (data.get(f"name_{dev_id}") or "").strip()
+                if new_name != acct.names.get(dev_id, ""):
+                    if new_name:
+                        acct.names[dev_id] = new_name
+                    else:
+                        acct.names.pop(dev_id, None)
+                    acct.discovered.discard(dev_id)  # resend discovery with the new name
             try:
                 acct.interval = max(1, min(60, int(data.get("interval", 5))))
             except ValueError:
