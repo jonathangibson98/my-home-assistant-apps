@@ -1,0 +1,22 @@
+name: "Mobile Code Studio"
+description: "A mobile-optimized code-server IDE with full folder upload support for iPhone."
+version: "1.0.0"
+slug: "mobile_code_studio"
+init: false
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+startup: application
+boot: auto
+ports:
+  8443/tcp: 8443
+ports_description:
+  8443/tcp: Web UI / IDE port
+schema:
+  password: "password?"
+map:
+  - config:rw
+  - share:rw
