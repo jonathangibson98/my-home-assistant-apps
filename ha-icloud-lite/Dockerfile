@@ -1,12 +1,16 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:noarch
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base
 FROM ${BUILD_FROM}
 
-# Install jq so we can read configuration settings
-RUN apk add --no-cache jq
+# Install Python and jq so we can read configuration settings
+RUN \
+    apk add --no-cache \
+        python3 \
+        py3-pip \
+        jq
 
 # Copy requirements and install python packages
 COPY requirements.txt /
-RUN pip install --no-cache-dir -r /requirements.txt
+RUN pip install --no-cache-dir --break-system-packages -r /requirements.txt
 
 # Copy all your source files into the container
 COPY . /app
