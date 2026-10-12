@@ -1,6 +1,6 @@
 name: "Mobile File Manager & Samba"
 description: "A mobile-optimized file manager with folder uploads and native Samba share integration."
-version: "2.2.0"
+version: "2.3.0"
 slug: "mobile_file_manager"
 init: false
 arch:
@@ -22,11 +22,17 @@ options:
   samba_password: "changeme"
   filebrowser_username: "admin"
   filebrowser_password: "ChangeMe12345!"
+  root_access: false
 schema:
   samba_password: "password"
   filebrowser_username: "str"
   filebrowser_password: "password"
+  root_access: bool
 map:
   - config:rw
   - share:rw
   - media:rw
+  - backup:rw
+  - ssl:rw
+  - addons:rw
+  - all_addon_configs:rw

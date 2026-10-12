@@ -2,6 +2,7 @@
 CONFIG_PATH=/data/options.json
 SAMBA_PASS=$(jq --raw-output '.samba_password // "homeassistant"' "$CONFIG_PATH")
 FB_USER=$(jq --raw-output '.filebrowser_username // "admin"' "$CONFIG_PATH")
+ROOT_ACCESS=$(jq --raw-output '.root_access // false' "$CONFIG_PATH")
 FB_PASS=$(jq --raw-output '.filebrowser_password // "ChangeMe12345!"' "$CONFIG_PATH")
 
 # File Browser refuses passwords shorter than 12 characters
@@ -77,8 +78,11 @@ echo "Ingress path: ${INGRESS_ENTRY}"
 
 # File Browser: rebuild the login from your Configuration tab on every start
 rm -f /data/filebrowser.db
-filebrowser config init --database /data/filebrowser.db --auth.method=json
-filebrowser config set --database /data/filebrowser.db --root /config --baseurl "${INGRESS_ENTRY}" >/dev/null
+# Auto-login: File Browser trusts the username nginx sends (only HA can reach nginx)
+filebrowser config init --database /data/filebrowser.db --auth.method=proxy --auth.header=X-Forwarded-User
+if [ "$ROOT_ACCESS" = "true" ]; then FB_ROOT="/"; else FB_ROOT="/config"; fi
+echo "File Browser root: ${FB_ROOT}"
+filebrowser config set --database /data/filebrowser.db --root "$FB_ROOT" --baseurl "${INGRESS_ENTRY}" >/dev/null
 filebrowser users add "$FB_USER" "$FB_PASS" --perm.admin=true --database /data/filebrowser.db
 
 filebrowser --database /data/filebrowser.db --address 127.0.0.1 --port 8081 &
@@ -101,6 +105,7 @@ http {
             proxy_pass http://127.0.0.1:8081;
             proxy_http_version 1.1;
             proxy_set_header Host \$host;
+            proxy_set_header X-Forwarded-User "${FB_USER}";
             proxy_set_header Upgrade \$http_upgrade;
             proxy_set_header Connection "upgrade";
             proxy_request_buffering off;
