@@ -1,7 +1,7 @@
 ARG BUILD_FROM=ghcr.io/hassio-addons/base/aarch64:15.0.0
 FROM ${BUILD_FROM}
 
-# Install code-server and utilities for handling folders/zips
+# Install dependencies, build tools, python, and utilities
 RUN apk add --no-cache \
     nodejs \
     npm \
@@ -9,9 +9,12 @@ RUN apk add --no-cache \
     bash \
     curl \
     unzip \
-    jq
+    jq \
+    python3 \
+    make \
+    g++
 
-# Install code-server globally matching Node v20
+# Install code-server globally with Node version override
 RUN export FORCE_NODE_VERSION=20 && curl -fsSL https://code-server.dev/install.sh | sh
 
 # Copy startup script
