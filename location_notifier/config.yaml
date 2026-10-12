@@ -1,5 +1,5 @@
 name: "Arrival Alerts"
-version: "1.0.1"
+version: "1.0.2"
 slug: location_notifier
 description: "AI hype-man arrival notifications, managed from a web UI"
 arch:
