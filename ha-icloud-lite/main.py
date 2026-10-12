@@ -156,7 +156,8 @@ class Account:
                 location = self.info[dev_id].get("location")  # keep last known fix
             devices[dev_id] = name
             info[dev_id] = {
-                "model": data.get("deviceDisplayName"),
+                "model": data.get("deviceDisplayName") or data.get("modelDisplayName"),
+                "device_class": data.get("deviceClass") or "",
                 "battery": data.get("batteryLevel"),
                 "battery_status": data.get("batteryStatus"),
                 "location": location,
@@ -348,12 +349,50 @@ h1{font-size:1.3em}.card{background:#1c1c24;border-radius:12px;padding:14px;marg
 .ok{color:#4caf50}.warn{color:#ffb300}.bad{color:#ef5350}.muted{color:#999;font-size:.85em}
 input[type=text],input[type=password],input[type=number]{width:100%;box-sizing:border-box;padding:10px;margin:4px 0 8px;border-radius:8px;border:1px solid #333;background:#0d0d0d;color:#eee;font-size:1em}
 button{padding:10px 14px;border:0;border-radius:8px;background:#3b82f6;color:#fff;font-size:1em;margin:4px 4px 0 0}
-button.red{background:#b3261e}button.grey{background:#444}label.dev{display:block;padding:6px 0}
+button.red{background:#b3261e}button.grey{background:#444}label.dev{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #2a2a33}label.dev input{width:20px;height:20px}.ico{font-size:1.5em}.sub{margin-top:2px}
 """
 
 
 def esc(s):
     return html.escape(str(s))
+
+
+def device_icon(info):
+    """Pick an emoji from what Apple says the device is."""
+    text = f"{info.get('device_class', '')} {info.get('model', '')}".lower()
+    for needle, icon in (
+        ("airpod", "\U0001F3A7"), ("beats", "\U0001F3A7"), ("airtag", "\U0001F3F7\uFE0F"),
+        ("watch", "\u231A"), ("ipad", "\U0001F4F1"), ("iphone", "\U0001F4F1"),
+        ("mac", "\U0001F4BB"), ("pod", "\U0001F3B5"), ("vision", "\U0001F97D"),
+    ):
+        if needle in text:
+            return icon
+    return "\U0001F4CD"
+
+
+def ago(ts_ms):
+    try:
+        secs = max(0, time.time() - float(ts_ms) / 1000)
+    except (TypeError, ValueError):
+        return None
+    if secs < 90:
+        return "just now"
+    if secs < 3600:
+        return f"{int(secs // 60)} min ago"
+    if secs < 86400:
+        return f"{int(secs // 3600)} hr ago"
+    return f"{int(secs // 86400)} days ago"
+
+
+def describe(info):
+    """e.g. 'iPhone 16 Pro Max · 85% · seen 3 min ago'"""
+    bits = [info.get("model") or info.get("device_class") or "Apple device"]
+    if info.get("battery") is not None:
+        bits.append(f"{int(info['battery'] * 100)}%")
+    loc = info.get("location") or {}
+    seen = ago(loc.get("timeStamp"))
+    bits.append(f"seen {seen}" if seen else "no location yet")
+    return " \u00b7 ".join(bits)
 
 
 def render(app):
@@ -379,11 +418,17 @@ def render(app):
                 f"<form method='post' action='resend'>{hidden}<button class='grey'>Send a new code</button></form>"
             )
         elif acct.status == "ok":
-            boxes = "".join(
-                f"<label class='dev'><input type='checkbox' name='devices' value='{esc(d)}'"
-                f"{' checked' if d in acct.selected else ''}> {esc(n)}</label>"
-                for d, n in sorted(acct.devices.items(), key=lambda x: x[1].lower())
-            ) or "<div class='muted'>No devices found.</div>"
+            rows = []
+            for d, n in sorted(acct.devices.items(), key=lambda x: x[1].lower()):
+                info = acct.info.get(d, {})
+                sub = f"<div class='muted sub'>{esc(describe(info))}</div>"
+                rows.append(
+                    f"<label class='dev'><input type='checkbox' name='devices' value='{esc(d)}'"
+                    f"{' checked' if d in acct.selected else ''}>"
+                    f"<span class='ico'>{device_icon(info)}</span>"
+                    f"<span><b>{esc(n)}</b>{sub}</span></label>"
+                )
+            boxes = "".join(rows) or "<div class='muted'>No devices found.</div>"
             body.append(
                 f"<form method='post' action='save'>{hidden}<div class='muted'>Devices to track</div>{boxes}"
                 f"<div class='muted'>Update every (minutes)</div>"
