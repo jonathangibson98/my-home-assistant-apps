@@ -1,14 +1,10 @@
 name: "Mobile Code Studio"
 description: "A mobile-optimized code-server IDE with full folder upload support for iPhone."
-version: "1.0.1"
+version: "1.0.2"
 slug: "mobile_code_studio"
 init: false
 arch:
   - aarch64
-  - amd64
-  - armhf
-  - armv7
-  - i386
 startup: application
 boot: auto
 ports:
