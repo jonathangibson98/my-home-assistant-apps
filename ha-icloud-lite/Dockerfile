@@ -8,10 +8,6 @@ RUN \
         py3-pip \
         jq
 
-# Copy requirements and install python packages
-COPY requirements.txt /
-RUN pip install --no-cache-dir --break-system-packages -r /requirements.txt
-
 # Copy all your source files into the container
 COPY . /app
 WORKDIR /app
