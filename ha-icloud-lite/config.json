@@ -1,6 +1,6 @@
 {
   "name": "iCloud Lite",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "slug": "icloud_lite",
   "description": "Track Apple devices from multiple iCloud accounts via MQTT",
   "url": "https://github.com/jonathangibson98/my-home-assistant-apps",
