@@ -1,20 +1,25 @@
 name: "Mobile File Manager & Samba"
 description: "A mobile-optimized file manager with folder uploads and native Samba share integration."
-version: "2.0.1"
+version: "2.1.0"
 slug: "mobile_file_manager"
 init: false
 arch:
   - aarch64
 startup: application
 boot: auto
+hassio_api: true
 ingress: true
 ingress_port: 8080
+panel_icon: mdi:folder-network
+panel_title: "Files"
 ports:
   445/tcp: 445
   139/tcp: 139
 ports_description:
   445/tcp: Samba File Share
   139/tcp: Samba NetBIOS
+options:
+  samba_password: "changeme"
 schema:
   samba_password: "password"
 map:
