@@ -1,18 +1,23 @@
-name: "Mobile Code Studio"
-description: "A mobile-optimized code-server IDE with full folder upload support for iPhone."
-version: "1.0.3"
-slug: "mobile_code_studio"
+name: "Mobile File Manager & Samba"
+description: "A mobile-optimized file manager with folder uploads and native Samba share integration."
+version: "2.0.0"
+slug: "mobile_file_manager"
 init: false
 arch:
   - aarch64
 startup: application
 boot: auto
+ingress: true
+ingress_port: 8080
 ports:
-  8443/tcp: 8443
+  445/tcp: 445
+  139/tcp: 139
 ports_description:
-  8443/tcp: Web UI / IDE port
+  445/tcp: Samba File Share
+  139/tcp: Samba NetBIOS
 schema:
-  password: "password?"
+  samba_password: "password"
 map:
   - config:rw
   - share:rw
+  - media:rw
