@@ -101,7 +101,7 @@ function placesV(){
       <div class="chips">${DAYS.map((d,n)=>`<label class="chip"><input type="checkbox" data-day="${i}" value="${n}" ${p.days.includes(n)?"checked":""}>${d}</label>`).join("")}</div>
       <div class="hint">None selected means every day.</div>
       <div class="row">${fld("From",inp(K("start"),p.start,"time"))}${fld("Until",inp(K("end"),p.end,"time"))}</div>
-      ${fld("Notification title",inp(K("title"),p.title),"Use {who} and {place} to fill in names.")}
+      ${fld("Notification title",inp(K("title"),p.title),"Use {who}, {place} and {present} to fill in names.")}
       ${fld("Extra details for the message",`<textarea data-k="${K("extra")}">${esc(p.extra)}</textarea>`,"Example: Include our friends Aaron and Tyler.")}
       ${fld("Custom style for this place",`<textarea data-k="${K("custom_prompt")}">${esc(p.custom_prompt)}</textarea>`,"Leave blank to use the global style.")}
       <div class="btns"><button class="b" data-act="prev" data-i="${i}">Preview</button><button class="b" data-act="send" data-i="${i}">Send test</button><button class="b" data-act="dup" data-i="${i}">Duplicate</button><button class="b del" data-act="del" data-i="${i}">Delete</button></div>
@@ -120,6 +120,7 @@ function peopleV(){
 function notifyV(){
   const s=cfg.settings,K=f=>`settings.${f}`;
   return `<div class="card"><div class="hd"><b>Notifications on<small>Switch off to pause every place</small></b>${sw(K("enabled"),s.enabled)}</div></div>
+  <div class="card"><div class="hd"><b>Mention who's already there<small>The message calls out anyone already at the place</small></b>${sw(K("mention_present"),s.mention_present!==false)}</div></div>
   <div class="card"><div class="bd" style="border:0">
     ${fld("AI task entity",sel(K("ai_entity"),ent.ai.map(a=>[a,a]),s.ai_entity))}
     ${fld("Notify service",sel(K("notify_service"),ent.notify.map(a=>[a,a]),s.notify_service))}
