@@ -40,12 +40,12 @@ nmbd -D
 smbd -D
 
 echo "Starting File Browser UI..."
-# Initialize filebrowser database if it doesn't exist
+# Initialize filebrowser database and create admin with a 12+ character password if it doesn't exist
 if [ ! -f /data/filebrowser.db ]; then
     filebrowser config init --database /data/filebrowser.db
     filebrowser config set --database /data/filebrowser.db --root /config
-    filebrowser users add admin admin --database /data/filebrowser.db --perm.admin=true
+    filebrowser users add admin AdminPassword123! --database /data/filebrowser.db --perm.admin=true
 fi
 
-# Run File Browser bound to ingress port 8080
-exec filebrowser --database /data/filebrowser.db --address 0.0.0.0 --port 8080
+# Run File Browser bound to all interfaces on port 8080
+exec filebrowser --database /data/filebrowser.db --address 0.0.0.0 --port 8080 --root /config
