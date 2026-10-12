@@ -1,6 +1,6 @@
 {
   "name": "iCloud Lite",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "slug": "icloud_lite",
   "description": "Lightweight iCloud location tracker",
   "url": "https://github.com/jonathangibson98/ha-icloud-lite",
