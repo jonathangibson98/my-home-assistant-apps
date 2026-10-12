@@ -1,6 +1,6 @@
 name: "Mobile Code Studio"
 description: "A mobile-optimized code-server IDE with full folder upload support for iPhone."
-version: "1.0.2"
+version: "1.0.3"
 slug: "mobile_code_studio"
 init: false
 arch:
@@ -11,6 +11,7 @@ ports:
   8443/tcp: 8443
 ports_description:
   8443/tcp: Web UI / IDE port
+webui: "http://[host]:8443"
 schema:
   password: "password?"
 map:
