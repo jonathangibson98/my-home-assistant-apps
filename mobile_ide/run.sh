@@ -1,5 +1,6 @@
 #!/usr/bin/with-contenv bash
 CONFIG_PATH=/data/options.json
+SAMBA_USER=$(jq --raw-output '.samba_username // "samba_user"' "$CONFIG_PATH")
 SAMBA_PASS=$(jq --raw-output '.samba_password // "homeassistant"' "$CONFIG_PATH")
 FB_USER=$(jq --raw-output '.filebrowser_username // "admin"' "$CONFIG_PATH")
 ROOT_ACCESS=$(jq --raw-output '.root_access // false' "$CONFIG_PATH")
@@ -16,13 +17,15 @@ echo "Starting Samba File Sharing..."
 # Folders Samba needs (they don't exist in a fresh Alpine container)
 mkdir -p /var/lib/samba/private /var/log/samba /run/samba /var/cache/samba
 
-# Samba login user (safe to re-run on restart)
+# Samba login user from your Configuration tab (rebuilt on every start)
 getent group samba_group >/dev/null || addgroup -g 1000 samba_group
-id samba_user >/dev/null 2>&1 || adduser -D -H -G samba_group -u 1000 samba_user
-printf '%s\n%s\n' "$SAMBA_PASS" "$SAMBA_PASS" | smbpasswd -a -s samba_user
+id "$SAMBA_USER" >/dev/null 2>&1 || adduser -D -H -G samba_group "$SAMBA_USER"
+rm -f /var/lib/samba/private/passdb.tdb
+printf '%s\n%s\n' "$SAMBA_PASS" "$SAMBA_PASS" | smbpasswd -a -s "$SAMBA_USER"
+echo "Samba user: ${SAMBA_USER}"
 
 # force user = root so you can actually WRITE to /config, /share, /media
-cat > /etc/samba/smb.conf << 'SMB'
+cat > /etc/samba/smb.conf << SMB
 [global]
     workgroup = WORKGROUP
     server string = Home Assistant Mobile Storage
@@ -42,7 +45,7 @@ cat > /etc/samba/smb.conf << 'SMB'
     browsable = yes
     writable = yes
     guest ok = no
-    valid users = samba_user
+    valid users = ${SAMBA_USER}
     force user = root
     force group = root
 
@@ -51,7 +54,7 @@ cat > /etc/samba/smb.conf << 'SMB'
     browsable = yes
     writable = yes
     guest ok = no
-    valid users = samba_user
+    valid users = ${SAMBA_USER}
     force user = root
     force group = root
 
@@ -60,7 +63,7 @@ cat > /etc/samba/smb.conf << 'SMB'
     browsable = yes
     writable = yes
     guest ok = no
-    valid users = samba_user
+    valid users = ${SAMBA_USER}
     force user = root
     force group = root
 SMB
