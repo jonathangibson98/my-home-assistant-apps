@@ -1,6 +1,6 @@
 name: "Mobile Code Studio"
 description: "A mobile-optimized code-server IDE with full folder upload support for iPhone."
-version: "1.0.2"
+version: "1.0.0"
 slug: "mobile_code_studio"
 init: false
 arch:
