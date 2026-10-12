@@ -1,15 +1,19 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:noarch
 FROM ${BUILD_FROM}
 
-# Install system dependencies if needed
+# Install jq so we can read configuration settings
 RUN apk add --no-cache jq
 
 # Copy requirements and install python packages
 COPY requirements.txt /
 RUN pip install --no-cache-dir -r /requirements.txt
 
-# Copy root filesystem
-COPY rootfs /
+# Copy all your source files into the container
+COPY . /app
+WORKDIR /app
 
-WORKDIR /
+# Set up the startup script
+COPY run.sh /run.sh
+RUN chmod a+x /run.sh
+
 CMD [ "/run.sh" ]
