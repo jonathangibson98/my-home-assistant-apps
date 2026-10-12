@@ -73,6 +73,7 @@ class Account:
         self.interval = int(cfg.get("interval", 5))
         self.selected = list(cfg.get("devices", []))
         self.names = dict(cfg.get("names", {}))  # device_id -> custom name for HA
+        self.label = cfg.get("label", "")  # tab name in the web UI
         self.api = None
         self.status = "login"  # login | needs_2fa | ok | error
         self.message = ""
@@ -93,6 +94,7 @@ class Account:
             "interval": self.interval,
             "devices": self.selected,
             "names": self.names,
+            "label": self.label,
         }
 
     # ---- blocking pyicloud calls (always run in a thread) ----
@@ -346,12 +348,22 @@ class App:
 
 # ───────────────────────── Web UI (Ingress) ─────────────────────────
 CSS = """
-body{font-family:-apple-system,system-ui,sans-serif;background:#111;color:#eee;margin:0;padding:16px;max-width:640px}
-h1{font-size:1.3em}.card{background:#1c1c24;border-radius:12px;padding:14px;margin:12px 0}
-.ok{color:#4caf50}.warn{color:#ffb300}.bad{color:#ef5350}.muted{color:#999;font-size:.85em}
-input[type=text],input[type=password],input[type=number]{width:100%;box-sizing:border-box;padding:10px;margin:4px 0 8px;border-radius:8px;border:1px solid #333;background:#0d0d0d;color:#eee;font-size:1em}
-button{padding:10px 14px;border:0;border-radius:8px;background:#3b82f6;color:#fff;font-size:1em;margin:4px 4px 0 0}
-button.red{background:#b3261e}button.grey{background:#444}label.dev{display:flex;align-items:center;gap:10px;padding:8px 0}.devrow{border-bottom:1px solid #2a2a33;padding-bottom:6px}.nm{margin:0 0 4px 0!important;font-size:.9em!important}label.dev input{width:20px;height:20px}.ico{font-size:1.5em}.sub{margin-top:2px}
+*{box-sizing:border-box}
+body{font-family:-apple-system,system-ui,sans-serif;background:#111827;color:#e5e7eb;margin:0;padding:16px;max-width:680px;font-size:17px;line-height:1.4}
+h1{font-size:1.5em;margin:0 0 4px}h3{margin:0 0 8px}
+.card{background:#252b3b;border-radius:16px;padding:16px;margin:14px 0}
+.muted{color:#9ca3af;font-size:.88em}.ok{color:#4ade80}.warn{color:#fbbf24}.bad{color:#f87171}
+.tabs{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}
+a.tab{flex:1 1 120px;text-align:center;padding:14px 10px;border-radius:12px;background:#394057;color:#e5e7eb;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+a.tab.active{background:#5b7fe8;color:#fff}
+hr{border:0;border-top:1px solid #374151;margin:6px 0 14px}
+input[type=text],input[type=password],input[type=number],select{width:100%;padding:12px;margin:4px 0 10px;border-radius:10px;border:1px solid #374151;background:#111827;color:#e5e7eb;font-size:1em}
+button{padding:12px 18px;border:0;border-radius:10px;background:#5b7fe8;color:#fff;font-size:1em;margin:4px 8px 0 0}
+button.grey{background:#394057}button.red{background:#b3261e}button.small{padding:8px 12px;font-size:.9em;margin:0}
+.dev{background:#1e2433;border-radius:12px;padding:12px;margin:10px 0}
+.devhead{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;margin-bottom:6px}
+.dev input{margin-bottom:0}.ico{font-size:1.4em}
+.hidden-submit{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
 """
 
 
@@ -397,72 +409,124 @@ def describe(info):
     return " \u00b7 ".join(bits)
 
 
-def render(app):
-    parts = []
-    for acct in app.accounts.values():
-        cls = {"ok": "ok", "needs_2fa": "warn", "login": "warn", "error": "bad"}[acct.status]
-        label = {
-            "ok": "Connected",
-            "needs_2fa": "Needs 2FA code",
-            "login": "Logging in...",
-            "error": "Error",
-        }[acct.status]
-        body = [f"<h3>{esc(acct.username)}</h3>",
-                f"<div class='{cls}'>{label}</div>"]
-        if acct.message:
-            body.append(f"<div class='muted'>{esc(acct.message)}</div>")
-        hidden = f"<input type='hidden' name='id' value='{esc(acct.id)}'>"
-        if acct.status == "needs_2fa":
-            body.append(
-                f"<form method='post' action='code'>{hidden}"
-                "<input type='text' name='code' inputmode='numeric' placeholder='6-digit code' autocomplete='off'>"
-                "<button>Verify</button></form>"
-                f"<form method='post' action='resend'>{hidden}<button class='grey'>Send a new code</button></form>"
-            )
-        elif acct.status == "ok":
-            rows = []
-            for d, n in sorted(acct.devices.items(), key=lambda x: x[1].lower()):
-                info = acct.info.get(d, {})
-                sub = f"<div class='muted sub'>{esc(describe(info))}</div>"
-                custom = acct.names.get(d, "")
-                rows.append(
-                    "<div class='devrow'>"
-                    f"<label class='dev'><input type='checkbox' name='devices' value='{esc(d)}'"
-                    f"{' checked' if d in acct.selected else ''}>"
-                    f"<span class='ico'>{device_icon(info)}</span>"
-                    f"<span><b>{esc(n)}</b>{sub}</span></label>"
-                    f"<input class='nm' type='text' name='name_{esc(d)}' value='{esc(custom)}' "
-                    f"placeholder='Name in Home Assistant (blank = {esc(n)})' autocomplete='off'>"
-                    "</div>"
-                )
-            boxes = "".join(rows) or "<div class='muted'>No devices found.</div>"
-            body.append(
-                f"<form method='post' action='save'>{hidden}<div class='muted'>Devices to track (optional: type the name you want in Home Assistant)</div>{boxes}"
-                f"<div class='muted'>Update every (minutes)</div>"
-                f"<input type='number' name='interval' min='1' max='60' value='{acct.interval}'>"
-                "<button>Save</button></form>"
-                f"<form method='post' action='refresh'>{hidden}<button class='grey'>Update now</button></form>"
-            )
-        elif acct.status == "error":
-            body.append(f"<form method='post' action='retry'>{hidden}<button class='grey'>Retry login</button></form>")
-        body.append(
-            f"<form method='post' action='remove' onsubmit=\"return confirm('Remove this account?')\">{hidden}"
-            "<button class='red'>Remove account</button></form>"
-        )
-        parts.append(f"<div class='card'>{''.join(body)}</div>")
+def tab_label(acct):
+    base = acct.label or acct.username.split("@")[0]
+    return base if acct.status == "ok" else f"\u26a0\ufe0f {base}"
 
-    mqtt_line = "MQTT: connected" if app.mqtt.connected else "MQTT: NOT connected (is Mosquitto running?)"
-    parts.append(
+
+def render_account(acct):
+    cls = {"ok": "ok", "needs_2fa": "warn", "login": "warn", "error": "bad"}[acct.status]
+    label = {
+        "ok": "Connected",
+        "needs_2fa": "Needs 2FA code",
+        "login": "Logging in...",
+        "error": "Error",
+    }[acct.status]
+    hidden = f"<input type='hidden' name='id' value='{esc(acct.id)}'>"
+    out = [f"<div class='card'><h3>{esc(acct.username)}</h3><div class='{cls}'>{label}</div>"]
+    if acct.message:
+        out.append(f"<div class='muted'>{esc(acct.message)}</div>")
+    if acct.status == "needs_2fa":
+        out.append(
+            f"<form method='post' action='code'>{hidden}"
+            "<input type='text' name='code' inputmode='numeric' placeholder='6-digit code' autocomplete='off'>"
+            "<button>Verify</button></form>"
+            f"<form method='post' action='resend'>{hidden}<button class='grey'>Send a new code</button></form>"
+        )
+    elif acct.status == "error":
+        out.append(f"<form method='post' action='retry'>{hidden}<button class='grey'>Retry login</button></form>")
+    out.append("</div>")
+
+    if acct.status == "ok":
+        # --- add a device (dropdown) ---
+        untracked = [(d, n) for d, n in acct.devices.items() if d not in acct.selected]
+        untracked.sort(key=lambda x: x[1].lower())
+        if untracked:
+            options = "<option value=''>Pick a device...</option>" + "".join(
+                f"<option value='{esc(d)}'>{device_icon(acct.info.get(d, {}))} {esc(n)} \u2014 "
+                f"{esc(describe(acct.info.get(d, {})))}</option>"
+                for d, n in untracked
+            )
+            add_body = (
+                f"<form method='post' action='adddevice'>{hidden}<select name='device'>{options}</select>"
+                "<input type='text' name='name' placeholder='Name in Home Assistant (optional)' autocomplete='off'>"
+                "<button>Add device</button></form>"
+            )
+        elif acct.devices:
+            add_body = "<div class='muted'>Every device on this account is already added.</div>"
+        else:
+            add_body = "<div class='muted'>No devices found on this account.</div>"
+        out.append(f"<div class='card'><h3>Add a device</h3>{add_body}</div>")
+
+        # --- tracked devices ---
+        rows = []
+        for d in acct.selected:
+            info = acct.info.get(d, {})
+            apple_name = acct.devices.get(d, "Unavailable device")
+            rows.append(
+                "<div class='dev'><div class='devhead'><div>"
+                f"<span class='ico'>{device_icon(info)}</span> <b>{esc(apple_name)}</b>"
+                f"<div class='muted'>{esc(describe(info)) if info else 'Not reported by Apple right now'}</div></div>"
+                f"<button class='red small' formaction='removedevice' name='remove' value='{esc(d)}'>Remove</button></div>"
+                f"<input type='text' name='name_{esc(d)}' value='{esc(acct.names.get(d, ''))}' "
+                f"placeholder='Name in Home Assistant (blank = {esc(apple_name)})' autocomplete='off'></div>"
+            )
+        tracked = "".join(rows) or "<div class='muted'>Nothing added yet. Pick a device above.</div>"
+        out.append(
+            f"<div class='card'><h3>Tracked devices ({len(acct.selected)})</h3>"
+            f"<form method='post' action='save'>{hidden}"
+            "<button class='hidden-submit' tabindex='-1'>Save</button>"
+            f"{tracked}"
+            "<div class='muted' style='margin-top:12px'>Update every (minutes)</div>"
+            f"<input type='number' name='interval' min='1' max='60' value='{acct.interval}'>"
+            "<div class='muted'>Tab name</div>"
+            f"<input type='text' name='label' value='{esc(acct.label)}' placeholder='{esc(acct.username.split('@')[0])}'>"
+            "<button>Save</button></form>"
+            f"<form method='post' action='refresh'>{hidden}<button class='grey'>Update now</button></form>"
+            "<div class='muted' style='margin-top:10px'>Names only change the display name. The entity ID stays as it "
+            "was first created. To change it, use Settings, Entities.</div></div>"
+        )
+
+    out.append(
+        "<div class='card'>"
+        f"<form method='post' action='remove' onsubmit=\"return confirm('Remove this account and its entities?')\">{hidden}"
+        "<button class='red'>Remove account</button></form></div>"
+    )
+    return "".join(out)
+
+
+def render_add():
+    return (
         "<div class='card'><h3>Add Apple ID</h3><form method='post' action='add'>"
         "<input type='text' name='username' placeholder='Apple ID email' autocapitalize='off' autocomplete='off'>"
         "<input type='password' name='password' placeholder='Password' autocomplete='off'>"
+        "<input type='text' name='label' placeholder='Tab name (optional, like Jon or MJ)' autocomplete='off'>"
         "<button>Add account</button></form></div>"
     )
+
+
+def render(app, sel=None):
+    accounts = list(app.accounts.values())
+    if sel == "new" or not accounts:
+        active = "new"
+    elif sel in app.accounts:
+        active = sel
+    else:
+        active = accounts[0].id
+
+    tabs = "".join(
+        f"<a class='tab{' active' if a.id == active else ''}' href='?a={esc(a.id)}'>{esc(tab_label(a))}</a>"
+        for a in accounts
+    )
+    tabs += f"<a class='tab{' active' if active == 'new' else ''}' href='?a=new'>+ Add</a>"
+    content = render_add() if active == "new" else render_account(app.accounts[active])
+    mqtt_line = "MQTT: connected" if app.mqtt.connected else "MQTT: NOT connected (is Mosquitto running?)"
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         f"<title>iCloud Lite</title><style>{CSS}</style></head><body>"
-        f"<h1>iCloud Lite</h1><div class='muted'>{mqtt_line}</div>{''.join(parts)}</body></html>"
+        f"<h1>iCloud Lite</h1><div class='muted'>{mqtt_line}</div>"
+        f"<div class='tabs'>{tabs}</div><hr>{content}</body></html>"
     )
 
 
@@ -476,16 +540,37 @@ async def ingress_only(request, handler):
 def build_web(app_state):
     routes = web.RouteTableDef()
 
-    def done():
-        return web.HTTPSeeOther(location="./")
+    def go(acct_id=None):
+        return web.HTTPSeeOther(location=f"./?a={acct_id}" if acct_id else "./")
 
     async def get_acct(request):
         data = await request.post()
         return data, app_state.accounts.get(data.get("id", ""))
 
+    def apply_form(acct, data):
+        """Apply names / interval / tab name from the tracked-devices form."""
+        for dev_id in acct.selected:
+            key = f"name_{dev_id}"
+            if key not in data:
+                continue
+            new_name = (data.get(key) or "").strip()
+            if new_name != acct.names.get(dev_id, ""):
+                if new_name:
+                    acct.names[dev_id] = new_name
+                else:
+                    acct.names.pop(dev_id, None)
+                acct.discovered.discard(dev_id)  # resend discovery with the new name
+        if "interval" in data:
+            try:
+                acct.interval = max(1, min(60, int(data.get("interval", 5))))
+            except ValueError:
+                pass
+        if "label" in data:
+            acct.label = (data.get("label") or "").strip()[:30]
+
     @routes.get("/")
     async def index(request):
-        return web.Response(text=render(app_state), content_type="text/html")
+        return web.Response(text=render(app_state, request.query.get("a")), content_type="text/html")
 
     @routes.post("/add")
     async def add(request):
@@ -494,67 +579,91 @@ def build_web(app_state):
         if username and password and not any(
             a.username.lower() == username.lower() for a in app_state.accounts.values()
         ):
-            acct = Account({"id": secrets.token_hex(4), "username": username, "password": password})
+            acct = Account(
+                {
+                    "id": secrets.token_hex(4),
+                    "username": username,
+                    "password": password,
+                    "label": (data.get("label") or "").strip()[:30],
+                }
+            )
             app_state.accounts[acct.id] = acct
             app_state.save()
-        return done()
+            return go(acct.id)
+        return go("new")
 
     @routes.post("/code")
     async def code(request):
         data, acct = await get_acct(request)
         if acct and acct.api:
             await app_state.run_blocking(acct, acct.verify, data.get("code", ""))
-        return done()
+        return go(acct.id if acct else None)
 
     @routes.post("/resend")
     async def resend(request):
         _, acct = await get_acct(request)
         if acct and acct.api:
             await app_state.run_blocking(acct, acct.send_code)
-        return done()
+        return go(acct.id if acct else None)
+
+    @routes.post("/adddevice")
+    async def adddevice(request):
+        data, acct = await get_acct(request)
+        if acct:
+            dev_id = data.get("device", "")
+            if dev_id and dev_id in acct.devices and dev_id not in acct.selected:
+                acct.selected.append(dev_id)
+                name = (data.get("name") or "").strip()
+                if name:
+                    acct.names[dev_id] = name
+                acct.discovered.discard(dev_id)
+                acct.next_poll = 0
+                app_state.save()
+                app_state.sync_account(acct)
+        return go(acct.id if acct else None)
+
+    @routes.post("/removedevice")
+    async def removedevice(request):
+        data, acct = await get_acct(request)
+        if acct:
+            apply_form(acct, data)
+            dev_id = data.get("remove", "")
+            if dev_id in acct.selected:
+                acct.selected.remove(dev_id)
+            app_state.save()
+            app_state.sync_account(acct)  # clears the removed device's entities
+        return go(acct.id if acct else None)
 
     @routes.post("/save")
     async def save(request):
         data, acct = await get_acct(request)
         if acct:
-            acct.selected = data.getall("devices", [])
-            for dev_id in list(acct.devices):
-                new_name = (data.get(f"name_{dev_id}") or "").strip()
-                if new_name != acct.names.get(dev_id, ""):
-                    if new_name:
-                        acct.names[dev_id] = new_name
-                    else:
-                        acct.names.pop(dev_id, None)
-                    acct.discovered.discard(dev_id)  # resend discovery with the new name
-            try:
-                acct.interval = max(1, min(60, int(data.get("interval", 5))))
-            except ValueError:
-                pass
+            apply_form(acct, data)
             acct.next_poll = 0  # poll right away
             app_state.save()
             app_state.sync_account(acct)
-        return done()
+        return go(acct.id if acct else None)
 
     @routes.post("/refresh")
     async def refresh(request):
         _, acct = await get_acct(request)
         if acct:
             acct.next_poll = 0
-        return done()
+        return go(acct.id if acct else None)
 
     @routes.post("/retry")
     async def retry(request):
         _, acct = await get_acct(request)
         if acct:
             acct.status, acct.api, acct.next_login = "login", None, 0
-        return done()
+        return go(acct.id if acct else None)
 
     @routes.post("/remove")
     async def remove(request):
         _, acct = await get_acct(request)
         if acct:
             app_state.remove_account(acct)
-        return done()
+        return go()
 
     web_app = web.Application(middlewares=[ingress_only])
     web_app.add_routes(routes)
