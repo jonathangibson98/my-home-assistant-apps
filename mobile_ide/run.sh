@@ -39,6 +39,7 @@ cat > /etc/samba/smb.conf << SMB
     printcap name = /dev/null
     disable spoolss = yes
     server min protocol = SMB2
+    log level = 1 auth:3
 
 [Config]
     path = /config
@@ -85,7 +86,7 @@ rm -f /data/filebrowser.db
 filebrowser config init --database /data/filebrowser.db --auth.method=proxy --auth.header=X-Forwarded-User
 if [ "$ROOT_ACCESS" = "true" ]; then FB_ROOT="/"; else FB_ROOT="/config"; fi
 echo "File Browser root: ${FB_ROOT}"
-filebrowser config set --database /data/filebrowser.db --root "$FB_ROOT" --baseurl "${INGRESS_ENTRY}" >/dev/null
+filebrowser config set --database /data/filebrowser.db --root "$FB_ROOT" --baseURL "${INGRESS_ENTRY}" >/dev/null
 filebrowser users add "$FB_USER" "$FB_PASS" --perm.admin=true --database /data/filebrowser.db
 
 filebrowser --database /data/filebrowser.db --address 127.0.0.1 --port 8081 &
