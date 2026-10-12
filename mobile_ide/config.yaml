@@ -1,6 +1,6 @@
 name: "Mobile File Manager & Samba"
 description: "A mobile-optimized file manager with folder uploads and native Samba share integration."
-version: "2.1.0"
+version: "2.2.0"
 slug: "mobile_file_manager"
 init: false
 arch:
@@ -20,8 +20,12 @@ ports_description:
   139/tcp: Samba NetBIOS
 options:
   samba_password: "changeme"
+  filebrowser_username: "admin"
+  filebrowser_password: "ChangeMe12345!"
 schema:
   samba_password: "password"
+  filebrowser_username: "str"
+  filebrowser_password: "password"
 map:
   - config:rw
   - share:rw

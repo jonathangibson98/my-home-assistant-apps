@@ -1,6 +1,14 @@
 #!/usr/bin/with-contenv bash
 CONFIG_PATH=/data/options.json
 SAMBA_PASS=$(jq --raw-output '.samba_password // "homeassistant"' "$CONFIG_PATH")
+FB_USER=$(jq --raw-output '.filebrowser_username // "admin"' "$CONFIG_PATH")
+FB_PASS=$(jq --raw-output '.filebrowser_password // "ChangeMe12345!"' "$CONFIG_PATH")
+
+# File Browser refuses passwords shorter than 12 characters
+if [ "${#FB_PASS}" -lt 12 ]; then
+    echo "ERROR: filebrowser_password must be at least 12 characters. Fix it in the Configuration tab."
+    exit 1
+fi
 
 echo "Starting Samba File Sharing..."
 
@@ -67,13 +75,11 @@ INGRESS_ENTRY=$(curl -fsS -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
     http://supervisor/addons/self/info | jq -r '.data.ingress_entry')
 echo "Ingress path: ${INGRESS_ENTRY}"
 
-# File Browser: no login screen (HA already logged you in through ingress)
-if [ ! -f /data/filebrowser.db ]; then
-    filebrowser config init --database /data/filebrowser.db --auth.method=noauth
-    filebrowser users add admin 'AdminPassword123!' --perm.admin=true --database /data/filebrowser.db
-fi
-# Keep these in sync every start (ingress path / root can change)
+# File Browser: rebuild the login from your Configuration tab on every start
+rm -f /data/filebrowser.db
+filebrowser config init --database /data/filebrowser.db --auth.method=json
 filebrowser config set --database /data/filebrowser.db --root /config --baseurl "${INGRESS_ENTRY}" >/dev/null
+filebrowser users add "$FB_USER" "$FB_PASS" --perm.admin=true --database /data/filebrowser.db
 
 filebrowser --database /data/filebrowser.db --address 127.0.0.1 --port 8081 &
 
