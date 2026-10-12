@@ -1,0 +1,24 @@
+# iCloud Lite
+
+Tracks the Apple devices you pick, from as many iCloud accounts as you want, and publishes them to Home Assistant over MQTT. No dashboards, no stationary zones.
+
+## Requirements
+- The **Mosquitto broker** add-on (or any MQTT broker) plus the MQTT integration in Home Assistant.
+
+## Use
+1. Start the add-on and open **iCloud Lite** in the sidebar.
+2. Add an Apple ID + password.
+3. Type the 6-digit code Apple sends to your trusted device.
+4. Tick the devices to track and set the update interval, then **Save**.
+5. Repeat for any other Apple ID.
+
+Each device shows up as a `device_tracker` plus a battery sensor. Home Assistant's own zones decide home/away.
+
+## Options (only if you don't use the Mosquitto add-on)
+`mqtt_host`, `mqtt_port`, `mqtt_username`, `mqtt_password`. Leave blank to auto-detect.
+
+## Notes
+- Each update asks Apple to actively locate your devices. The fresh fix lands on the next update.
+- Passwords are stored in this add-on's private `/data` folder.
+- A failed login is retried only every 30 minutes, so Apple doesn't lock the account. Use **Retry login** in the UI to force it.
+- Apple asks for a new 2FA code every so often. The account card will show it.

@@ -1,19 +1,14 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/aarch64-base:latest
 FROM ${BUILD_FROM}
 
-# Install Python and jq so we can read configuration settings
-RUN \
-    apk add --no-cache \
-        python3 \
-        py3-pip \
-        jq
+RUN apk add --no-cache python3 py3-pip build-base libffi-dev openssl-dev
 
-# Copy all your source files into the container
-COPY . /app
 WORKDIR /app
+COPY requirements.txt .
+RUN python3 -m venv /venv \
+    && /venv/bin/pip install --no-cache-dir -r requirements.txt
 
-# Set up the startup script
-COPY run.sh /run.sh
-RUN chmod a+x /run.sh
+COPY main.py run.sh ./
+RUN chmod a+x /app/run.sh
 
-CMD [ "/run.sh" ]
+CMD ["/app/run.sh"]
