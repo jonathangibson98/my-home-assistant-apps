@@ -1,0 +1,23 @@
+{
+  "name": "iCloud Lite",
+  "version": "1.0.0",
+  "slug": "icloud_lite",
+  "description": "Lightweight iCloud location and device tracker add-on",
+  "url": "https://github.com/jonathangibson98/ha-icloud-lite",
+  "startup": "application",
+  "boot": "auto",
+  "arch": ["aarch64", "amd64", "armhf", "armv7", "i386"],
+  "codenotary": false,
+  "options": {
+    "scan_interval": 60,
+    "username": "",
+    "password": ""
+  },
+  "schema": {
+    "scan_interval": "int",
+    "username": "str",
+    "password": "password"
+  },
+  "homeassistant_api": true,
+  "restart_policy": "always"
+}
