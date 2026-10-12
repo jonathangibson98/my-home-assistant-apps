@@ -1,4 +1,4 @@
-ARG BUILD_FROM
+ARG BUILD_FROM=ghcr.io/hassio-addons/base/aarch64:15.0.0
 FROM ${BUILD_FROM}
 
 # Install code-server and utilities for handling folders/zips
