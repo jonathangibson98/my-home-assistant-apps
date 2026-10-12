@@ -24,7 +24,7 @@ def place(pid, name, zone, who, mode="any", dwell=5, title="", extra="", days=No
 
 DEFAULT = {
     "settings": {
-        "enabled": True, "ai_entity": "ai_task.gemini_pro_ai_task", "notify_service": "notify.household",
+        "enabled": True, "mention_present": True, "ai_entity": "ai_task.gemini_pro_ai_task", "notify_service": "notify.household",
         "timezone": "America/New_York", "max_chars": 256, "cooldown_min": 10, "style": DEFAULT_STYLE,
         "fallback": "{who} just pulled up to {place}!", "context_entity": "sensor.combined_info",
         "context_attribute": "content", "locations_entity": "sensor.household_locations",
@@ -69,8 +69,9 @@ def save_cfg(c):
     with open(CFG_PATH, "w") as f:
         json.dump(c, f, indent=2)
 
-def fmt(t, who, plc):
-    return (t or "").replace("{who}", who).replace("{place}", plc)
+def fmt(t, who, plc, present=None):
+    p = " and ".join(present) if present else "nobody"
+    return (t or "").replace("{who}", who).replace("{place}", plc).replace("{present}", p)
 
 class App:
     def __init__(self):
@@ -129,13 +130,15 @@ class App:
     def name_of(self, eid):
         return next((p["name"] for p in self.cfg["people"] if p.get("entity_id") == eid), eid)
 
-    def who_text(self, plc, trigger):
+    def arrivers(self, plc, trigger):
         ids = self.who_ids(plc)
         if plc.get("mode") == "all" or not trigger:
-            names = [self.name_of(e) for e in ids if trigger is None or self.in_zone(e, plc["zone"])]
-        else:
-            names = [self.name_of(trigger)]
-        return " and ".join(names) if names else "Someone"
+            return [e for e in ids if trigger is None or self.in_zone(e, plc["zone"])]
+        return [trigger]
+
+    def present_names(self, plc, arr):
+        return [p["name"] for p in self.cfg["people"] if p.get("entity_id")
+                and p["entity_id"] not in arr and self.in_zone(p["entity_id"], plc["zone"])]
 
     # ---------- events ----------
     def handle_state(self, eid, new):
@@ -199,7 +202,7 @@ class App:
             self.note(pid, "error", str(e))
 
     # ---------- message ----------
-    async def generate(self, plc, who):
+    async def generate(self, plc, who, present):
         s = self.cfg["settings"]
         now = datetime.now(ZoneInfo(s.get("timezone") or "America/New_York")).strftime("%A, %B %-d %Y %-I:%M %p %Z")
         ctx = await self.get_state(s.get("context_entity"))
@@ -216,6 +219,12 @@ class App:
             parts.append("Our Locations: " + json.dumps(locs.get("attributes", {}), ensure_ascii=False) +
                          '\n\nUse this to understand when "tonight", "it is 5:00PM", "this morning", "Friday", etc. refers to.')
         parts.append(f"Event: {who} just arrived at {plc['name']}." + (" " + plc["extra"] if plc.get("extra") else ""))
+        if s.get("mention_present", True):
+            if present:
+                parts.append(f"Already at {plc['name']} when they got there: {', '.join(present)}. "
+                             "Call them out in the message too.")
+            else:
+                parts.append(f"Nobody else is at {plc['name']} yet, so they are showing up to an empty spot.")
         parts.append(plc.get("custom_prompt") or s.get("style") or DEFAULT_STYLE)
         parts.append(f"Keep it within {s.get('max_chars', 256)} characters when read.\nNo markdown, no formatting, just plain text.")
         try:
@@ -227,12 +236,14 @@ class App:
                 return str(text).strip(), False
         except Exception as e:
             log.warning("AI task failed: %s", e)
-        return fmt(s.get("fallback") or "{who} arrived at {place}", who, plc["name"]), True
+        return fmt(s.get("fallback") or "{who} arrived at {place}", who, plc["name"], present), True
 
     async def fire(self, plc, trigger, send):
-        who = self.who_text(plc, trigger)
-        text, fell_back = await self.generate(plc, who)
-        title = fmt(plc.get("title") or "{who} arrived at {place}", who, plc["name"])
+        arr = self.arrivers(plc, trigger)
+        who = " and ".join(self.name_of(e) for e in arr) or "Someone"
+        present = self.present_names(plc, arr)
+        text, fell_back = await self.generate(plc, who, present)
+        title = fmt(plc.get("title") or "{who} arrived at {place}", who, plc["name"], present)
         if send:
             dom, _, svc = self.cfg["settings"]["notify_service"].partition(".")
             await self.call(dom, svc, {"title": title, "message": text})
