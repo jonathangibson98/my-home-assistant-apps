@@ -103,7 +103,7 @@ def write_yaml(path, data, header):
     if os.path.exists(path):
         shutil.copy(path, f"{BAK}/{stem}-{time.strftime('%Y%m%d-%H%M%S')}.yaml")
         mine = sorted(f for f in os.listdir(BAK) if f.startswith(stem + "-"))
-        for old in mine[:-20]:
+        for old in mine[:-5]:
             os.remove(f"{BAK}/{old}")
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
