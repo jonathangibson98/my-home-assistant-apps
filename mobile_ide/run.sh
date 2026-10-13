@@ -1,12 +1,25 @@
 #!/usr/bin/with-contenv bash
 CONFIG_PATH=/data/options.json
 
-# Define a persistent folder for this addon inside addon_configs
-ADDON_CONFIG_DIR="/addon_configs/mobile_file_manager"
-mkdir -p "$ADDON_CONFIG_DIR"
+# /data is the add-on's own persistent storage. Home Assistant guarantees it
+# survives restarts, updates and rebuilds, and includes it in backups.
+# (The old /addon_configs/mobile_file_manager folder is only used to migrate
+# an existing database over, one time.)
+PERSIST_DIR="${PERSIST_DIR:-/data}"
+LEGACY_DIR="${LEGACY_DIR:-/addon_configs/mobile_file_manager}"
+mkdir -p "$PERSIST_DIR"
 
-SETTINGS_FILE="$ADDON_CONFIG_DIR/settings.json"
-FB_DB="$ADDON_CONFIG_DIR/filebrowser.db"
+SETTINGS_FILE="$PERSIST_DIR/settings.json"
+FB_DB="$PERSIST_DIR/filebrowser.db"
+
+# One-time migration from the old location so nothing already saved is lost
+if [ ! -f "$FB_DB" ] && [ -f "$LEGACY_DIR/filebrowser.db" ]; then
+    echo "Migrating existing File Browser database from $LEGACY_DIR"
+    cp -p "$LEGACY_DIR/filebrowser.db" "$FB_DB"
+fi
+if [ ! -f "$SETTINGS_FILE" ] && [ -f "$LEGACY_DIR/settings.json" ]; then
+    cp -p "$LEGACY_DIR/settings.json" "$SETTINGS_FILE"
+fi
 
 # ---- Persistent settings -------------------------------------------------
 DEFAULTS='{"samba_username":"samba_user","samba_password":"changeme","filebrowser_username":"admin","filebrowser_password":"ChangeMe12345!","root_access":false}'
@@ -111,16 +124,35 @@ INGRESS_ENTRY=$(curl -fsS -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
     http://supervisor/addons/self/info | jq -r '.data.ingress_entry')
 echo "Ingress path: ${INGRESS_ENTRY}"
 
-# Initialize the persistent File Browser database only if it doesn't already exist
-if [ ! -f "$FB_DB" ]; then
+# >>> FB-DB-BEGIN
+# File Browser database = all your UI preferences (single click, dotfiles,
+# theme, language, etc). It is created ONCE and then reused on every restart.
+if [ "$ROOT_ACCESS" = "true" ]; then FB_ROOT="/"; else FB_ROOT="/config"; fi
+
+if [ -f "$FB_DB" ]; then
+    echo ">>> File Browser: existing database found - your saved preferences are kept"
+    # Safety net: keep a copy from the last good start
+    cp -p "$FB_DB" "$FB_DB.bak"
+else
+    echo ">>> File Browser: NO database found - creating a fresh one (defaults, first run only)"
     filebrowser config init --database "$FB_DB" --auth.method=proxy --auth.header=X-Forwarded-User
-    if [ "$ROOT_ACCESS" = "true" ]; then FB_ROOT="/"; else FB_ROOT="/config"; fi
-    filebrowser config set --database "$FB_DB" --root "$FB_ROOT" --baseURL "${INGRESS_ENTRY}" >/dev/null
+fi
+
+# Applied on every start (cheap, and leaves user preferences alone) so that
+# toggling root_access or a changed ingress path actually takes effect.
+# NOTE: these CLI commands only work while the server is NOT running (DB lock).
+filebrowser config set --database "$FB_DB" --root "$FB_ROOT" --baseURL "${INGRESS_ENTRY}" >/dev/null
+
+# Make sure the login user exists, but never touch an existing user
+if ! filebrowser users ls --database "$FB_DB" 2>/dev/null | awk '$1 ~ /^[0-9]+$/ {print $2}' | grep -qx -- "$FB_USER"; then
+    echo ">>> File Browser: creating user ${FB_USER}"
     filebrowser users add "$FB_USER" "$FB_PASS" --perm.admin=true --database "$FB_DB"
 fi
+# <<< FB-DB-END
 
 # Run File Browser pointing to the persistent database file
 filebrowser --database "$FB_DB" --address 127.0.0.1 --port 8081 &
+FB_PID=$!
 
 # Nginx setup
 cat > /etc/nginx/nginx.conf << NGINX
@@ -151,4 +183,9 @@ http {
 }
 NGINX
 
-exec nginx -g 'daemon off;'
+nginx -g 'daemon off;' &
+NGINX_PID=$!
+
+# On stop, shut File Browser down cleanly so its database is closed properly
+trap 'echo "Stopping..."; kill -TERM "$FB_PID" 2>/dev/null; wait "$FB_PID" 2>/dev/null; kill -TERM "$NGINX_PID" 2>/dev/null; exit 0' TERM INT
+wait "$NGINX_PID"
