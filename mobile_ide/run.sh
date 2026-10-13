@@ -1,10 +1,30 @@
 #!/usr/bin/with-contenv bash
 CONFIG_PATH=/data/options.json
-SAMBA_USER=$(jq --raw-output '.samba_username // "samba_user"' "$CONFIG_PATH")
-SAMBA_PASS=$(jq --raw-output '.samba_password // "homeassistant"' "$CONFIG_PATH")
-FB_USER=$(jq --raw-output '.filebrowser_username // "admin"' "$CONFIG_PATH")
-ROOT_ACCESS=$(jq --raw-output '.root_access // false' "$CONFIG_PATH")
-FB_PASS=$(jq --raw-output '.filebrowser_password // "ChangeMe12345!"' "$CONFIG_PATH")
+SETTINGS_FILE=/config/mobile_file_manager_settings.json
+
+# ---- Persistent settings -------------------------------------------------
+# Anything you change in the Configuration tab is saved to SETTINGS_FILE.
+# If the add-on is reinstalled (Configuration tab back to defaults), the
+# saved values are restored from that file.
+DEFAULTS='{"samba_username":"samba_user","samba_password":"changeme","filebrowser_username":"admin","filebrowser_password":"ChangeMe12345!","root_access":false}'
+SAVED='{}'
+if [ -f "$SETTINGS_FILE" ] && jq -e . "$SETTINGS_FILE" >/dev/null 2>&1; then
+    SAVED=$(cat "$SETTINGS_FILE")
+fi
+MERGED=$(jq -n --argjson d "$DEFAULTS" --argjson o "$(cat "$CONFIG_PATH")" --argjson s "$SAVED" '
+  reduce ($d | keys[]) as $k ({};
+    ($o[$k]) as $ov
+    | .[$k] = (if ($ov != null and $ov != $d[$k]) then $ov
+               elif ($s[$k] != null) then $s[$k]
+               else $d[$k] end))')
+echo "$MERGED" > "$SETTINGS_FILE" && chmod 600 "$SETTINGS_FILE"
+echo "Settings saved to $SETTINGS_FILE"
+
+SAMBA_USER=$(echo "$MERGED" | jq -r '.samba_username')
+SAMBA_PASS=$(echo "$MERGED" | jq -r '.samba_password')
+FB_USER=$(echo "$MERGED" | jq -r '.filebrowser_username')
+FB_PASS=$(echo "$MERGED" | jq -r '.filebrowser_password')
+ROOT_ACCESS=$(echo "$MERGED" | jq -r '.root_access')
 
 # File Browser refuses passwords shorter than 12 characters
 if [ "${#FB_PASS}" -lt 12 ]; then
@@ -22,7 +42,7 @@ getent group samba_group >/dev/null || addgroup -g 1000 samba_group
 id "$SAMBA_USER" >/dev/null 2>&1 || adduser -D -H -G samba_group "$SAMBA_USER"
 rm -f /var/lib/samba/private/passdb.tdb
 printf '%s\n%s\n' "$SAMBA_PASS" "$SAMBA_PASS" | smbpasswd -a -s "$SAMBA_USER"
-echo "Samba user: ${SAMBA_USER}"
+echo "Samba user: ${SAMBA_USER} (password length: ${#SAMBA_PASS})"
 
 # force user = root so you can actually WRITE to /config, /share, /media
 cat > /etc/samba/smb.conf << SMB
@@ -72,6 +92,16 @@ SMB
 # Run Samba in the foreground-but-backgrounded so errors show in the add-on log
 nmbd --foreground --no-process-group --debug-stdout &
 smbd --foreground --no-process-group --debug-stdout &
+
+# Self-test: log in to our own Samba with the saved password
+(
+    sleep 6
+    if smbclient -L //127.0.0.1 -U "${SAMBA_USER}%${SAMBA_PASS}" >/dev/null 2>&1; then
+        echo ">>> SAMBA SELF-TEST: login OK for user ${SAMBA_USER}"
+    else
+        echo ">>> SAMBA SELF-TEST: login FAILED for user ${SAMBA_USER}"
+    fi
+) &
 
 echo "Starting File Browser UI..."
 

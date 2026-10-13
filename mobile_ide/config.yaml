@@ -1,6 +1,6 @@
 name: "Mobile File Manager & Samba"
 description: "A mobile-optimized file manager with folder uploads and native Samba share integration."
-version: "2.4.1"
+version: "2.5.0"
 slug: "mobile_file_manager"
 init: false
 arch:

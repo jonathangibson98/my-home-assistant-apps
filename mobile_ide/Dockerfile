@@ -5,6 +5,7 @@ FROM ${BUILD_FROM}
 RUN apk add --no-cache \
     samba \
     samba-common-tools \
+    samba-client \
     nginx \
     bash \
     curl \
