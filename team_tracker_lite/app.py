@@ -18,9 +18,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import paho.mqtt.client as mqtt
 
-DATA = os.environ.get("TTL_DATA", "/data")
+VERSION = "0.2.0"
+# Settings live in the add-on's config folder (/addon_configs/<id>_team_tracker_lite/data on the host).
+DATA = os.environ.get("TTL_DATA", "/config/data")
 SETTINGS_FILE = os.path.join(DATA, "settings.json")
-OPTIONS_FILE = os.path.join(DATA, "options.json")
+OPTIONS_FILE = os.environ.get("TTL_OPTIONS", "/data/options.json")  # written by Supervisor
 HERE = os.path.dirname(os.path.abspath(__file__))
 ALLOW_ANY = os.environ.get("TTL_ALLOW_ANY") == "1"  # local testing only
 
@@ -65,12 +67,14 @@ LAST = {"state": "NOT_FOUND", "attributes": {"api_message": "Starting up"}, "at"
 TEAM_CACHE = {}
 CLIENT = None
 MQTT_OK = False
-IDLE = 600
-LIVE = 15
+PREV = None  # (active team key, state) - used to log only real state changes
+LEVELS = {"debug": 10, "info": 20, "warning": 30, "error": 40}
+LOG_LEVEL = LEVELS["info"]
 
 
-def log(*a):
-    print(time.strftime("%H:%M:%S"), *a, flush=True)
+def log(level, *a):
+    if LEVELS.get(level, 20) >= LOG_LEVEL:
+        print(time.strftime("%H:%M:%S"), f"[{level.upper()}]", *a, flush=True)
 
 
 # ---------------------------------------------------------------- settings
@@ -87,7 +91,33 @@ def load_settings():
     s.setdefault("sensor_name", "Team Tracker")
     s.setdefault("favorites", [])
     s.setdefault("active", None)
+    s["idle_minutes"] = clamp(s.get("idle_minutes"), 1, 60, 10)
+    s["live_seconds"] = clamp(s.get("live_seconds"), 5, 120, 15)
     return s
+
+
+def clamp(v, lo, hi, default):
+    try:
+        return max(lo, min(hi, int(v)))
+    except (TypeError, ValueError):
+        return default
+
+
+def init_storage():
+    """Make sure the settings folder exists and is writable; fall back to /data if not."""
+    global DATA, SETTINGS_FILE
+    try:
+        os.makedirs(DATA, exist_ok=True)
+        probe = os.path.join(DATA, ".write_test")
+        with open(probe, "w") as f:
+            f.write("ok")
+        os.remove(probe)
+    except OSError as e:
+        log("warning", f"Cannot write to {DATA} ({e}); falling back to /data. "
+                       "Settings will not appear in addon_configs.")
+        DATA = "/data"
+        SETTINGS_FILE = os.path.join(DATA, "settings.json")
+        os.makedirs(DATA, exist_ok=True)
 
 
 def save_settings():
@@ -96,6 +126,7 @@ def save_settings():
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(S, f, indent=2)
     os.replace(tmp, SETTINGS_FILE)
+    log("debug", "Settings saved to", SETTINGS_FILE)
 
 
 def slug(name):
@@ -112,6 +143,7 @@ def active_fav():
 
 # -------------------------------------------------------------------- ESPN
 def http_json(url, timeout=15):
+    log("debug", "GET", url)
     req = urllib.request.Request(url, headers=UA)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
@@ -350,7 +382,7 @@ def mqtt_settings():
                 d = json.loads(r.read().decode())["data"]
             return d["host"], int(d["port"]), d.get("username"), d.get("password")
         except Exception as e:
-            log("Supervisor MQTT lookup failed:", e)
+            log("warning", "Supervisor MQTT lookup failed:", e)
     return None
 
 
@@ -399,8 +431,16 @@ def publish_select_state():
 
 
 def publish_sensor(state, attrs):
+    global PREV
     with LOCK:
         LAST.update(state=state, attributes=attrs, at=datetime.now(timezone.utc).isoformat())
+        tag = (S.get("active"), state)
+    if tag != PREV:
+        PREV = tag
+        log("info", f"Sensor is now {state}: {attrs.get('team_abbr') or attrs.get('team_name') or '-'} "
+                    f"vs {attrs.get('opponent_abbr') or '-'} ({attrs.get('api_message')})")
+    else:
+        log("debug", f"Sensor {state}: {attrs.get('team_score')}-{attrs.get('opponent_score')}")
     pub(T_STATE, state)
     pub(T_ATTR, json.dumps(attrs, default=str))
 
@@ -408,10 +448,10 @@ def publish_sensor(state, attrs):
 def on_connect(client, userdata, flags, reason_code, properties=None):
     global MQTT_OK
     if reason_code.is_failure:
-        log("MQTT connect failed:", reason_code)
+        log("error", "MQTT connect failed:", reason_code)
         return
     MQTT_OK = True
-    log("MQTT connected")
+    log("info", "MQTT connected")
     pub(T_AVAIL, "online")
     publish_discovery()
     client.subscribe(T_SEL_SET)
@@ -424,7 +464,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
 def on_disconnect(client, userdata, flags, reason_code, properties=None):
     global MQTT_OK
     MQTT_OK = False
-    log("MQTT disconnected:", reason_code)
+    log("warning", "MQTT disconnected:", reason_code)
 
 
 def on_message(client, userdata, msg):
@@ -447,15 +487,16 @@ def mqtt_start():
     global CLIENT
     cfg = mqtt_settings()
     if not cfg:
-        log("No MQTT broker configured - set mqtt_host in the add-on Configuration tab")
+        log("error", "No MQTT broker configured - set mqtt_host in the add-on Configuration tab")
         return
     host, port, user, pw = cfg
-    log(f"MQTT broker: {host}:{port}")
+    log("info", f"MQTT broker: {host}:{port}")
     c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="team_tracker_lite")
     if user:
         c.username_pw_set(user, pw)
     c.will_set(T_AVAIL, "offline", qos=1, retain=True)
     c.on_connect, c.on_disconnect, c.on_message = on_connect, on_disconnect, on_message
+    c.on_log = lambda cl, ud, lvl, buf: log("debug", "paho:", buf)
     c.reconnect_delay_set(min_delay=2, max_delay=60)
     CLIENT = c
     c.connect_async(host, port, keepalive=60)
@@ -464,6 +505,8 @@ def mqtt_start():
 
 # ------------------------------------------------------------------ polling
 def poll_once():
+    with LOCK:
+        IDLE, LIVE = S["idle_minutes"] * 60, S["live_seconds"]
     fav = active_fav()
     if not fav:
         publish_sensor("NOT_FOUND", {"api_message": "No team selected. Open the Team Tracker panel and pick one."})
@@ -492,7 +535,7 @@ def poll_once():
                 if state_of(fresh) == "post":
                     wait = 120
         except Exception as e:
-            log("scoreboard fetch failed, using schedule data:", e)
+            log("warning", "Live scoreboard fetch failed, using schedule data:", e)
     elif st == "pre" and when:
         secs = (when - now).total_seconds() - 600
         wait = int(min(IDLE, max(LIVE, secs)))
@@ -511,9 +554,10 @@ def poll_loop():
         try:
             wait = poll_once()
         except Exception as e:
-            log("poll error:", e)
+            log("error", "Poll failed:", e)
             publish_sensor("NOT_FOUND", {"api_message": f"ESPN request failed: {e}"})
             wait = 60
+        log("debug", f"Next check in {wait}s")
         WAKE.wait(wait)
 
 
@@ -521,8 +565,8 @@ def poll_loop():
 class Handler(BaseHTTPRequestHandler):
     server_version = "TeamTrackerLite/0.1"
 
-    def log_message(self, *a):
-        pass
+    def log_message(self, fmt, *a):
+        log("debug", "http", fmt % a)
 
     def send_body(self, code, body, ctype="application/json"):
         b = body if isinstance(body, bytes) else json.dumps(body).encode()
@@ -590,6 +634,7 @@ class Handler(BaseHTTPRequestHandler):
                         "abbr": str(body.get("abbr") or "")[:10], "name": name,
                         "logo": str(body.get("logo") or "")[:300], "label": f"{lid} {name}",
                     })
+                    log("info", f"Added team: {name} ({lid})")
                 if not S["active"]:
                     S["active"] = key
                 save_settings()
@@ -599,12 +644,14 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_body(400, {"error": "unknown team"})
                 S["active"] = body["key"]
                 save_settings()
+            log("info", "Now tracking", body["key"])
         elif p == "/api/remove":
             with LOCK:
                 S["favorites"] = [f for f in S["favorites"] if f["key"] != body.get("key")]
                 if S["active"] == body.get("key"):
                     S["active"] = S["favorites"][0]["key"] if S["favorites"] else None
                 save_settings()
+            log("info", "Removed team", body.get("key"))
         elif p == "/api/name":
             name = str(body.get("name") or "").strip()[:60]
             if not name:
@@ -612,6 +659,13 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 S["sensor_name"] = name
                 save_settings()
+            log("info", "Sensor renamed to", name)
+        elif p == "/api/rates":
+            with LOCK:
+                S["idle_minutes"] = clamp(body.get("idle_minutes"), 1, 60, S["idle_minutes"])
+                S["live_seconds"] = clamp(body.get("live_seconds"), 5, 120, S["live_seconds"])
+                save_settings()
+            log("info", f"Refresh speed: every {S['idle_minutes']} min idle, {S['live_seconds']}s during games")
         elif p == "/api/refresh":
             pass
         else:
@@ -623,14 +677,17 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global OPTS, S, IDLE, LIVE
+    global OPTS, S, LOG_LEVEL
     OPTS = load_json(OPTIONS_FILE, {})
+    LOG_LEVEL = LEVELS.get(str(OPTS.get("log_level") or "info").lower(), 20)
+    init_storage()
     S = load_settings()
-    IDLE = max(1, int(OPTS.get("idle_minutes") or 10)) * 60
-    LIVE = max(5, int(OPTS.get("live_seconds") or 15))
+    log("info", f"Team Tracker Lite {VERSION} starting (log level: {OPTS.get('log_level') or 'info'})")
+    log("info", f"Settings file: {SETTINGS_FILE} ({len(S['favorites'])} saved teams)")
+    log("info", f"Refresh: every {S['idle_minutes']} min idle, {S['live_seconds']}s during games")
     mqtt_start()
     threading.Thread(target=poll_loop, daemon=True).start()
-    log("Web UI on port 8099")
+    log("info", "Web UI on port 8099")
     ThreadingHTTPServer(("0.0.0.0", 8099), Handler).serve_forever()
 
 

@@ -64,6 +64,7 @@
   .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); display: inline-block; }
   .dot.ok { background: var(--good); }
   #msg { min-height: 1.3em; margin-top: 8px; color: var(--bad); font-size: .9rem; }
+  #msg.ok { color: var(--good); }
 </style>
 </head>
 <body>
@@ -79,6 +80,14 @@
   <label>Find a team <input id="filter" type="search" placeholder="Start typing a team name" autocomplete="off"></label>
   <label>Team <select id="team" size="1"></select></label>
   <button class="primary" id="add" disabled>Add team</button>
+</div>
+
+<h2>How often to refresh</h2>
+<div class="card form">
+  <label>When no game is live
+    <select id="idle"></select></label>
+  <label>During a game
+    <select id="live"></select></label>
 </div>
 
 <h2>Sensor name</h2>
@@ -103,7 +112,7 @@ function el(tag, attrs, ...kids) {
   for (const k of kids) n.append(k);
   return n;
 }
-const say = (t) => { $("msg").textContent = t || ""; };
+const say = (t, ok) => { $("msg").textContent = t || ""; $("msg").className = ok ? "ok" : ""; };
 let teams = [], lastNameSeen = null;
 
 function sideBlock(a, p) {
@@ -158,13 +167,15 @@ function draw(s) {
   drawTeams(s);
   $("dot").className = "dot" + (s.mqtt ? " ok" : "");
   $("mq").textContent = s.mqtt ? "Connected to MQTT" : "Not connected to MQTT. Check the add-on options.";
+  if (document.activeElement !== $("idle")) $("idle").value = String(s.settings.idle_minutes);
+  if (document.activeElement !== $("live")) $("live").value = String(s.settings.live_seconds);
   if (document.activeElement !== $("sname") && lastNameSeen !== s.settings.sensor_name) {
     $("sname").value = s.settings.sensor_name; lastNameSeen = s.settings.sensor_name;
   }
 }
 
 async function act(path, body) {
-  try { say(""); draw(await api(path, body)); } catch (e) { say(e.message); }
+  try { say(""); draw(await api(path, body)); return true; } catch (e) { say(e.message); return false; }
 }
 
 function fillTeams() {
@@ -188,10 +199,15 @@ $("add").addEventListener("click", () => {
   const t = teams.find(x => x.id === $("team").value);
   if (t) act("favorites", {league: $("league").value, team_id: t.id, abbr: t.abbr, name: t.name, logo: t.logo});
 });
-$("savename").addEventListener("click", () => act("name", {name: $("sname").value}));
+$("savename").addEventListener("click", () => act("name", {name: $("sname").value}).then(ok => ok && say("Name saved", true)));
+const saveRates = () => act("rates", {idle_minutes: +$("idle").value, live_seconds: +$("live").value}).then(ok => ok && say("Refresh speed saved", true));
+$("idle").addEventListener("change", saveRates);
+$("live").addEventListener("change", saveRates);
 $("refresh").addEventListener("click", () => act("refresh", {}));
 
 (async function init() {
+  for (const m of [1, 2, 5, 10, 15, 30, 60]) $("idle").append(el("option", {value: m}, "Every " + m + (m === 1 ? " minute" : " minutes")));
+  for (const n of [5, 10, 15, 30, 60, 120]) $("live").append(el("option", {value: n}, "Every " + n + " seconds"));
   const leagues = await api("leagues");
   for (const l of leagues) $("league").append(el("option", {value: l.id}, l.label));
   draw(await api("state"));
