@@ -5,8 +5,7 @@
 | What | Path |
 |---|---|
 | Main data file | `/homeassistant/ai_memory/people.yaml` |
-| Backups (last 20) | `/homeassistant/ai_memory/backups/` |
-| Import source (first run only) | `/homeassistant/ai_memory/memory/merged.yaml` |
+| Backups (last 5) | `/homeassistant/ai_memory/backups/` |
 
 ## Using the UI
 
@@ -17,6 +16,5 @@
 
 ## Notes
 
-- After the first import, this app is the source of truth. Changes made to `merged.yaml` elsewhere will not flow into `people.yaml`.
 - If two copies of the app run at once, the last save wins.
 - The `homeassistant_config:rw` mapping is what lets the app read and write your config folder.
