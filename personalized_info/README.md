@@ -6,9 +6,9 @@ Edit everyone's info and music preferences from a clean, phone-friendly UI insid
 
 - **People tab**: a collapsible card per person (household and friends). Add, edit, or delete fields, lists, and groups.
 - **Music tab**: genres and artists for each person, one per line.
-- **Other tab**: any leftover sections imported from your old `merged.yaml`.
+- **Other tab**: any leftover sections that you want to add.
 - **Crash-proof storage**: all data lives in `/homeassistant/ai_memory/people.yaml`. You can hand-edit it.
-- **Automatic backups**: every save copies the previous file into `/homeassistant/ai_memory/backups/` (last 20 kept).
+- **Automatic backups**: every save copies the previous file into `/homeassistant/ai_memory/backups/` (last 5 kept).
 
 ## Install
 
@@ -20,6 +20,6 @@ Edit everyone's info and music preferences from a clean, phone-friendly UI insid
 
 Copy any file from `/homeassistant/ai_memory/backups/` over `/homeassistant/ai_memory/people.yaml`, then restart the app.
 
-## Re-import from merged.yaml
+## Restart saved info file from `*.yaml`
 
-Delete `people.yaml` and restart the app. It will rebuild from `/homeassistant/ai_memory/memory/merged.yaml`.
+Delete `people.yaml`,`music.yaml`,`places.yaml` and restart the app. It will rebuild from `/homeassistant/ai_memory/memory/merged.yaml`.
