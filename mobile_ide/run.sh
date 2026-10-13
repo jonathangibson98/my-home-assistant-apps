@@ -1,11 +1,14 @@
 #!/usr/bin/with-contenv bash
 CONFIG_PATH=/data/options.json
-SETTINGS_FILE=/config/mobile_file_manager_settings.json
+
+# Define a persistent folder for this addon inside addon_configs
+ADDON_CONFIG_DIR="/addon_configs/mobile_file_manager"
+mkdir -p "$ADDON_CONFIG_DIR"
+
+SETTINGS_FILE="$ADDON_CONFIG_DIR/settings.json"
+FB_DB="$ADDON_CONFIG_DIR/filebrowser.db"
 
 # ---- Persistent settings -------------------------------------------------
-# Anything you change in the Configuration tab is saved to SETTINGS_FILE.
-# If the add-on is reinstalled (Configuration tab back to defaults), the
-# saved values are restored from that file.
 DEFAULTS='{"samba_username":"samba_user","samba_password":"changeme","filebrowser_username":"admin","filebrowser_password":"ChangeMe12345!","root_access":false}'
 SAVED='{}'
 if [ -f "$SETTINGS_FILE" ] && jq -e . "$SETTINGS_FILE" >/dev/null 2>&1; then
@@ -34,17 +37,17 @@ fi
 
 echo "Starting Samba File Sharing..."
 
-# Folders Samba needs (they don't exist in a fresh Alpine container)
+# Folders Samba needs
 mkdir -p /var/lib/samba/private /var/log/samba /run/samba /var/cache/samba
 
-# Samba login user from your Configuration tab (rebuilt on every start)
+# Samba login user
 getent group samba_group >/dev/null || addgroup -g 1000 samba_group
 id "$SAMBA_USER" >/dev/null 2>&1 || adduser -D -H -G samba_group "$SAMBA_USER"
 rm -f /var/lib/samba/private/passdb.tdb
 printf '%s\n%s\n' "$SAMBA_PASS" "$SAMBA_PASS" | smbpasswd -a -s "$SAMBA_USER"
 echo "Samba user: ${SAMBA_USER} (password length: ${#SAMBA_PASS})"
 
-# force user = root so you can actually WRITE to /config, /share, /media
+# Samba configuration mapping
 cat > /etc/samba/smb.conf << SMB
 [global]
     workgroup = WORKGROUP
@@ -89,11 +92,10 @@ cat > /etc/samba/smb.conf << SMB
     force group = root
 SMB
 
-# Run Samba in the foreground-but-backgrounded so errors show in the add-on log
 nmbd --foreground --no-process-group --debug-stdout &
 smbd --foreground --no-process-group --debug-stdout &
 
-# Self-test: log in to our own Samba with the saved password
+# Self-test
 (
     sleep 6
     if smbclient -L //127.0.0.1 -U "${SAMBA_USER}%${SAMBA_PASS}" >/dev/null 2>&1; then
@@ -105,23 +107,22 @@ smbd --foreground --no-process-group --debug-stdout &
 
 echo "Starting File Browser UI..."
 
-# Ingress lives at a long random path. Ask Supervisor what it is.
 INGRESS_ENTRY=$(curl -fsS -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
     http://supervisor/addons/self/info | jq -r '.data.ingress_entry')
 echo "Ingress path: ${INGRESS_ENTRY}"
 
-# File Browser: rebuild the login from your Configuration tab on every start
-rm -f /data/filebrowser.db
-# Auto-login: File Browser trusts the username nginx sends (only HA can reach nginx)
-filebrowser config init --database /data/filebrowser.db --auth.method=proxy --auth.header=X-Forwarded-User
-if [ "$ROOT_ACCESS" = "true" ]; then FB_ROOT="/"; else FB_ROOT="/config"; fi
-echo "File Browser root: ${FB_ROOT}"
-filebrowser config set --database /data/filebrowser.db --root "$FB_ROOT" --baseURL "${INGRESS_ENTRY}" >/dev/null
-filebrowser users add "$FB_USER" "$FB_PASS" --perm.admin=true --database /data/filebrowser.db
+# Initialize the persistent File Browser database only if it doesn't already exist
+if [ ! -f "$FB_DB" ]; then
+    filebrowser config init --database "$FB_DB" --auth.method=proxy --auth.header=X-Forwarded-User
+    if [ "$ROOT_ACCESS" = "true" ]; then FB_ROOT="/"; else FB_ROOT="/config"; fi
+    filebrowser config set --database "$FB_DB" --root "$FB_ROOT" --baseURL "${INGRESS_ENTRY}" >/dev/null
+    filebrowser users add "$FB_USER" "$FB_PASS" --perm.admin=true --database "$FB_DB"
+fi
 
-filebrowser --database /data/filebrowser.db --address 127.0.0.1 --port 8081 &
+# Run File Browser pointing to the persistent database file
+filebrowser --database "$FB_DB" --address 127.0.0.1 --port 8081 &
 
-# nginx: takes ingress traffic on 8080, adds the ingress prefix, hands to File Browser
+# Nginx setup
 cat > /etc/nginx/nginx.conf << NGINX
 worker_processes 1;
 pid /run/nginx.pid;
