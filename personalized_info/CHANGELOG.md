@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.3.6
+- Changed Backup files it keeps to 5 not 20
+
 ## 0.3.5
 - Bug Fixes
 
