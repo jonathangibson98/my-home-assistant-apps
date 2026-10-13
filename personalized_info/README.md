@@ -12,7 +12,7 @@ Edit everyone's info and music preferences from a clean, phone-friendly UI insid
 
 ## Install
 
-1. Put this folder in `/addons/personalized_info/`.
+1. Download this repo to your apps `/addons/personalized_info/`.
 2. Settings → Apps → Install app → ⋮ → Check for updates.
 3. Install **Personalized Info** from Local apps, start it, and turn on **Show in sidebar**.
 
@@ -20,6 +20,6 @@ Edit everyone's info and music preferences from a clean, phone-friendly UI insid
 
 Copy any file from `/homeassistant/ai_memory/backups/` over `/homeassistant/ai_memory/people.yaml`, then restart the app.
 
-## Restart saved info file from `*.yaml`
+## Restart saved info file
 
-Delete `people.yaml`,`music.yaml`,`places.yaml` and restart the app. It will rebuild from `/homeassistant/ai_memory/memory/merged.yaml`.
+Delete `people.yaml`,`music.yaml`,`places.yaml` and restart the app. It will rebuild in `/homeassistant/ai_memory/*.yaml`.
