@@ -4,6 +4,7 @@ import hashlib
 import html
 import json
 import logging
+import math
 import os
 import secrets
 import time
@@ -64,6 +65,15 @@ class Mqtt:
         self.client.publish(topic, payload if payload is not None else "", retain=retain)
 
 
+def distance_m(lat1, lon1, lat2, lon2):
+    """Great-circle distance in meters."""
+    r = 6371000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = p2 - p1, math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
 # ──────────────────────── Accounts ────────────────────────
 class Account:
     def __init__(self, cfg):
@@ -71,6 +81,9 @@ class Account:
         self.username = cfg["username"]
         self.password = cfg["password"]
         self.interval = int(cfg.get("interval", 5))
+        self.fast_interval = int(cfg.get("fast_interval", 60))  # seconds near zones, 0 = off
+        self.near_distance = int(cfg.get("near_distance", 1500))  # meters outside a zone edge
+        self.poll_note = ""
         self.selected = list(cfg.get("devices", []))
         self.names = dict(cfg.get("names", {}))  # device_id -> custom name for HA
         self.label = cfg.get("label", "")  # tab name in the web UI
@@ -92,6 +105,8 @@ class Account:
             "username": self.username,
             "password": self.password,
             "interval": self.interval,
+            "fast_interval": self.fast_interval,
+            "near_distance": self.near_distance,
             "devices": self.selected,
             "names": self.names,
             "label": self.label,
@@ -170,13 +185,41 @@ class Account:
         self.last_ok = time.time()
         self.message = ""
 
-    def poll(self):
+    def near_zone(self, zones):
+        """Short note if a tracked device is inside/near a zone, else ''."""
+        best = None
+        for dev_id in self.selected:
+            loc = (self.info.get(dev_id) or {}).get("location") or {}
+            lat, lon = loc.get("latitude"), loc.get("longitude")
+            if lat is None or lon is None:
+                continue
+            ts = loc.get("timeStamp")
+            if ts and time.time() - float(ts) / 1000 > 1800:
+                continue  # fix is 30+ min old (phone offline), fast polling would be pointless
+            for z in zones:
+                edge = distance_m(lat, lon, z["lat"], z["lon"]) - z["radius"]
+                if edge <= self.near_distance and (best is None or edge < best[0]):
+                    best = (edge, dev_id, z["name"])
+        if not best:
+            return ""
+        name = self.names.get(best[1]) or self.devices.get(best[1], "Device")
+        return f"{name} {'in' if best[0] <= 0 else 'near'} {best[2]}"
+
+    def poll(self, zones=()):
+        # Default to the slow interval first so a failed poll never hammers Apple
         self.next_poll = time.time() + self.interval * 60
+        self.poll_note = ""
         try:
             self.fetch(locate=True)
         except Exception as err:  # noqa: BLE001
             self.message = f"Update failed: {err}"
             log.warning("%s: %s", self.username, self.message)
+            return
+        if self.fast_interval and zones:
+            note = self.near_zone(zones)
+            if note:
+                self.next_poll = time.time() + self.fast_interval
+                self.poll_note = note
 
 
 def dev_key(acct, dev_id):
@@ -187,6 +230,7 @@ class App:
     def __init__(self):
         self.mqtt = Mqtt()
         self.accounts = {}
+        self.zones = []  # [{"name","lat","lon","radius"}] read from Home Assistant
         self.load()
 
     def load(self):
@@ -310,11 +354,52 @@ class App:
                         if acct.status == "login" or acct.api is None:
                             await self.run_blocking(acct, acct.login)
                     elif acct.status == "ok" and now >= acct.next_poll:
-                        await self.run_blocking(acct, acct.poll)
+                        await self.run_blocking(acct, acct.poll, self.zones)
                     self.sync_account(acct)
                 except Exception:  # noqa: BLE001
                     log.exception("worker error for %s", acct.username)
             await asyncio.sleep(5)
+
+    async def zone_refresher(self):
+        """Read your Home Assistant zones every 5 minutes (needs homeassistant_api)."""
+        token = os.getenv("SUPERVISOR_TOKEN")
+        last_error = None
+        while True:
+            if token:
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            "http://supervisor/core/api/states",
+                            headers={"Authorization": f"Bearer {token}"},
+                            timeout=aiohttp.ClientTimeout(total=30),
+                        ) as resp:
+                            if resp.status != 200:
+                                raise RuntimeError(f"HTTP {resp.status}")
+                            states = await resp.json()
+                    zones = []
+                    for st in states:
+                        eid = st.get("entity_id", "")
+                        attrs = st.get("attributes") or {}
+                        if not eid.startswith("zone.") or attrs.get("passive"):
+                            continue
+                        if attrs.get("latitude") is None or attrs.get("longitude") is None:
+                            continue
+                        zones.append(
+                            {
+                                "name": attrs.get("friendly_name") or eid,
+                                "lat": float(attrs["latitude"]),
+                                "lon": float(attrs["longitude"]),
+                                "radius": float(attrs.get("radius") or 100),
+                            }
+                        )
+                    self.zones = zones
+                    last_error = None
+                    log.info("Loaded %d zone(s) from Home Assistant", len(zones))
+                except Exception as err:  # noqa: BLE001
+                    if str(err) != last_error:
+                        log.warning("Couldn't read zones from Home Assistant: %s", err)
+                        last_error = str(err)
+            await asyncio.sleep(300)
 
     async def mqtt_connector(self):
         """Find broker details (manual options first, then the Supervisor) and connect."""
@@ -409,12 +494,25 @@ def describe(info):
     return " \u00b7 ".join(bits)
 
 
+def update_line(acct):
+    wait = max(0, int(acct.next_poll - time.time()))
+    line = f"Next update in {wait // 60}m {wait % 60}s"
+    return f"{line} \u00b7 FAST: {acct.poll_note}" if acct.poll_note else line
+
+
+def zone_line(zones):
+    if not zones:
+        return "Zones not loaded, so fast mode is off. Check the add-on log."
+    names = ", ".join(z["name"] for z in zones[:6]) + ("..." if len(zones) > 6 else "")
+    return f"Watching {len(zones)} zone(s): {names}"
+
+
 def tab_label(acct):
     base = acct.label or acct.username.split("@")[0]
     return base if acct.status == "ok" else f"\u26a0\ufe0f {base}"
 
 
-def render_account(acct):
+def render_account(acct, zones=()):
     cls = {"ok": "ok", "needs_2fa": "warn", "login": "warn", "error": "bad"}[acct.status]
     label = {
         "ok": "Connected",
@@ -474,11 +572,16 @@ def render_account(acct):
         tracked = "".join(rows) or "<div class='muted'>Nothing added yet. Pick a device above.</div>"
         out.append(
             f"<div class='card'><h3>Tracked devices ({len(acct.selected)})</h3>"
+            f"<div class='muted'>{esc(update_line(acct))}<br>{esc(zone_line(zones))}</div>"
             f"<form method='post' action='save'>{hidden}"
             "<button class='hidden-submit' tabindex='-1'>Save</button>"
             f"{tracked}"
-            "<div class='muted' style='margin-top:12px'>Update every (minutes)</div>"
+            "<div class='muted' style='margin-top:12px'>Update every (minutes) when away from zones</div>"
             f"<input type='number' name='interval' min='1' max='60' value='{acct.interval}'>"
+            "<div class='muted'>Fast updates near zones (seconds, 0 = off)</div>"
+            f"<input type='number' name='fast_interval' min='0' max='300' value='{acct.fast_interval}'>"
+            "<div class='muted'>Count as near a zone within (meters of its edge)</div>"
+            f"<input type='number' name='near_distance' min='0' max='20000' value='{acct.near_distance}'>"
             "<div class='muted'>Tab name</div>"
             f"<input type='text' name='label' value='{esc(acct.label)}' placeholder='{esc(acct.username.split('@')[0])}'>"
             "<button>Save</button></form>"
@@ -519,7 +622,7 @@ def render(app, sel=None):
         for a in accounts
     )
     tabs += f"<a class='tab{' active' if active == 'new' else ''}' href='?a=new'>+ Add</a>"
-    content = render_add() if active == "new" else render_account(app.accounts[active])
+    content = render_add() if active == "new" else render_account(app.accounts[active], app.zones)
     mqtt_line = "MQTT: connected" if app.mqtt.connected else "MQTT: NOT connected (is Mosquitto running?)"
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
@@ -563,6 +666,17 @@ def build_web(app_state):
         if "interval" in data:
             try:
                 acct.interval = max(1, min(60, int(data.get("interval", 5))))
+            except ValueError:
+                pass
+        if "fast_interval" in data:
+            try:
+                value = int(data.get("fast_interval", 60))
+                acct.fast_interval = 0 if value <= 0 else max(30, min(300, value))
+            except ValueError:
+                pass
+        if "near_distance" in data:
+            try:
+                acct.near_distance = max(0, min(20000, int(data.get("near_distance", 1500))))
             except ValueError:
                 pass
         if "label" in data:
@@ -678,7 +792,7 @@ async def main():
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", 8099).start()
     log.info("Web UI up on :8099 with %d saved account(s)", len(state.accounts))
-    await asyncio.gather(state.mqtt_connector(), state.worker())
+    await asyncio.gather(state.mqtt_connector(), state.worker(), state.zone_refresher())
 
 
 if __name__ == "__main__":
