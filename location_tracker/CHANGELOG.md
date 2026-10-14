@@ -12,6 +12,7 @@
 - Page now scrolls sideways on small screens and has a mobile viewport tag.
 
 ### Fixed
+- Device trackers that go Away now send blank coordinates and publish them before the state, so nothing can linger on the map at your house.
 - The Entity ID line in the web UI no longer shows the wrong ID after you rename the sensor. The entity ID is now fixed when the sensor is created.
 - A double quote typed into a label or entity ID can no longer break the device table.
 
