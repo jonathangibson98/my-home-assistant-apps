@@ -1,6 +1,6 @@
 # Changelog
 
-## Latest
+## Latest v0.8.1
 
 ### Added
 - **Sensors to Device Trackers** section in the web UI. Pick a sensor, and it becomes a real `device_tracker` entity.
@@ -16,7 +16,7 @@
 - The Entity ID line in the web UI no longer shows the wrong ID after you rename the sensor. The entity ID is now fixed when the sensor is created.
 - A double quote typed into a label or entity ID can no longer break the device table.
 
-## Earlier
+## Earlier v0.8.0
 
 ### Added
 - Sensor name editable in the web UI, with a permanent unique ID so renaming never creates a duplicate.
