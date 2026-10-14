@@ -10,7 +10,7 @@ except ImportError:
 CONFIG_PATH = "/data/options.json"
 DEVICES_PATH = "/data/devices.json"
 SETTINGS_PATH = "/data/settings.json"
-PLACES_PATH = "/data/places.json"
+TRACKERS_PATH = "/data/trackers.json"
 
 def load_options():
     try:
@@ -37,21 +37,7 @@ def save_devices(entities):
     with open(DEVICES_PATH, "w") as f:
         json.dump(entities, f, indent=2)
 
-def load_places():
-    if os.path.exists(PLACES_PATH):
-        try:
-            with open(PLACES_PATH, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return []
-
-def save_places(places):
-    with open(PLACES_PATH, "w") as f:
-        json.dump(places, f, indent=2)
-
 opts = load_options()
-PLACES = load_places()
 
 # Logging Configuration
 LOG_LEVEL_MAP = {
@@ -90,6 +76,10 @@ def load_settings():
         default = default.split(".", 1)[-1]
         data["name"] = default.replace("_", " ").title()
         changed = True
+    if not data.get("entity_id"):
+        # Fixed when the sensor is first created. Renaming later only changes the display name.
+        data["entity_id"] = "sensor." + slugify(data["name"])
+        changed = True
     if changed:
         save_settings(data)
     return data
@@ -101,9 +91,37 @@ def save_settings(data):
 SETTINGS = load_settings()
 
 def entity_id():
-    return f"sensor.{slugify(SETTINGS['name'])}"
+    return SETTINGS["entity_id"]
 
 cache = {}
+
+# ---------------- Sensors -> device_tracker converters ----------------
+def save_trackers(rows):
+    with open(TRACKERS_PATH, "w") as f:
+        json.dump(rows, f, indent=2)
+
+def load_trackers():
+    rows = []
+    if os.path.exists(TRACKERS_PATH):
+        try:
+            with open(TRACKERS_PATH, "r") as f:
+                rows = json.load(f)
+        except Exception:
+            rows = []
+    changed = False
+    for r in rows:
+        if not r.get("id"):
+            r["id"] = uuid.uuid4().hex[:8]
+            changed = True
+        if not r.get("tracker_id"):
+            r["tracker_id"] = "device_tracker." + slugify(r.get("label", "tracker"))
+            changed = True
+    if changed:
+        save_trackers(rows)
+    return rows
+
+CONV = load_trackers()
+conv_last = {}  # row id -> {"state": "home" | "not_home", "attrs": {...}}
 
 # ---------------- MQTT discovery (gives the sensor a real unique ID) ----------------
 UID = SETTINGS["uid"]
@@ -138,12 +156,45 @@ def mq_publish_state():
     mq.publish(STATE_T, str(last["count"]), qos=1, retain=True)
     mq.publish(ATTR_T, json.dumps(last["attrs"]), qos=1, retain=True)
 
+# ---- device_tracker entities over MQTT ----
+def conv_topics(row):
+    base = f"{BASE_TOPIC}/tracker/{row['id']}"
+    return f"{base}/state", f"{base}/attributes", f"homeassistant/device_tracker/{UID}/{row['id']}/config"
+
+def conv_discovery(row):
+    st, at, _ = conv_topics(row)
+    return {
+        "name": row["label"],
+        "unique_id": f"{UID}_trk_{row['id']}",
+        "default_entity_id": row["tracker_id"],
+        "state_topic": st,
+        "json_attributes_topic": at,
+        "availability_topic": AVAIL_T,
+        "payload_home": "home",
+        "payload_not_home": "not_home",
+        "source_type": "gps",
+        "icon": "mdi:account",
+    }
+
+def conv_publish_row(row):
+    st, at, cfg = conv_topics(row)
+    mq.publish(cfg, json.dumps(conv_discovery(row)), qos=1, retain=True)
+    lastrow = conv_last.get(row["id"])
+    if lastrow:
+        mq.publish(st, lastrow["state"], qos=1, retain=True)
+        mq.publish(at, json.dumps(lastrow["attrs"]), qos=1, retain=True)
+
+def conv_publish_all():
+    for row in list(CONV):
+        conv_publish_row(row)
+
 def on_mq_connect(client, userdata, flags, reason_code, properties=None):
     global mq_ready
     mq_ready = True
     logging.info("Connected to MQTT broker, publishing discovery")
     mq_publish_discovery()
     mq_publish_state()
+    conv_publish_all()
 
 def on_mq_disconnect(client, userdata, *args, **kwargs):
     global mq_ready
@@ -231,18 +282,6 @@ def dist(a, b, c, d):
     x = sin(p/2)**2 + cos(radians(a))*cos(radians(c))*sin(q/2)**2
     return 6371000 * 2 * atan2(sqrt(x), sqrt(1 - x))
 
-def match_place(lat, lon):
-    """Return the name of the closest custom place whose radius contains this point, else None."""
-    best, best_d = None, None
-    for p in PLACES:
-        try:
-            d = dist(lat, lon, float(p["latitude"]), float(p["longitude"]))
-            if d <= float(p.get("radius") or 100) and (best_d is None or d < best_d):
-                best, best_d = p["name"], d
-        except (KeyError, ValueError, TypeError):
-            continue
-    return best
-
 async def state(s, eid):
     async with s.get(f"{API}/states/{eid}", headers=H) as r:
         return await r.json() if r.status == 200 else None
@@ -285,9 +324,6 @@ async def resolve(s, eid, home_state):
                 if dist(lat, lon, za["latitude"], za["longitude"]) <= za.get("radius", 100):
                     return "Home", True
         if st.lower() in ("home", "not_home"):
-            place = match_place(lat, lon)
-            if place:
-                return place, False
             return await city_state(s, lat, lon), False
         return st, False
 
@@ -298,9 +334,8 @@ async def resolve(s, eid, home_state):
     return st, False
 
 async def update(s):
-    global ENT, PLACES
+    global ENT
     ENT = refresh_entities_map()
-    PLACES = load_places()
     attrs, count = {}, 0
     for label, (eid, home_state) in ENT.items():
         val, home = await resolve(s, eid, home_state)
@@ -314,16 +349,89 @@ async def update(s):
 
     await publish(s, count, attrs)
 
+# ---------------- Sensors -> device_tracker conversion ----------------
+async def convert_one(s, row):
+    """Home = your house coordinates. Anything else = away (not_home).
+    Returns None when the source is unavailable, so a restart never flips someone to away."""
+    src = (row.get("entity_id") or "").strip().lower()
+    d = await state(s, src)
+    if not d:
+        return None
+    raw = str(d.get("state", "")).strip()
+    if raw.lower() in ("", "unknown", "unavailable"):
+        return None
+
+    homes = [x.strip().lower() for x in (row.get("home_state") or "home").split(",") if x.strip()]
+    attrs = {"source_sensor": src, "reported_state": raw}
+
+    if raw.lower() in homes:
+        z = await state(s, "zone.home")
+        if z:
+            za = z["attributes"]
+            attrs["latitude"] = za["latitude"]
+            attrs["longitude"] = za["longitude"]
+            attrs["gps_accuracy"] = 0
+        return {"state": "home", "attrs": attrs}
+
+    return {"state": "not_home", "attrs": attrs}
+
+async def publish_tracker_rest(s, row, lastrow):
+    attrs = dict(lastrow["attrs"])
+    attrs["friendly_name"] = row["label"]
+    attrs["source_type"] = "gps"
+    await s.post(f"{API}/states/{row['tracker_id']}", headers=H,
+                 json={"state": lastrow["state"], "attributes": attrs})
+
+async def update_trackers(s):
+    global CONV
+    CONV = load_trackers()
+    for row in CONV:
+        try:
+            res = await convert_one(s, row)
+        except Exception as e:
+            logging.error(f"Tracker '{row.get('label')}' failed: {e}")
+            continue
+        if res is None:
+            continue
+        conv_last[row["id"]] = res
+        logging.info(f"{row['tracker_id']} -> {res['state']} (source: {row['entity_id']})")
+        if mq is None:
+            await publish_tracker_rest(s, row, res)
+    if mq is not None and mq_ready:
+        conv_publish_all()
+
+async def remove_tracker(s, row):
+    conv_last.pop(row["id"], None)
+    st, at, cfg = conv_topics(row)
+    if mq is not None:
+        for t in (cfg, st, at):
+            mq.publish(t, "", qos=1, retain=True)  # empty retained payload deletes the entity
+    else:
+        try:
+            await s.delete(f"{API}/states/{row['tracker_id']}", headers=H)
+        except Exception as e:
+            logging.error(f"Could not remove {row['tracker_id']}: {e}")
+
 async def safe_update(s):
     try:
         await update(s)
     except Exception as e:
         logging.error(f"Update failed: {e}")
 
+async def safe_update_trackers(s):
+    try:
+        await update_trackers(s)
+    except Exception as e:
+        logging.error(f"Tracker update failed: {e}")
+
+async def safe_update_all(s):
+    await safe_update(s)
+    await safe_update_trackers(s)
+
 async def backstop(s):
     while True:
         await asyncio.sleep(1800)
-        await safe_update(s)
+        await safe_update_all(s)
 
 async def listen(s):
     async with s.ws_connect(WS) as ws:
@@ -332,8 +440,8 @@ async def listen(s):
         await ws.receive_json()
         await ws.send_json({"id": 1, "type": "subscribe_events", "event_type": "state_changed"})
         await ws.send_json({"id": 2, "type": "subscribe_events", "event_type": "homeassistant_started"})
-        await safe_update(s)
-        
+        await safe_update_all(s)
+
         async for msg in ws:
             if msg.type != aiohttp.WSMsgType.TEXT:
                 continue
@@ -341,34 +449,46 @@ async def listen(s):
             if d.get("type") != "event":
                 continue
             ev = d["event"]
-            watched = {eid for eid, _ in ENT.values()}
             if ev.get("event_type") == "homeassistant_started":
+                await safe_update_all(s)
+                continue
+            eid = ev["data"].get("entity_id")
+            watched = {e for e, _ in ENT.values()}
+            sources = {(r.get("entity_id") or "").strip().lower() for r in CONV}
+            if eid in watched:
                 await safe_update(s)
-            elif ev["data"]["entity_id"] in watched:
-                await safe_update(s)
+            if eid in sources:
+                await safe_update_trackers(s)
 
 HTML_PAGE = """<!DOCTYPE html>
 <html>
 <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Location Tracker Management</title>
     <style>
         body { font-family: sans-serif; background: #111b27; color: #e1e1e1; padding: 20px; }
-        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        h2 { margin-top: 28px; }
+        .scroll { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; min-width: 560px; }
         th, td { padding: 10px; border: 1px solid #334155; text-align: left; }
         th { background: #1e293b; }
+        td.ro { color: #94a3b8; font-size: 13px; word-break: break-all; }
         input[type="text"] { width: 95%; padding: 6px; background: #0f172a; color: #fff; border: 1px solid #334155; border-radius: 4px; }
         button { background: #2563eb; color: #fff; border: none; padding: 8px 16px; cursor: pointer; border-radius: 4px; }
         button.delete { background: #dc2626; }
         button:hover { opacity: 0.9; }
+        p.hint { color: #94a3b8; font-size: 13px; }
     </style>
 </head>
 <body>
     <h2>Sensor</h2>
     <p>Sensor name: <input type="text" id="sensor-name" placeholder="e.g. Everybody's Locations" style="width:60%"></p>
-    <p id="info" style="color:#94a3b8; font-size:13px;"></p>
+    <p id="info" class="hint"></p>
 
     <h2>Location Tracker Devices</h2>
-    <table id="device-table">
+    <div class="scroll">
+    <table>
         <thead>
             <tr>
                 <th>Label / Person</th>
@@ -379,87 +499,92 @@ HTML_PAGE = """<!DOCTYPE html>
         </thead>
         <tbody id="rows"></tbody>
     </table>
-    <h2>Places</h2>
-    <p style="color:#94a3b8; font-size:13px;">
-        Custom zones. If a tracked entity with GPS is inside one, the sensor shows that place's name
-        instead of City, State. Radius is in meters. Tip: paste "lat, lon" from Google Maps into the Latitude box.
-    </p>
+    </div>
+    <button onclick="addDevice()">+ Add Device</button>
+
+    <h2>Sensors to Device Trackers</h2>
+    <p class="hint">Each row turns a sensor into a device_tracker. When the sensor's state matches the home state, the tracker is Home at your house coordinates (zone.home). Any other state makes it Away. Unavailable or unknown is ignored. Separate several home states with commas.</p>
+    <div class="scroll">
     <table>
         <thead>
             <tr>
-                <th>Place Name</th>
-                <th>Latitude</th>
-                <th>Longitude</th>
-                <th>Radius (m)</th>
+                <th>Name</th>
+                <th>Source sensor</th>
+                <th>Home state (default: home)</th>
+                <th>Device tracker ID</th>
                 <th>Action</th>
             </tr>
         </thead>
-        <tbody id="places-rows"></tbody>
+        <tbody id="trackers"></tbody>
     </table>
-    <button onclick="addPlaceRow()">+ Add Place</button>
-    <button onclick="addHereRow()">Add Place at My Location</button>
-    <br><br>
+    </div>
+    <button onclick="addTracker()">+ Add Sensor</button>
 
-    <button onclick="addRow()">+ Add Device</button>
-    <button onclick="saveData()">Save Changes</button>
+    <p style="margin-top:28px"><button onclick="saveData()">Save Changes</button></p>
 
     <script>
+        function textInput(value, placeholder) {
+            const i = document.createElement('input');
+            i.type = 'text';
+            i.value = value || '';
+            i.placeholder = placeholder || '';
+            return i;
+        }
+        function cell(child, cls) {
+            const td = document.createElement('td');
+            if (cls) td.className = cls;
+            if (typeof child === 'string') td.textContent = child; else td.appendChild(child);
+            return td;
+        }
+        function delCell() {
+            const b = document.createElement('button');
+            b.className = 'delete';
+            b.textContent = 'Delete';
+            b.onclick = () => b.closest('tr').remove();
+            return cell(b);
+        }
+
+        function addDevice(label = '', entity = '', homeState = '') {
+            const tr = document.createElement('tr');
+            tr.append(
+                cell(textInput(label, 'e.g. Jon')),
+                cell(textInput(entity, 'e.g. device_tracker.jon_phone')),
+                cell(textInput(homeState, 'e.g. home')),
+                delCell());
+            document.getElementById('rows').appendChild(tr);
+        }
+
+        function addTracker(item = {}) {
+            const tr = document.createElement('tr');
+            tr.dataset.id = item.id || '';
+            tr.append(
+                cell(textInput(item.label, 'e.g. MJ')),
+                cell(textInput(item.entity_id, 'e.g. sensor.mj_location')),
+                cell(textInput(item.home_state, 'home')),
+                cell(item.tracker_id || '(created on save)', 'ro'),
+                delCell());
+            document.getElementById('trackers').appendChild(tr);
+        }
+
         async function loadData() {
-            let sres = await fetch('api/settings');
-            let sdata = await sres.json();
+            const sdata = await (await fetch('api/settings')).json();
             document.getElementById('sensor-name').value = sdata.name;
             document.getElementById('info').innerText =
                 'Entity ID: ' + sdata.entity_id + '  |  Unique ID: ' + sdata.unique_id + '  |  Mode: ' + sdata.mode;
-            let res = await fetch('api/devices');
-            let data = await res.json();
-            let tbody = document.getElementById('rows');
-            tbody.innerHTML = '';
-            data.forEach(item => addRow(item.label, item.entity_id, item.home_state));
 
-            let pres = await fetch('api/places');
-            let pdata = await pres.json();
-            document.getElementById('places-rows').innerHTML = '';
-            pdata.forEach(p => addPlaceRow(p.name, p.latitude, p.longitude, p.radius));
-        }
+            const devices = await (await fetch('api/devices')).json();
+            document.getElementById('rows').innerHTML = '';
+            devices.forEach(item => addDevice(item.label, item.entity_id, item.home_state));
 
-        function addPlaceRow(name = '', lat = '', lon = '', radius = 100) {
-            let tbody = document.getElementById('places-rows');
-            let tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td><input type="text" value="${name}" placeholder="e.g. Noah's House"></td>
-                <td><input type="text" inputmode="decimal" value="${lat}" placeholder="34.5"></td>
-                <td><input type="text" inputmode="decimal" value="${lon}" placeholder="-82.5"></td>
-                <td><input type="text" inputmode="numeric" value="${radius}" placeholder="100"></td>
-                <td><button class="delete" onclick="this.closest('tr').remove()">Delete</button></td>
-            `;
-            tbody.appendChild(tr);
-        }
-
-        function addHereRow() {
-            if (!navigator.geolocation) { alert('Location not available here. Enter coordinates by hand.'); return; }
-            navigator.geolocation.getCurrentPosition(
-                pos => addPlaceRow('', pos.coords.latitude.toFixed(6), pos.coords.longitude.toFixed(6), 100),
-                () => alert('Could not get your location (the browser may block it here). Enter coordinates by hand.')
-            );
-        }
-
-        function addRow(label = '', entity = '', homeState = '') {
-            let tbody = document.getElementById('rows');
-            let tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td><input type="text" value="${label}" placeholder="e.g. Jon"></td>
-                <td><input type="text" value="${entity}" placeholder="e.g. device_tracker.jon_phone"></td>
-                <td><input type="text" value="${homeState}" placeholder="e.g. home"></td>
-                <td><button class="delete" onclick="this.closest('tr').remove()">Delete</button></td>
-            `;
-            tbody.appendChild(tr);
+            const trackers = await (await fetch('api/trackers')).json();
+            document.getElementById('trackers').innerHTML = '';
+            trackers.forEach(item => addTracker(item));
         }
 
         async function saveData() {
-            let rows = document.querySelectorAll('#rows tr');
-            let entities = [];
-            rows.forEach(tr => {
-                let inputs = tr.querySelectorAll('input');
+            const entities = [];
+            document.querySelectorAll('#rows tr').forEach(tr => {
+                const inputs = tr.querySelectorAll('input');
                 if (inputs[0].value.trim() && inputs[1].value.trim()) {
                     entities.push({
                         label: inputs[0].value.trim(),
@@ -468,43 +593,28 @@ HTML_PAGE = """<!DOCTYPE html>
                     });
                 }
             });
-            let res = await fetch('api/devices', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ entities })
-            });
-            let sres = await fetch('api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: document.getElementById('sensor-name').value.trim() })
-            });
-            let places = [];
-            document.querySelectorAll('#places-rows tr').forEach(tr => {
-                let inputs = tr.querySelectorAll('input');
-                let lat = inputs[1].value.trim();
-                let lon = inputs[2].value.trim();
-                if (lat.includes(',') && !lon) {
-                    let parts = lat.split(',');
-                    lat = parts[0].trim();
-                    lon = (parts[1] || '').trim();
-                }
-                if (inputs[0].value.trim() || lat || lon) {
-                    places.push({
-                        name: inputs[0].value.trim(),
-                        latitude: lat,
-                        longitude: lon,
-                        radius: inputs[3].value.trim() || '100'
+            const trackers = [];
+            document.querySelectorAll('#trackers tr').forEach(tr => {
+                const inputs = tr.querySelectorAll('input');
+                if (inputs[0].value.trim() && inputs[1].value.trim()) {
+                    trackers.push({
+                        id: tr.dataset.id || '',
+                        label: inputs[0].value.trim(),
+                        entity_id: inputs[1].value.trim(),
+                        home_state: inputs[2].value.trim()
                     });
                 }
             });
-            let pres = await fetch('api/places', {
+            const post = (url, body) => fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ places })
+                body: JSON.stringify(body)
             });
-            let pinfo = pres.ok ? await pres.json() : { skipped: 0 };
-            if (res.ok && sres.ok && pres.ok) {
-                alert(pinfo.skipped ? ('Saved, but ' + pinfo.skipped + ' place(s) were skipped. Check the name and coordinates.') : 'Saved successfully!');
+            const r1 = await post('api/devices', { entities });
+            const r2 = await post('api/settings', { name: document.getElementById('sensor-name').value.trim() });
+            const r3 = await post('api/trackers', { trackers });
+            if (r1.ok && r2.ok && r3.ok) {
+                alert('Saved successfully!');
                 loadData();
             } else {
                 alert('Failed to save.');
@@ -530,32 +640,52 @@ async def handle_post_devices(request):
     save_devices(entities)
     ENT = refresh_entities_map()
     logging.info("Updated device list via Web UI")
-    await safe_update(request.app["session"])
+    await safe_update_all(request.app["session"])
     return web.json_response({"status": "ok"})
 
-async def handle_get_places(request):
-    return web.json_response(load_places())
+async def handle_get_trackers(request):
+    return web.json_response(load_trackers())
 
-async def handle_post_places(request):
-    global PLACES
+async def handle_post_trackers(request):
+    global CONV
     data = await request.json()
-    clean, skipped = [], 0
-    for p in data.get("places", []):
-        try:
-            name = str(p.get("name", "")).strip()
-            lat = float(p["latitude"])
-            lon = float(p["longitude"])
-            radius = float(p.get("radius") or 100)
-            if not name or not (-90 <= lat <= 90) or not (-180 <= lon <= 180) or radius <= 0:
-                raise ValueError("bad place")
-            clean.append({"name": name, "latitude": lat, "longitude": lon, "radius": radius})
-        except (KeyError, ValueError, TypeError):
-            skipped += 1
-    save_places(clean)
-    PLACES = load_places()
-    logging.info(f"Updated places via Web UI: {[p['name'] for p in clean]}")
-    await safe_update(request.app["session"])
-    return web.json_response({"status": "ok", "saved": len(clean), "skipped": skipped})
+    incoming = data.get("trackers", [])
+    old = {r["id"]: r for r in load_trackers()}
+    old_tids = {r["tracker_id"] for r in old.values()}
+
+    new, used = [], set()
+    for r in incoming:
+        label = (r.get("label") or "").strip()
+        src = (r.get("entity_id") or "").strip()
+        if not label or not src:
+            continue
+        rid = r.get("id") if r.get("id") in old else uuid.uuid4().hex[:8]
+        if rid in old:
+            tid = old[rid]["tracker_id"]  # fixed at creation, renaming never moves it
+        else:
+            base = "device_tracker." + slugify(label)
+            tid, n = base, 2
+            while tid in used or tid in old_tids:
+                tid = f"{base}_{n}"
+                n += 1
+        used.add(tid)
+        new.append({
+            "id": rid,
+            "label": label,
+            "entity_id": src,
+            "home_state": (r.get("home_state") or "").strip(),
+            "tracker_id": tid,
+        })
+
+    kept = {r["id"] for r in new}
+    removed = [r for i, r in old.items() if i not in kept]
+    save_trackers(new)
+    CONV = new
+    for r in removed:
+        await remove_tracker(request.app["session"], r)
+    logging.info(f"Updated sensor-to-tracker list via Web UI ({len(new)} active, {len(removed)} removed)")
+    await safe_update_trackers(request.app["session"])
+    return web.json_response({"status": "ok"})
 
 async def handle_get_settings(request):
     return web.json_response({
@@ -583,11 +713,11 @@ async def start_web_server(s):
     app.router.add_get('/', handle_index)
     app.router.add_get('/api/devices', handle_get_devices)
     app.router.add_post('/api/devices', handle_post_devices)
-    app.router.add_get('/api/places', handle_get_places)
-    app.router.add_post('/api/places', handle_post_places)
+    app.router.add_get('/api/trackers', handle_get_trackers)
+    app.router.add_post('/api/trackers', handle_post_trackers)
     app.router.add_get('/api/settings', handle_get_settings)
     app.router.add_post('/api/settings', handle_post_settings)
-    
+
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', 8099)
