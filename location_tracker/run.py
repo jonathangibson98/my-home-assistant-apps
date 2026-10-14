@@ -181,8 +181,8 @@ def conv_publish_row(row):
     mq.publish(cfg, json.dumps(conv_discovery(row)), qos=1, retain=True)
     lastrow = conv_last.get(row["id"])
     if lastrow:
-        mq.publish(st, lastrow["state"], qos=1, retain=True)
         mq.publish(at, json.dumps(lastrow["attrs"]), qos=1, retain=True)
+        mq.publish(st, lastrow["state"], qos=1, retain=True)
 
 def conv_publish_all():
     for row in list(CONV):
@@ -373,6 +373,10 @@ async def convert_one(s, row):
             attrs["gps_accuracy"] = 0
         return {"state": "home", "attrs": attrs}
 
+    # Away: explicitly blank the coordinates so no old "home" position can linger on the map
+    attrs["latitude"] = None
+    attrs["longitude"] = None
+    attrs["gps_accuracy"] = 0
     return {"state": "not_home", "attrs": attrs}
 
 async def publish_tracker_rest(s, row, lastrow):
