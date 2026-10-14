@@ -60,6 +60,27 @@ rm -f /var/lib/samba/private/passdb.tdb
 printf '%s\n%s\n' "$SAMBA_PASS" "$SAMBA_PASS" | smbpasswd -a -s "$SAMBA_USER"
 echo "Samba user: ${SAMBA_USER} (password length: ${#SAMBA_PASS})"
 
+# ---- Hide-from-Samba list ---------------------------------------------------
+# Samba can only match NAMES (not full paths), e.g. "secrets.yaml", ".storage",
+# "*.db". Hidden items are invisible in listings but still reachable if someone
+# types the exact path.
+SAMBA_HIDE=""
+while IFS= read -r entry; do
+    entry="${entry#"${entry%%[![:space:]]*}"}"; entry="${entry%"${entry##*[![:space:]]}"}"
+    [ -z "$entry" ] && continue
+    name="${entry%/}"; name="${name##*/}"
+    [ -z "$name" ] && continue
+    if [[ "$entry" == */* ]]; then
+        echo ">>> Samba hides by NAME only: '${entry}' -> hiding anything named '${name}' in all shares"
+    fi
+    SAMBA_HIDE="${SAMBA_HIDE}/${name}"
+done < <(jq -r '(.hide_from_samba // [])[]' "$CONFIG_PATH")
+SAMBA_HIDE_LINE=""
+if [ -n "$SAMBA_HIDE" ]; then
+    SAMBA_HIDE_LINE="    hide files = ${SAMBA_HIDE}/"
+    echo ">>> Samba: hiding ${SAMBA_HIDE}/"
+fi
+
 # Samba configuration mapping
 cat > /etc/samba/smb.conf << SMB
 [global]
@@ -76,6 +97,7 @@ cat > /etc/samba/smb.conf << SMB
     disable spoolss = yes
     server min protocol = SMB2
     log level = 1 auth:3
+${SAMBA_HIDE_LINE}
 
 [Config]
     path = /config
@@ -149,6 +171,78 @@ if ! filebrowser users ls --database "$FB_DB" 2>/dev/null | awk '$1 ~ /^[0-9]+$/
     filebrowser users add "$FB_USER" "$FB_PASS" --perm.admin=true --database "$FB_DB"
 fi
 # <<< FB-DB-END
+
+# >>> FB-RULES-BEGIN
+# Hide-from-File-Browser list. Becomes File Browser "disallow" rules, which hide
+# the item from listings AND block access to it. Entries can be:
+#   /config/secrets.yaml   a full path (or relative to File Browser's root)
+#   .storage               a bare name, matched anywhere
+#   *.db  or  /config/*.bak   wildcards (* = anything except /, ** = anything)
+RULES_STATE="$PERSIST_DIR/managed_rules.txt"
+TAB=$'\t'
+
+glob_to_regex() {
+    local g
+    g=$(printf '%s' "$1" | sed -e 's/[][\.^$(){}+|]/\\&/g')
+    g=${g//\*\*/$'\001'}
+    g=${g//\*/'[^/]*'}
+    g=${g//$'\001'/'.*'}
+    g=${g//\?/'[^/]'}
+    printf '%s' "$g"
+}
+
+# 1) Remove only the rules THIS script added last time (rules you add by hand
+#    in the web UI are left alone), highest index first.
+if [ -s "$RULES_STATE" ]; then
+    IDX_TO_REMOVE=()
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^\(([0-9]+)\)\ Disallow\ (Path|Regex):[[:space:]]*(.*)$ ]]; then
+            if grep -qxF -- "${BASH_REMATCH[2]}${TAB}${BASH_REMATCH[3]}" "$RULES_STATE"; then
+                IDX_TO_REMOVE+=("${BASH_REMATCH[1]}")
+            fi
+        fi
+    done < <(filebrowser rules ls --database "$FB_DB" 2>/dev/null)
+    for (( i=${#IDX_TO_REMOVE[@]}-1; i>=0; i-- )); do
+        # some File Browser builds want the index as a flag too, others don't
+        filebrowser rules rm "${IDX_TO_REMOVE[$i]}" --index "${IDX_TO_REMOVE[$i]}" --database "$FB_DB" >/dev/null 2>&1 \
+            || filebrowser rules rm "${IDX_TO_REMOVE[$i]}" --database "$FB_DB" >/dev/null 2>&1
+    done
+fi
+
+# 2) Add the current list
+: > "$RULES_STATE.new"
+while IFS= read -r entry; do
+    entry="${entry#"${entry%%[![:space:]]*}"}"; entry="${entry%"${entry##*[![:space:]]}"}"
+    [ -z "$entry" ] && continue
+    e="$entry"
+    # paths are relative to File Browser's root; accept real /config/... paths too
+    if [ "$FB_ROOT" = "/config" ]; then
+        case "$e" in /config) e="/" ;; /config/*) e="${e#/config}" ;; esac
+    fi
+    if [[ "$e" == *'*'* || "$e" == *'?'* ]]; then
+        if [[ "$e" == */* ]]; then e="/${e#/}"; val="^$(glob_to_regex "$e")(/.*)?\$"
+        else val="(^|/)$(glob_to_regex "$e")(/.*)?\$"; fi
+        kind="Regex"
+    elif [[ "$e" != */* ]]; then
+        val="(^|/)$(glob_to_regex "$e")(/.*)?\$"; kind="Regex"
+    else
+        e="/${e#/}"; [ "$e" != "/" ] && e="${e%/}"
+        if [ "$e" = "/" ]; then
+            echo ">>> File Browser: ignoring '${entry}' (that is the whole root - would hide everything)"
+            continue
+        fi
+        val="$e"; kind="Path"
+    fi
+    if [ "$kind" = "Regex" ]; then flag="--regex"; else flag=""; fi
+    if filebrowser rules add "$val" $flag --database "$FB_DB" >/dev/null 2>&1; then
+        printf '%s\t%s\n' "$kind" "$val" >> "$RULES_STATE.new"
+        echo ">>> File Browser: hiding '${entry}'"
+    else
+        echo ">>> File Browser: could not add rule for '${entry}' (skipped)"
+    fi
+done < <(jq -r '(.hide_from_filebrowser // [])[]' "$CONFIG_PATH")
+mv "$RULES_STATE.new" "$RULES_STATE"
+# <<< FB-RULES-END
 
 # Run File Browser pointing to the persistent database file
 filebrowser --database "$FB_DB" --address 127.0.0.1 --port 8081 &
