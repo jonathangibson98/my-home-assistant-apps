@@ -1,5 +1,5 @@
 name: "Team Tracker Lite"
-version: "0.2.0"
+version: "0.3.0"
 slug: team_tracker_lite
 description: "One lightweight sports sensor. Pick any team from a menu."
 url: "https://github.com/vasqued2/ha-teamtracker"
@@ -14,8 +14,13 @@ ingress: true
 ingress_port: 8099
 panel_icon: mdi:scoreboard
 panel_title: "Team Tracker"
+homeassistant_api: true
 map:
   - addon_config:rw
+ports:
+  8100/tcp: null
+ports_description:
+  8100/tcp: "Calendar feed. Optional: only needed to subscribe from a phone or another app."
 services:
   - "mqtt:want"
 options:

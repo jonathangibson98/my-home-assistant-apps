@@ -10,14 +10,25 @@ One sensor. Any team. Picked from a menu in the sidebar panel.
 
 The sensor is `sensor.team_tracker` (rename it in the panel). States are `PRE`, `IN`, `POST` and `NOT_FOUND`.
 
+## Live game
+In the panel's **Live game** card, pick a sport and tap **Track** next to a team in any game that's on now. The sensor follows that game. It is never added to the calendar.
+
+## Calendar (one-time setup)
+The add-on publishes a feed of every game for your saved teams. Add it to Home Assistant once:
+1. Add your teams first.
+2. Settings, Devices & services, Add integration, **Remote Calendar**.
+3. Name it **Team Games** and paste the link shown in the panel's Calendar section.
+
+Every day at the time you choose in the panel, the add-on refreshes the schedules and tells Home Assistant to reload the calendar. If your calendar entity isn't `calendar.team_games`, enter its name in the panel.
+
 ## Your settings
-Saved teams, the tracked team, the sensor name and the refresh speeds are saved in `/addon_configs/<id>_team_tracker_lite/data/settings.json`.
+Saved in `/addon_configs/<id>_team_tracker_lite/data/settings.json`.
 
 ## Options
-- `publish_team_selector`: also creates a `select` entity so automations and dashboards can switch teams.
+- `publish_team_selector`: also creates a `select` entity so automations and dashboards can switch teams (it includes the live game).
 - `log_level`: `debug`, `info`, `warning` or `error`. Use `debug` when troubleshooting.
 
-Refresh speeds (idle and during a game) are set in the panel, not here.
+Refresh speeds and the calendar time are set in the panel, not here.
 
 ## Not supported
 Golf, tennis, racing, UFC and custom API paths. Team sports only.

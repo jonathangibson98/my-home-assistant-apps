@@ -65,6 +65,16 @@
   .dot.ok { background: var(--good); }
   #msg { min-height: 1.3em; margin-top: 8px; color: var(--bad); font-size: .9rem; }
   #msg.ok { color: var(--good); }
+  .note { color: var(--muted); font-size: .88rem; }
+  .note.bad { color: var(--bad); }
+  .game { padding: 10px 12px; border-top: 1px solid var(--line); }
+  .game:first-child { border-top: 0; }
+  .game .ln { font: 700 1.15rem var(--score); font-variant-numeric: tabular-nums; }
+  .game .btns { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  details { color: var(--muted); font-size: .9rem; }
+  details summary { cursor: pointer; color: var(--text); min-height: 28px; }
+  details ol { padding-left: 20px; margin: 8px 0; }
+  details b { color: var(--text); }
 </style>
 </head>
 <body>
@@ -73,6 +83,14 @@
 
 <h2>Teams you can switch between</h2>
 <div class="card" id="teams"></div>
+
+<h2>Live game</h2>
+<div class="card form">
+  <div class="note">Pick any game that's on right now and track its score. It never goes in the calendar.</div>
+  <label>Sport <select id="lsport"></select></label>
+  <div class="card" id="games"></div>
+  <button id="lfind">Find live games</button>
+</div>
 
 <h2>Add a team</h2>
 <div class="card form">
@@ -88,6 +106,23 @@
     <select id="idle"></select></label>
   <label>During a game
     <select id="live"></select></label>
+</div>
+
+<h2>Calendar</h2>
+<div class="card form">
+  <div class="note" id="calstatus"></div>
+  <label>Update the calendar every day at <input type="time" id="caltime" step="60"></label>
+  <label>Calendar entity to refresh after each update <input id="calent" placeholder="calendar.team_games" autocomplete="off" spellcheck="false"></label>
+  <button id="calnow">Update calendar now</button>
+  <details>
+    <summary>Set up the calendar in Home Assistant (one time)</summary>
+    <ol>
+      <li>Add your teams first. The calendar holds every game for each saved team.</li>
+      <li>Settings, Devices &amp; services, Add integration, <b>Remote Calendar</b>.</li>
+      <li>Name it <b>Team Games</b> and paste this link:</li>
+    </ol>
+    <div class="inline"><input id="calurl" readonly><button id="copyurl">Copy</button></div>
+  </details>
 </div>
 
 <h2>Sensor name</h2>
@@ -150,7 +185,17 @@ function drawBoard(sensor) {
 function drawTeams(s) {
   const box = $("teams");
   box.replaceChildren();
-  if (!s.settings.favorites.length) { box.append(el("div", {class: "empty"}, "No teams yet. Add one below.")); return; }
+  const lg = s.settings.live_game;
+  if (lg) {
+    const on = s.settings.active === "LIVE";
+    box.append(el("div", {class: "team" + (on ? " active" : "")},
+      lg.logo ? el("img", {src: lg.logo, alt: ""}) : el("div", {style: "width:34px"}),
+      el("div", {class: "nm"}, el("b", {}, "Live: " + lg.label), el("span", {}, "Tracking " + lg.abbr + " · not in the calendar")),
+      on ? el("span", {class: "pill PRE"}, "Tracking")
+         : el("button", {onclick: () => act("active", {key: "LIVE"})}, "Track"),
+      el("button", {class: "ghost", "aria-label": "Clear live game", onclick: () => act("livegame/clear", {})}, "✕")));
+  }
+  if (!s.settings.favorites.length && !lg) { box.append(el("div", {class: "empty"}, "No teams yet. Add one below.")); return; }
   for (const f of s.settings.favorites) {
     const on = f.key === s.settings.active;
     box.append(el("div", {class: "team" + (on ? " active" : "")},
@@ -165,6 +210,7 @@ function drawTeams(s) {
 function draw(s) {
   drawBoard(s.sensor);
   drawTeams(s);
+  drawCalendar(s);
   $("dot").className = "dot" + (s.mqtt ? " ok" : "");
   $("mq").textContent = s.mqtt ? "Connected to MQTT" : "Not connected to MQTT. Check the add-on options.";
   if (document.activeElement !== $("idle")) $("idle").value = String(s.settings.idle_minutes);
@@ -172,6 +218,19 @@ function draw(s) {
   if (document.activeElement !== $("sname") && lastNameSeen !== s.settings.sensor_name) {
     $("sname").value = s.settings.sensor_name; lastNameSeen = s.settings.sensor_name;
   }
+}
+
+function drawCalendar(s) {
+  const c = s.calendar, st = $("calstatus");
+  const when = c.built_at ? new Date(c.built_at).toLocaleString() : null;
+  st.className = "note" + (c.error ? " bad" : "");
+  if (c.error) st.textContent = "Last update failed, keeping the old calendar: " + c.error;
+  else if (!when) st.textContent = s.settings.favorites.length ? "Building the calendar for the first time…" : "Add a team and the calendar builds itself.";
+  else st.textContent = c.events + " games from " + c.teams + " team" + (c.teams === 1 ? "" : "s") + ". Updated " + when + (c.poke ? ". " + c.poke + "." : ".");
+  if (document.activeElement !== $("caltime")) $("caltime").value = s.settings.calendar_time;
+  if (document.activeElement !== $("calent")) $("calent").value = s.settings.calendar_entity || "";
+  $("calurl").value = c.url;
+  $("caltime").title = "Times are in " + c.tz;
 }
 
 async function act(path, body) {
@@ -193,6 +252,34 @@ async function loadTeams() {
   catch (e) { say(e.message); }
 }
 
+async function findLive() {
+  const box = $("games");
+  box.replaceChildren(el("div", {class: "empty"}, "Looking…"));
+  try {
+    const games = await api("live?league=" + encodeURIComponent($("lsport").value));
+    box.replaceChildren();
+    if (!games.length) { box.append(el("div", {class: "empty"}, "Nothing is live in this sport right now.")); return; }
+    for (const g of games) {
+      const [a, h] = [g.teams[0], g.teams[g.teams.length - 1]];
+      box.append(el("div", {class: "game"},
+        el("div", {class: "ln"}, `${a.abbr} ${a.score ?? 0} – ${h.score ?? 0} ${h.abbr}`),
+        el("div", {class: "note"}, g.detail || ""),
+        el("div", {class: "btns"}, ...g.teams.map(t =>
+          el("button", {onclick: () => act("livegame", {league: $("lsport").value, event_id: g.event_id, team_id: t.id})}, "Track " + t.abbr)))));
+    }
+  } catch (e) { box.replaceChildren(el("div", {class: "empty"}, e.message)); }
+}
+$("lsport").addEventListener("change", findLive);
+$("lfind").addEventListener("click", findLive);
+const saveCal = () => act("calendar", {calendar_time: $("caltime").value || "04:00", calendar_entity: $("calent").value}).then(ok => ok && say("Calendar settings saved", true));
+$("caltime").addEventListener("change", saveCal);
+$("calent").addEventListener("change", saveCal);
+$("calnow").addEventListener("click", () => act("calendar/refresh", {}).then(ok => ok && say("Updating the calendar now…", true)));
+$("copyurl").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("calurl").value); say("Link copied", true); }
+  catch (e) { $("calurl").select(); say("Press and hold the link to copy it"); }
+});
+
 $("league").addEventListener("change", () => { $("filter").value = ""; loadTeams(); });
 $("filter").addEventListener("input", fillTeams);
 $("add").addEventListener("click", () => {
@@ -209,9 +296,10 @@ $("refresh").addEventListener("click", () => act("refresh", {}));
   for (const m of [1, 2, 5, 10, 15, 30, 60]) $("idle").append(el("option", {value: m}, "Every " + m + (m === 1 ? " minute" : " minutes")));
   for (const n of [5, 10, 15, 30, 60, 120]) $("live").append(el("option", {value: n}, "Every " + n + " seconds"));
   const leagues = await api("leagues");
-  for (const l of leagues) $("league").append(el("option", {value: l.id}, l.label));
+  for (const l of leagues) { $("league").append(el("option", {value: l.id}, l.label)); $("lsport").append(el("option", {value: l.id}, l.label)); }
   draw(await api("state"));
   loadTeams();
+  findLive();
   setInterval(async () => { try { draw(await api("state")); } catch (e) {} }, 5000);
 })().catch(e => say(e.message));
 </script>

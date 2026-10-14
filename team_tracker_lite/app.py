@@ -9,16 +9,19 @@ Team Tracker integration uses, so existing cards keep working.
 import json
 import os
 import re
+import socket
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import paho.mqtt.client as mqtt
+from zoneinfo import ZoneInfo
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 # Settings live in the add-on's config folder (/addon_configs/<id>_team_tracker_lite/data on the host).
 DATA = os.environ.get("TTL_DATA", "/config/data")
 SETTINGS_FILE = os.path.join(DATA, "settings.json")
@@ -68,6 +71,13 @@ TEAM_CACHE = {}
 CLIENT = None
 MQTT_OK = False
 PREV = None  # (active team key, state) - used to log only real state changes
+LOCAL_TZ = timezone.utc
+TZ_NAME = "UTC"
+CAL = {"built_at": None, "events": 0, "teams": 0, "error": None, "poke": None, "reason": None}
+CAL_REQUEST = threading.Event()
+CAL_REASON = ""
+ADDON_HOST = None
+GAME_HOURS = {"football": 3.5, "basketball": 2.5, "baseball": 3.0, "hockey": 2.5, "soccer": 2.0}
 LEVELS = {"debug": 10, "info": 20, "warning": 30, "error": 40}
 LOG_LEVEL = LEVELS["info"]
 
@@ -93,6 +103,10 @@ def load_settings():
     s.setdefault("active", None)
     s["idle_minutes"] = clamp(s.get("idle_minutes"), 1, 60, 10)
     s["live_seconds"] = clamp(s.get("live_seconds"), 5, 120, 15)
+    if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", str(s.get("calendar_time") or "")):
+        s["calendar_time"] = "04:00"
+    s.setdefault("calendar_entity", "calendar.team_games")
+    s.setdefault("live_game", None)
     return s
 
 
@@ -133,8 +147,16 @@ def slug(name):
     return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or "team_tracker"
 
 
+def live_label():
+    lg = S.get("live_game")
+    return f"Live game: {lg['label']}" if lg else None
+
+
 def active_fav():
     with LOCK:
+        if S["active"] == "LIVE" and S.get("live_game"):
+            lg = S["live_game"]
+            return {"key": "LIVE", "live": True, "label": live_label(), **lg}
         for f in S["favorites"]:
             if f["key"] == S["active"]:
                 return dict(f)
@@ -367,6 +389,309 @@ def pick_event(events, now):
     return None
 
 
+# ------------------------------------------------------------ live games
+def fetch_live_games(lid):
+    """Games in this league that are in progress right now (from the scoreboard)."""
+    _, sport, lg, groups = LEAGUES[lid]
+    q = {"limit": "400"}
+    if groups:
+        q["groups"] = groups
+    d = http_json(f"{ESPN}/{sport}/{lg}/scoreboard?{urllib.parse.urlencode(q)}")
+    out = []
+    for e in d.get("events") or []:
+        if state_of(e) != "in":
+            continue
+        st = status_of(e)
+        teams = []
+        for c in comp_of(e).get("competitors") or []:
+            t = c.get("team") or {}
+            teams.append({"id": cid(c), "abbr": t.get("abbreviation") or "?",
+                          "name": t.get("displayName") or t.get("name") or "?",
+                          "score": num(c.get("score")), "home": c.get("homeAway") == "home",
+                          "logo": t.get("logo") or ((t.get("logos") or [{}])[0]).get("href", "")})
+        teams.sort(key=lambda x: x["home"])  # away first, home second
+        out.append({"event_id": str(e.get("id")), "name": e.get("shortName") or e.get("name"),
+                    "detail": (st.get("type") or {}).get("shortDetail"), "teams": teams})
+    return out
+
+
+def poll_live_game(fav, IDLE, LIVE):
+    lid, eid, tid = fav["league"], fav["event_id"], fav["team_id"]
+    ev = fetch_scoreboard_event(lid, eid)
+    if ev:
+        built = build(ev, tid, lid)
+        if built:
+            built[1]["tracking_mode"] = "live_game"
+            publish_sensor(*built)
+            return LIVE if built[0] == "IN" else (IDLE if built[0] == "POST" else min(IDLE, 60))
+    with LOCK:
+        keep = LAST["state"] == "POST" and LAST["attributes"].get("team_id") == tid
+    if keep:  # game finished and dropped off the scoreboard: keep showing the final score
+        return IDLE
+    publish_sensor("NOT_FOUND", {"team_name": fav.get("name"), "team_abbr": fav.get("abbr"),
+                                 "team_logo": fav.get("logo"), "league_id": lid, "tracking_mode": "live_game",
+                                 "api_message": "That game is no longer on the scoreboard. Pick another live game in the panel.",
+                                 "last_update": datetime.now(timezone.utc).isoformat()})
+    return IDLE
+
+
+# ----------------------------------------------------------------- calendar
+def cal_file():
+    return os.path.join(DATA, "team_games.ics")
+
+
+def cal_meta_file():
+    return os.path.join(DATA, "calendar_status.json")
+
+
+def supervisor_call(method, path, payload=None, timeout=15):
+    tok = os.environ.get("SUPERVISOR_TOKEN")
+    if not tok:
+        raise RuntimeError("not running under the Supervisor")
+    data = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request("http://supervisor" + path, data=data, method=method,
+                                 headers={"Authorization": "Bearer " + tok, "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        body = r.read()
+    return json.loads(body.decode()) if body else None
+
+
+def init_timezone():
+    global LOCAL_TZ, TZ_NAME
+    name = None
+    try:
+        name = (supervisor_call("GET", "/core/api/config") or {}).get("time_zone")
+    except Exception as e:
+        log("debug", "Could not read time zone from Home Assistant:", e)
+    name = name or os.environ.get("TZ")
+    try:
+        LOCAL_TZ, TZ_NAME = ZoneInfo(name), name
+    except Exception:
+        LOCAL_TZ, TZ_NAME = timezone.utc, "UTC"
+        log("warning", "Could not determine your time zone, using UTC for the daily calendar update time")
+    log("info", "Time zone:", TZ_NAME)
+
+
+def addon_host():
+    global ADDON_HOST
+    if not ADDON_HOST:
+        try:
+            ADDON_HOST = supervisor_call("GET", "/addons/self/info")["data"]["hostname"]
+        except Exception:
+            ADDON_HOST = socket.gethostname()
+    return ADDON_HOST
+
+
+def seconds_until(hhmm):
+    now = datetime.now(LOCAL_TZ)
+    h, m = (int(x) for x in hhmm.split(":"))
+    t = now.replace(hour=h, minute=m, second=0, microsecond=0)
+    if t <= now:
+        t += timedelta(days=1)
+    return max(1.0, (t - now).total_seconds())
+
+
+def ics_esc(t):
+    return str(t).replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\r", "").replace("\n", "\\n")
+
+
+def fold(line):
+    out, cur, limit = [], b"", 75
+    for ch in line:
+        cb = ch.encode("utf-8")
+        if len(cur) + len(cb) > limit:
+            out.append(cur.decode("utf-8"))
+            cur, limit = b"", 74
+        cur += cb
+    out.append(cur.decode("utf-8"))
+    return "\r\n ".join(out)
+
+
+def ics_wrap(vevents):
+    head = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Team Tracker Lite//EN", "CALSCALE:GREGORIAN",
+            "METHOD:PUBLISH", "X-WR-CALNAME:Team Tracker Games"]
+    return "\r\n".join(fold(l) for l in head + vevents + ["END:VCALENDAR"]) + "\r\n"
+
+
+def make_vevent(e, lid, stamp):
+    """Turn one ESPN schedule event into the lines of an iCalendar VEVENT (or None)."""
+    comp = comp_of(e)
+    stp = status_of(e).get("type") or {}
+    if stp.get("name") == "STATUS_CANCELED" or not e.get("id"):
+        return None
+    when = parse_dt(e.get("date") or comp.get("date"))
+    if not when:
+        return None
+    label, sport, _lg, _g = LEAGUES[lid]
+    cs = comp.get("competitors") or []
+    home = next((c for c in cs if c.get("homeAway") == "home"), None)
+    away = next((c for c in cs if c.get("homeAway") == "away"), None)
+    ab = lambda c: ((c or {}).get("team") or {}).get("abbreviation") or "TBD"
+    full = lambda c: ((c or {}).get("team") or {}).get("displayName") or ab(c)
+    title = f"{ab(away)} @ {ab(home)}" if home and away else (e.get("shortName") or e.get("name") or "Game")
+    desc, extra = [], ""
+    if home and away:
+        desc.append(f"{full(away)} at {full(home)}")
+    desc.append(label)
+    if stp.get("name") == "STATUS_POSTPONED":
+        extra = " (Postponed)"
+        desc.append("Postponed")
+    elif stp.get("state") == "post" and home and away:
+        a_s, h_s = num(away.get("score")), num(home.get("score"))
+        if a_s is not None and h_s is not None:
+            extra = f" (Final {a_s}-{h_s})"
+            desc.append(f"Final: {ab(away)} {a_s}, {ab(home)} {h_s}")
+    tv = tv_of(comp)
+    if tv:
+        desc.append("TV: " + tv)
+    venue = comp.get("venue") or {}
+    addr = venue.get("address") or {}
+    where = ", ".join(x for x in (venue.get("fullName"), addr.get("city"), addr.get("state")) if x)
+
+    lines = ["BEGIN:VEVENT", f"UID:{lid}-{e['id']}@team-tracker-lite", f"DTSTAMP:{stamp}"]
+    if comp.get("timeValid") is False or e.get("timeValid") is False:  # time TBD -> all-day
+        day = when.astimezone(ZoneInfo("America/New_York")).date()
+        lines += [f"DTSTART;VALUE=DATE:{day:%Y%m%d}", f"DTEND;VALUE=DATE:{day + timedelta(days=1):%Y%m%d}"]
+    else:
+        end = when + timedelta(hours=GAME_HOURS.get(sport, 3.0))
+        lines += [f"DTSTART:{when.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}",
+                  f"DTEND:{end.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}"]
+    lines.append("SUMMARY:" + ics_esc(f"{lid}: {title}{extra}"))
+    if where:
+        lines.append("LOCATION:" + ics_esc(where))
+    lines.append("DESCRIPTION:" + ics_esc("\n".join(desc)))
+    lines.append("END:VEVENT")
+    return lines
+
+
+def poke_calendar_entity():
+    with LOCK:
+        entity = (S.get("calendar_entity") or "").strip()
+    if not entity:
+        return "Skipped (no calendar entity set)"
+    try:
+        supervisor_call("POST", "/core/api/services/homeassistant/update_entity", {"entity_id": entity})
+        return f"Asked Home Assistant to refresh {entity}"
+    except urllib.error.HTTPError as e:
+        return f"Home Assistant refused the refresh for {entity} (HTTP {e.code}). Is the entity name right?"
+    except Exception as e:
+        return f"Could not reach Home Assistant to refresh {entity}: {e}"
+
+
+def save_cal_meta():
+    try:
+        with open(cal_meta_file(), "w", encoding="utf-8") as f:
+            json.dump(CAL, f)
+    except OSError as e:
+        log("warning", "Could not save calendar status:", e)
+
+
+def build_calendar(reason):
+    """Fetch every saved team's season schedule and rebuild the .ics. All-or-nothing: if any team
+    fails, the previous good calendar is kept and a retry is scheduled."""
+    with LOCK:
+        favs = [dict(f) for f in S["favorites"]]
+    log("info", f"Updating calendar ({reason}) for {len(favs)} team(s)")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    seen, vevents, errors = set(), [], []
+    for f in favs:
+        try:
+            events = fetch_schedule(f["league"], f["team_id"])
+        except Exception as e:
+            errors.append(f"{f['name']}: {e}")
+            continue
+        for ev in events:
+            uid = f"{f['league']}-{ev.get('id')}"
+            if uid in seen:  # two tracked teams playing each other -> one entry
+                continue
+            v = make_vevent(ev, f["league"], stamp)
+            if v:
+                seen.add(uid)
+                vevents.append(v)
+        log("debug", f"{f['name']}: {len(events)} schedule events")
+        del events
+    if errors:
+        CAL.update(error="; ".join(errors)[:300], reason=reason)
+        save_cal_meta()
+        log("warning", "Calendar not updated, keeping the previous one:", CAL["error"])
+        return False
+    text = ics_wrap([l for v in vevents for l in v])
+    os.makedirs(DATA, exist_ok=True)
+    tmp = cal_file() + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
+    os.replace(tmp, cal_file())
+    CAL.update(built_at=datetime.now(timezone.utc).isoformat(), events=len(vevents), teams=len(favs),
+               error=None, reason=reason, poke=poke_calendar_entity())
+    save_cal_meta()
+    log("info", f"Calendar updated: {len(vevents)} games from {len(favs)} team(s). {CAL['poke']}")
+    return True
+
+
+def request_calendar(reason):
+    global CAL_REASON
+    CAL_REASON = reason
+    CAL_REQUEST.set()
+
+
+def calendar_loop():
+    time.sleep(10)
+    if not os.path.exists(cal_file()):
+        request_calendar("startup")
+    retry = None
+    while True:
+        with LOCK:
+            at = S["calendar_time"]
+        triggered = CAL_REQUEST.wait(retry or seconds_until(at))
+        reason = "scheduled"
+        if triggered:
+            reason = CAL_REASON
+            CAL_REQUEST.clear()
+            if reason == "time":  # only the daily time changed: just recompute the wait
+                retry = None
+                continue
+            if reason == "teams":  # wait until the user stops adding/removing teams
+                while CAL_REQUEST.wait(20):
+                    CAL_REQUEST.clear()
+        try:
+            ok = build_calendar(reason)
+        except Exception as e:
+            log("error", "Calendar update failed:", e)
+            CAL.update(error=str(e)[:300])
+            ok = False
+        retry = None if ok else 1800
+
+
+class ICSHandler(BaseHTTPRequestHandler):
+    """Serves the calendar feed on port 8100 (read-only, no secrets in it)."""
+    server_version = "TeamTrackerLiteICS/1"
+
+    def log_message(self, fmt, *a):
+        log("debug", "ics", fmt % a)
+
+    def do_GET(self):
+        path = "/" + urllib.parse.urlparse(self.path).path.strip("/")
+        if path not in ("/", "/calendar.ics", "/team_games.ics"):
+            self.send_response(404)
+            self.end_headers()
+            return
+        try:
+            with open(cal_file(), "rb") as f:
+                body = f.read()
+        except OSError:
+            body = ics_wrap([]).encode("utf-8")  # valid empty calendar until the first build finishes
+        self.send_response(200)
+        self.send_header("Content-Type", "text/calendar; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def calendar_info():
+    return {**CAL, "url": f"http://{addon_host()}:8100/calendar.ics", "tz": TZ_NAME}
+
+
 # -------------------------------------------------------------------- MQTT
 def mqtt_settings():
     host = (OPTS.get("mqtt_host") or "").strip()
@@ -394,7 +719,7 @@ def pub(topic, payload, retain=True):
 def publish_discovery():
     with LOCK:
         name = S["sensor_name"]
-        favs = list(S["favorites"])
+        labels = [f["label"] for f in S["favorites"]] + ([live_label()] if S.get("live_game") else [])
     device = {"identifiers": ["team_tracker_lite"], "name": "Team Tracker Lite",
               "manufacturer": "Home-built", "model": "Team Tracker Lite"}
     pub(D_SENSOR, json.dumps({
@@ -407,7 +732,7 @@ def publish_discovery():
         "icon": "mdi:scoreboard",
         "device": device,
     }))
-    if OPTS.get("publish_team_selector") and favs:
+    if OPTS.get("publish_team_selector") and labels:
         pub(D_SELECT, json.dumps({
             "name": name + " Team",
             "unique_id": "team_tracker_lite_select",
@@ -415,7 +740,7 @@ def publish_discovery():
             "command_topic": T_SEL_SET,
             "state_topic": T_SEL_STATE,
             "availability_topic": T_AVAIL,
-            "options": [f["label"] for f in favs],
+            "options": labels,
             "icon": "mdi:swap-horizontal",
             "device": device,
         }))
@@ -472,13 +797,17 @@ def on_message(client, userdata, msg):
         return
     label = msg.payload.decode("utf-8", "ignore")
     with LOCK:
-        for f in S["favorites"]:
-            if f["label"] == label:
-                S["active"] = f["key"]
-                save_settings()
-                break
+        if S.get("live_game") and label == live_label():
+            S["active"] = "LIVE"
+            save_settings()
         else:
-            return
+            for f in S["favorites"]:
+                if f["label"] == label:
+                    S["active"] = f["key"]
+                    save_settings()
+                    break
+            else:
+                return
     publish_select_state()
     WAKE.set()
 
@@ -511,6 +840,8 @@ def poll_once():
     if not fav:
         publish_sensor("NOT_FOUND", {"api_message": "No team selected. Open the Team Tracker panel and pick one."})
         return IDLE
+    if fav.get("live"):
+        return poll_live_game(fav, IDLE, LIVE)
     lid, tid = fav["league"], fav["team_id"]
     now = datetime.now(timezone.utc)
     events = fetch_schedule(lid, tid)
@@ -544,6 +875,7 @@ def poll_once():
     if not built:
         publish_sensor("NOT_FOUND", {"api_message": "Team not found in the game data", "last_update": now.isoformat()})
         return IDLE
+    built[1]["tracking_mode"] = "team"
     publish_sensor(*built)
     return wait
 
@@ -586,7 +918,8 @@ class Handler(BaseHTTPRequestHandler):
     def state_payload(self):
         with LOCK:
             return {"settings": json.loads(json.dumps(S)), "sensor": dict(LAST),
-                    "mqtt": MQTT_OK, "selector": bool(OPTS.get("publish_team_selector"))}
+                    "mqtt": MQTT_OK, "selector": bool(OPTS.get("publish_team_selector")),
+                    "calendar": calendar_info()}
 
     def do_GET(self):
         if not self.allowed():
@@ -607,6 +940,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_body(200, get_teams(lid))
             except Exception as e:
                 return self.send_body(502, {"error": f"ESPN request failed: {e}"})
+        if p == "/api/live":
+            lid = (qs.get("league") or [""])[0]
+            if lid not in LEAGUES:
+                return self.send_body(400, {"error": "unknown league"})
+            try:
+                return self.send_body(200, fetch_live_games(lid))
+            except Exception as e:
+                return self.send_body(502, {"error": f"ESPN request failed: {e}"})
         if p == "/api/state":
             return self.send_body(200, self.state_payload())
         self.send_body(404, {"error": "not found"})
@@ -621,6 +962,8 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return self.send_body(400, {"error": "bad json"})
 
+        with LOCK:
+            before = [f["key"] for f in S["favorites"]]
         if p == "/api/favorites":
             lid, tid = body.get("league"), str(body.get("team_id") or "")
             if lid not in LEAGUES or not tid:
@@ -640,7 +983,8 @@ class Handler(BaseHTTPRequestHandler):
                 save_settings()
         elif p == "/api/active":
             with LOCK:
-                if not any(f["key"] == body.get("key") for f in S["favorites"]):
+                if not (any(f["key"] == body.get("key") for f in S["favorites"])
+                        or (body.get("key") == "LIVE" and S.get("live_game"))):
                     return self.send_body(400, {"error": "unknown team"})
                 S["active"] = body["key"]
                 save_settings()
@@ -666,11 +1010,57 @@ class Handler(BaseHTTPRequestHandler):
                 S["live_seconds"] = clamp(body.get("live_seconds"), 5, 120, S["live_seconds"])
                 save_settings()
             log("info", f"Refresh speed: every {S['idle_minutes']} min idle, {S['live_seconds']}s during games")
+        elif p == "/api/livegame":
+            lid, eid, tid = body.get("league"), str(body.get("event_id") or ""), str(body.get("team_id") or "")
+            if lid not in LEAGUES or not eid or not tid:
+                return self.send_body(400, {"error": "league, event_id and team_id required"})
+            try:
+                ev = fetch_scoreboard_event(lid, eid)
+            except Exception as e:
+                return self.send_body(502, {"error": f"ESPN request failed: {e}"})
+            built = build(ev, tid, lid) if ev else None
+            if not built:
+                return self.send_body(404, {"error": "That game isn't on the scoreboard any more (it may have just ended)."})
+            a = built[1]
+            with LOCK:
+                S["live_game"] = {"league": lid, "event_id": eid, "team_id": tid,
+                                  "abbr": a.get("team_abbr") or "", "name": a.get("team_long_name") or "",
+                                  "logo": a.get("team_logo") or "",
+                                  "label": f"{a.get('team_abbr')} vs {a.get('opponent_abbr')} ({lid})"}
+                S["active"] = "LIVE"
+                save_settings()
+            log("info", "Tracking live game:", S["live_game"]["label"])
+        elif p == "/api/livegame/clear":
+            with LOCK:
+                S["live_game"] = None
+                if S["active"] == "LIVE":
+                    S["active"] = S["favorites"][0]["key"] if S["favorites"] else None
+                save_settings()
+            log("info", "Live game slot cleared")
+        elif p == "/api/calendar":
+            with LOCK:
+                new_t = str(body.get("calendar_time") or S["calendar_time"])
+                if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", new_t):
+                    return self.send_body(400, {"error": "time must look like 04:00"})
+                changed = new_t != S["calendar_time"]
+                S["calendar_time"] = new_t
+                if "calendar_entity" in body:
+                    S["calendar_entity"] = str(body.get("calendar_entity") or "").strip()[:100]
+                save_settings()
+            log("info", f"Calendar updates daily at {S['calendar_time']} ({TZ_NAME}); entity: {S['calendar_entity'] or 'none'}")
+            if changed:
+                request_calendar("time")
+        elif p == "/api/calendar/refresh":
+            request_calendar("manual")
         elif p == "/api/refresh":
             pass
         else:
             return self.send_body(404, {"error": "not found"})
 
+        with LOCK:
+            after = [f["key"] for f in S["favorites"]]
+        if after != before:
+            request_calendar("teams")
         publish_discovery()
         WAKE.set()
         self.send_body(200, self.state_payload())
@@ -682,11 +1072,16 @@ def main():
     LOG_LEVEL = LEVELS.get(str(OPTS.get("log_level") or "info").lower(), 20)
     init_storage()
     S = load_settings()
+    init_timezone()
+    CAL.update(load_json(cal_meta_file(), {}))
     log("info", f"Team Tracker Lite {VERSION} starting (log level: {OPTS.get('log_level') or 'info'})")
     log("info", f"Settings file: {SETTINGS_FILE} ({len(S['favorites'])} saved teams)")
     log("info", f"Refresh: every {S['idle_minutes']} min idle, {S['live_seconds']}s during games")
     mqtt_start()
     threading.Thread(target=poll_loop, daemon=True).start()
+    threading.Thread(target=calendar_loop, daemon=True).start()
+    threading.Thread(target=ThreadingHTTPServer(("0.0.0.0", 8100), ICSHandler).serve_forever, daemon=True).start()
+    log("info", f"Calendar feed on port 8100, updates daily at {S['calendar_time']}")
     log("info", "Web UI on port 8099")
     ThreadingHTTPServer(("0.0.0.0", 8099), Handler).serve_forever()
 
