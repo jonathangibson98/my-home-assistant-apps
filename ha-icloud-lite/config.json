@@ -1,6 +1,6 @@
 {
   "name": "iCloud Lite",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "slug": "icloud_lite",
   "description": "Track Apple devices from multiple iCloud accounts via MQTT",
   "url": "https://github.com/jonathangibson98/my-home-assistant-apps",
@@ -18,12 +18,16 @@
     "mqtt_host": "",
     "mqtt_port": 1883,
     "mqtt_username": "",
-    "mqtt_password": ""
+    "mqtt_password": "",
+    "log_level": "info",
+    "log_pyicloud": false
   },
   "schema": {
     "mqtt_host": "str?",
     "mqtt_port": "port?",
     "mqtt_username": "str?",
-    "mqtt_password": "password?"
+    "mqtt_password": "password?",
+    "log_level": "list(debug|info|warning|error)?",
+    "log_pyicloud": "bool?"
   }
 }
