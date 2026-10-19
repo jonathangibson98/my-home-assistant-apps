@@ -14,6 +14,11 @@ import aiohttp
 import paho.mqtt.client as mqtt
 from aiohttp import web
 from pyicloud import PyiCloudService
+from pyicloud.exceptions import (
+    PyiCloud2FARequiredException,
+    PyiCloud2SARequiredException,
+    PyiCloudFailedLoginException,
+)
 
 DATA = Path(os.getenv("DATA_DIR", "/data"))
 ACCOUNTS_FILE = DATA / "accounts.json"
@@ -22,6 +27,7 @@ PREFIX = "icloud_lite"
 STATUS_TOPIC = f"{PREFIX}/status"
 INGRESS_IPS = {"172.30.32.2", "127.0.0.1", "::1"}
 LOGIN_RETRY_SECONDS = 1800  # never hammer Apple after a failed login
+AUTH_ERRORS = (PyiCloudFailedLoginException, PyiCloud2FARequiredException, PyiCloud2SARequiredException)
 
 log = logging.getLogger(PREFIX)
 
@@ -84,6 +90,7 @@ class Account:
         self.fast_interval = int(cfg.get("fast_interval", 60))  # seconds near zones, 0 = off
         self.near_distance = int(cfg.get("near_distance", 1500))  # meters outside a zone edge
         self.poll_note = ""
+        self.last_relogin = 0.0
         self.selected = list(cfg.get("devices", []))
         self.names = dict(cfg.get("names", {}))  # device_id -> custom name for HA
         self.label = cfg.get("label", "")  # tab name in the web UI
@@ -98,6 +105,11 @@ class Account:
         self.discovered = set()
         self.gen = -1
         self.alock = asyncio.Lock()
+
+    @property
+    def tag(self):
+        """Short name for log lines (never the full email)."""
+        return self.label or self.username.split("@")[0] or "account"
 
     def to_cfg(self):
         return {
@@ -116,6 +128,7 @@ class Account:
     def login(self):
         COOKIES.mkdir(parents=True, exist_ok=True)
         self.next_login = time.time() + LOGIN_RETRY_SECONDS
+        log.info("%s: logging in", self.tag)
         try:
             self.api = PyiCloudService(
                 self.username, self.password, cookie_directory=str(COOKIES), with_family=True
@@ -123,21 +136,23 @@ class Account:
             if self.api.requires_2fa:
                 self.status = "needs_2fa"
                 self.message = "Apple needs a verification code."
+                log.info("%s: Apple wants a 2FA code, asking Apple to send one", self.tag)
                 self.send_code()
                 return
             self.status = "ok"
             self.message = ""
             self.fetch(locate=False)
+            log.info("%s: logged in, %d device(s) on the account", self.tag, len(self.devices))
         except Exception as err:  # noqa: BLE001
             self.status = "error"
             self.message = f"Login failed: {err}"
-            log.warning("%s: %s", self.username, self.message)
+            log.warning("%s: %s", self.tag, self.message)
 
     def send_code(self):
         try:
             self.api.request_2fa_code()
         except Exception as err:  # noqa: BLE001
-            log.warning("%s: couldn't request 2FA code: %s", self.username, err)
+            log.warning("%s: couldn't request 2FA code: %s", self.tag, err)
 
     def verify(self, code):
         try:
@@ -146,8 +161,10 @@ class Account:
                 self.api.trust_session()
         except Exception as err:  # noqa: BLE001
             self.message = f"Code check failed: {err}"
+            log.warning("%s: 2FA code check failed: %s", self.tag, err)
             return
         if ok:
+            log.info("%s: 2FA code accepted", self.tag)
             self.status = "ok"
             self.message = ""
             try:
@@ -155,6 +172,7 @@ class Account:
             except Exception as err:  # noqa: BLE001
                 self.message = f"Logged in, but device list failed: {err}"
         else:
+            log.warning("%s: 2FA code rejected by Apple", self.tag)
             self.message = "Wrong or expired code."
 
     def fetch(self, locate=True):
@@ -184,6 +202,7 @@ class Account:
         self.devices, self.info = devices, info
         self.last_ok = time.time()
         self.message = ""
+        log.debug("%s: fetched %d device(s) (locate=%s)", self.tag, len(devices), locate)
 
     def near_zone(self, zones):
         """Short note if a tracked device is inside/near a zone, else ''."""
@@ -201,25 +220,41 @@ class Account:
                 if edge <= self.near_distance and (best is None or edge < best[0]):
                     best = (edge, dev_id, z["name"])
         if not best:
+            log.debug("%s: no tracked device is near any zone", self.tag)
             return ""
         name = self.names.get(best[1]) or self.devices.get(best[1], "Device")
+        log.debug("%s: closest zone edge %.0f m (%s)", self.tag, best[0], best[2])
         return f"{name} {'in' if best[0] <= 0 else 'near'} {best[2]}"
 
     def poll(self, zones=()):
         # Default to the slow interval first so a failed poll never hammers Apple
         self.next_poll = time.time() + self.interval * 60
-        self.poll_note = ""
+        prev_note, self.poll_note = self.poll_note, ""
         try:
             self.fetch(locate=True)
         except Exception as err:  # noqa: BLE001
             self.message = f"Update failed: {err}"
-            log.warning("%s: %s", self.username, self.message)
+            log.warning("%s: %s", self.tag, self.message)
+            if isinstance(err, AUTH_ERRORS) or "password" in str(err).lower():
+                # Apple dropped our session. Log in again (asks for a 2FA code if needed),
+                # but only once per 30 min so we never hammer Apple.
+                if time.time() - self.last_relogin > LOGIN_RETRY_SECONDS:
+                    self.last_relogin = time.time()
+                    self.status, self.api, self.next_login = "login", None, 0
+                else:
+                    self.status = "error"
+                    self.message += " Apple keeps rejecting this login. Tap Retry login."
             return
         if self.fast_interval and zones:
             note = self.near_zone(zones)
             if note:
                 self.next_poll = time.time() + self.fast_interval
                 self.poll_note = note
+        if self.poll_note and not prev_note:
+            log.info("%s: FAST mode on (%s), polling every %ss", self.tag, self.poll_note, self.fast_interval)
+        elif prev_note and not self.poll_note:
+            log.info("%s: fast mode off, back to every %s min", self.tag, self.interval)
+        log.debug("%s: poll ok, next in %ds", self.tag, round(self.next_poll - time.time()))
 
 
 def dev_key(acct, dev_id):
@@ -264,6 +299,7 @@ class App:
             "manufacturer": "Apple",
             "model": info.get("model"),
         }
+        log.info("MQTT discovery sent for %s", device["name"])
         self.mqtt.pub(
             t["tracker_cfg"],
             {
@@ -297,6 +333,7 @@ class App:
         _, t = self._topics(acct, dev_id)
         loc = info.get("location") or {}
         level = info.get("battery")
+        log.debug("MQTT state %s: lat=%s lon=%s battery=%s", _[:24], loc.get("latitude"), loc.get("longitude"), level)
         if loc.get("latitude") is not None and loc.get("longitude") is not None:
             self.mqtt.pub(
                 t["attrs"],
@@ -313,6 +350,7 @@ class App:
 
     def clear_device(self, acct, dev_id):
         _, t = self._topics(acct, dev_id)
+        log.info("MQTT entities removed for %s", acct.names.get(dev_id) or acct.devices.get(dev_id, dev_id[:8]))
         for topic in (t["tracker_cfg"], t["battery_cfg"], t["attrs"], t["battery"]):
             self.mqtt.pub(topic, "")
         acct.discovered.discard(dev_id)
@@ -357,7 +395,7 @@ class App:
                         await self.run_blocking(acct, acct.poll, self.zones)
                     self.sync_account(acct)
                 except Exception:  # noqa: BLE001
-                    log.exception("worker error for %s", acct.username)
+                    log.exception("worker error for %s", acct.tag)
             await asyncio.sleep(5)
 
     async def zone_refresher(self):
@@ -480,7 +518,8 @@ def ago(ts_ms):
         return f"{int(secs // 60)} min ago"
     if secs < 86400:
         return f"{int(secs // 3600)} hr ago"
-    return f"{int(secs // 86400)} days ago"
+    days = int(secs // 86400)
+    return f"{days} day ago" if days == 1 else f"{days} days ago"
 
 
 def describe(info):
@@ -520,6 +559,9 @@ def render_account(acct, zones=()):
         "login": "Logging in...",
         "error": "Error",
     }[acct.status]
+    failing = acct.status == "ok" and acct.message.startswith("Update failed")
+    if failing:
+        cls, label = "warn", "Connected, but the last update failed"
     hidden = f"<input type='hidden' name='id' value='{esc(acct.id)}'>"
     out = [f"<div class='card'><h3>{esc(acct.username)}</h3><div class='{cls}'>{label}</div>"]
     if acct.message:
@@ -533,6 +575,15 @@ def render_account(acct, zones=()):
         )
     elif acct.status == "error":
         out.append(f"<form method='post' action='retry'>{hidden}<button class='grey'>Retry login</button></form>")
+    elif failing:
+        out.append(f"<form method='post' action='retry'>{hidden}<button>Reconnect</button></form>")
+    if acct.status == "error" or failing:
+        out.append(
+            f"<form method='post' action='password'>{hidden}"
+            "<div class='muted' style='margin-top:12px'>Changed your Apple password? Update it here</div>"
+            "<input type='password' name='password' placeholder='New password' autocomplete='off'>"
+            "<button class='grey'>Save password and reconnect</button></form>"
+        )
     out.append("</div>")
 
     if acct.status == "ok":
@@ -703,6 +754,7 @@ def build_web(app_state):
             )
             app_state.accounts[acct.id] = acct
             app_state.save()
+            log.info("Account added: %s", acct.tag)
             return go(acct.id)
         return go("new")
 
@@ -727,6 +779,7 @@ def build_web(app_state):
             dev_id = data.get("device", "")
             if dev_id and dev_id in acct.devices and dev_id not in acct.selected:
                 acct.selected.append(dev_id)
+                log.info("%s: device added: %s", acct.tag, acct.devices.get(dev_id, dev_id[:8]))
                 name = (data.get("name") or "").strip()
                 if name:
                     acct.names[dev_id] = name
@@ -744,6 +797,7 @@ def build_web(app_state):
             dev_id = data.get("remove", "")
             if dev_id in acct.selected:
                 acct.selected.remove(dev_id)
+                log.info("%s: device removed: %s", acct.tag, acct.devices.get(dev_id, dev_id[:8]))
             app_state.save()
             app_state.sync_account(acct)  # clears the removed device's entities
         return go(acct.id if acct else None)
@@ -769,13 +823,25 @@ def build_web(app_state):
     async def retry(request):
         _, acct = await get_acct(request)
         if acct:
+            log.info("%s: manual reconnect requested", acct.tag)
             acct.status, acct.api, acct.next_login = "login", None, 0
+        return go(acct.id if acct else None)
+
+    @routes.post("/password")
+    async def password(request):
+        data, acct = await get_acct(request)
+        if acct and data.get("password"):
+            acct.password = data["password"]
+            log.info("%s: password updated, reconnecting", acct.tag)
+            acct.status, acct.api, acct.next_login = "login", None, 0
+            app_state.save()
         return go(acct.id if acct else None)
 
     @routes.post("/remove")
     async def remove(request):
         _, acct = await get_acct(request)
         if acct:
+            log.info("Account removed: %s", acct.tag)
             app_state.remove_account(acct)
         return go()
 
@@ -784,11 +850,34 @@ def build_web(app_state):
     return web_app
 
 
+def setup_logging():
+    """Apply the log_level / log_pyicloud options from the add-on Configuration tab."""
+    opts = {}
+    try:
+        opts = json.loads((DATA / "options.json").read_text())
+    except Exception:  # noqa: BLE001
+        pass
+    level = getattr(logging, str(opts.get("log_level") or "info").upper(), logging.INFO)
+    logging.basicConfig(
+        level=level, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S", force=True
+    )
+    for noisy in ("urllib3", "asyncio", "aiohttp", "charset_normalizer", "requests"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+    # pyicloud's own debug output can contain sensitive request details, so it has its own switch
+    logging.getLogger("pyicloud").setLevel(logging.DEBUG if opts.get("log_pyicloud") else logging.WARNING)
+    log.info(
+        "Log level: %s | pyicloud debug: %s",
+        logging.getLevelName(level),
+        "ON (sensitive!)" if opts.get("log_pyicloud") else "off",
+    )
+    return level
+
+
 async def main():
-    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+    level = setup_logging()
     state = App()
     web_app = build_web(state)
-    runner = web.AppRunner(web_app)
+    runner = web.AppRunner(web_app, access_log=logging.getLogger('aiohttp.access') if level <= logging.DEBUG else None)
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", 8099).start()
     log.info("Web UI up on :8099 with %d saved account(s)", len(state.accounts))
