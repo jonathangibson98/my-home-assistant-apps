@@ -17,6 +17,15 @@ Each device shows up as a `device_tracker` plus a battery sensor. Home Assistant
 ## Options (only if you don't use the Mosquitto add-on)
 `mqtt_host`, `mqtt_port`, `mqtt_username`, `mqtt_password`. Leave blank to auto-detect.
 
+## Logging (Configuration tab)
+- `log_level`: `debug`, `info` (default), `warning`, or `error`.
+  - `info` shows logins, 2FA events, fast-mode on/off, devices added or removed, and MQTT discovery.
+  - `debug` adds every poll, how close devices are to zones, and every MQTT state publish.
+  - `warning` and `error` show only problems.
+- `log_pyicloud`: turns on the Apple library's own debug output. Leave it off unless troubleshooting, because it can include sensitive request details. Don't paste those logs anywhere public.
+- Passwords and 2FA codes are never written to the log. Accounts appear by tab name, not email.
+- Restart the add-on after changing either option.
+
 ## Notes
 - Each update asks Apple to actively locate your devices. The fresh fix lands on the next update.
 - Passwords are stored in this add-on's private `/data` folder.
