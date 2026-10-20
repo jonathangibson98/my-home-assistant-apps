@@ -121,10 +121,11 @@ async function init() {
   if (s.ha_ok && !s.entity_found)
     b.append(el("div", {class: "card banner"}, "I can't find " + s.entity + ". Fix the name in the add-on's Configuration tab."));
   if (!s.package_included) {
-    const snippet = "homeassistant:\n  packages:\n    ai_builder: !include ai_builder/package.yaml";
+    const f = s.template_file || "ai_builder/package.yaml";
+    const snippet = "homeassistant:\n  packages:\n    ai_builder: !include " + f;
     b.append(el("div", {class: "card banner"},
       el("strong", {}, "One-time setup for template sensors"),
-      el("p", {class: "dim"}, "Automations, scripts and helpers work right now. Template sensors need this added to configuration.yaml, then a Home Assistant restart. If you already have a packages: section, just add the last line under it."),
+      el("p", {class: "dim"}, "Automations, scripts and helpers work right now. Template sensors need this added to configuration.yaml, then a Home Assistant restart. If you already have a packages: section, just add the last line under it. If you use !include_dir_named on a packages folder, set the add-on's template_file option to a file inside that folder (like packages/ai_builder.yaml) and skip this."),
       el("pre", {}, snippet)));
   }
   targets = await api("targets");

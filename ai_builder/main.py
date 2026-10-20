@@ -29,8 +29,23 @@ ENTITY = OPTS.get("ai_task_entity") or "ai_task.gemini_pro_ai_task"
 TIMEOUT = int(OPTS.get("request_timeout") or 180)
 
 CONF = Path("/homeassistant")
-PKG_DIR = CONF / "ai_builder"
-PKG_FILE = PKG_DIR / "package.yaml"
+
+
+def resolve_template_file(value):
+    """Path (relative to the HA config folder) where template entities are written."""
+    rel = (value or "ai_builder/package.yaml").strip().strip("/")
+    if rel.startswith("config/"):
+        rel = rel[len("config/"):]
+    parts = [p for p in rel.split("/") if p]
+    if not parts or ".." in parts or not rel.lower().endswith((".yaml", ".yml")):
+        log.warning("Bad template_file %r, using ai_builder/package.yaml", value)
+        rel = "ai_builder/package.yaml"
+    return rel
+
+
+TEMPLATE_REL = resolve_template_file(OPTS.get("template_file"))
+PKG_FILE = CONF / TEMPLATE_REL
+PKG_DIR = PKG_FILE.parent
 STORE = Path("/data/templates.json")
 HIST = Path("/data/history.json")
 INDEX = Path("/app/index.html")
@@ -133,10 +148,19 @@ def render_package(store):
 
 
 def package_included():
+    """True if configuration.yaml includes our file directly, or includes the folder it lives in."""
     try:
-        return "ai_builder/package.yaml" in (CONF / "configuration.yaml").read_text()
+        text = (CONF / "configuration.yaml").read_text()
     except Exception:
         return False
+    if TEMPLATE_REL in text:
+        return True
+    parts = TEMPLATE_REL.split("/")
+    for i in range(1, len(parts)):
+        folder = "/".join(parts[:i])
+        if re.search(r"!include_dir_\w+\s+['\"]?" + re.escape(folder) + r"['\"]?\s*(?:#.*)?$", text, re.M):
+            return True
+    return False
 
 
 def add_history(entry):
@@ -366,6 +390,7 @@ async def status(request):
         "ha_ok": st == 200,
         "version": cfg.get("version") if isinstance(cfg, dict) else None,
         "package_included": package_included(),
+        "template_file": TEMPLATE_REL,
     })
 
 
@@ -549,7 +574,7 @@ async def delete_template(request):
 async def on_startup(app):
     app["http"] = aiohttp.ClientSession()
     render_package(load_json(STORE, {}))
-    log.info("AI Builder ready - using %s", ENTITY)
+    log.info("AI Builder ready - using %s, template file /config/%s", ENTITY, TEMPLATE_REL)
 
 
 async def on_cleanup(app):

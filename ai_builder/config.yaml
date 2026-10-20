@@ -1,5 +1,5 @@
 name: "AI Builder"
-version: "1.0.1"
+version: "1.0.2"
 slug: ai_builder
 description: "Type what you want in plain English; your ai_task entity builds the automation, script, template sensor or helper."
 url: "https://github.com/jonathangibson98/ha-ai-builder"
@@ -19,6 +19,8 @@ map:
 options:
   ai_task_entity: ai_task.gemini_pro_ai_task
   request_timeout: 180
+  template_file: ai_builder/package.yaml
 schema:
   ai_task_entity: str
   request_timeout: int(30,600)
+  template_file: str

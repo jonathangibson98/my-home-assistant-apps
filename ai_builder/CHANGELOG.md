@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.2 - 2026-10-20
+
+- New `template_file` option: choose where template sensors are written (default stays `ai_builder/package.yaml`)
+- Setup banner now recognizes `!include_dir_named`-style folder includes and shows your configured path
+
 ## 1.0.1 - 2026-10-20
 
 - Fix: add-on failed to start with "s6-overlay-suexec: fatal: can only run as pid 1" (set `init: false`)

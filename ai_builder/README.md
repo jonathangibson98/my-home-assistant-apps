@@ -28,7 +28,7 @@ AI Builder is a Home Assistant add-on with a sidebar web UI. You describe an aut
 3. Open **AI Builder** under Local add-ons, then **Install** and **Start**.
 4. Turn on **Show in sidebar**.
 
-Template sensors need a one-time `configuration.yaml` change. See [DOCS.md](DOCS.md).
+Template sensors need a one-time `configuration.yaml` change, and the file location is configurable. See [DOCS.md](DOCS.md).
 
 ## Requirements
 

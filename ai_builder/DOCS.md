@@ -30,12 +30,15 @@ Scripts and automations written directly in YAML can't be loaded this way.
 |---|---|---|
 | `ai_task_entity` | `ai_task.gemini_pro_ai_task` | The AI task entity used to write configs |
 | `request_timeout` | `180` | Seconds to wait for the AI before giving up (30 to 600) |
+| `template_file` | `ai_builder/package.yaml` | Where template sensors are written, relative to your Home Assistant config folder. Must end in `.yaml` |
 
 Restart the add-on after changing options.
 
 ## One-time setup for template sensors
 
-Automations, scripts, and helpers work immediately. Template sensors are written to `/config/ai_builder/package.yaml`, which Home Assistant has to be told to load. Add this to `configuration.yaml`:
+By default the file is `ai_builder/package.yaml`. You can change it with the `template_file` option. The add-on creates the folder if it doesn't exist.
+
+Automations, scripts, and helpers work immediately. Template sensors are written to the `template_file` path, which Home Assistant has to be told to load. Add this to `configuration.yaml`:
 
 ```yaml
 homeassistant:
@@ -44,6 +47,10 @@ homeassistant:
 ```
 
 If you already have a `homeassistant:` section with `packages:`, add only the `ai_builder:` line under it. Do not create a second `homeassistant:` key.
+
+**If you load a whole packages folder** with `packages: !include_dir_named packages`, don't add the line above. Instead set `template_file` to a file inside that folder, for example `packages/ai_builder.yaml`. The add-on notices the folder include and stops showing the banner. Don't put both a folder include and an explicit `ai_builder:` entry under `packages:`, because that breaks the folder include.
+
+If you change `template_file` later, move or delete the old file yourself, then restart Home Assistant once.
 
 Restart Home Assistant once. After that, new or changed template sensors apply instantly with no restart.
 
@@ -56,9 +63,9 @@ The add-on shows a yellow banner until this is detected.
 | Automation | Home Assistant's automations | Settings -> Automations |
 | Script | Home Assistant's scripts | Settings -> Scripts |
 | Helper | Home Assistant helpers | Settings -> Helpers |
-| Template entity | `/config/ai_builder/package.yaml` | This add-on, "Made so far" tab |
+| Template entity | The `template_file` path (default `/config/ai_builder/package.yaml`) | This add-on, "Made so far" tab |
 
-Don't hand-edit `package.yaml`. The add-on rewrites it.
+Don't hand-edit the template file. The add-on rewrites it.
 
 ## Checks the add-on does for you
 
