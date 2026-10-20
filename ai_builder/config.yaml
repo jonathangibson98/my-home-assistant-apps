@@ -1,11 +1,12 @@
 name: "AI Builder"
-version: "1.0.0"
+version: "1.0.1"
 slug: ai_builder
 description: "Type what you want in plain English; your ai_task entity builds the automation, script, template sensor or helper."
 url: "https://github.com/jonathangibson98/ha-ai-builder"
 arch:
   - aarch64
   - amd64
+init: false
 startup: application
 boot: auto
 ingress: true
