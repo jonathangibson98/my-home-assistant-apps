@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1 - 2026-10-20
+
+- Fix: add-on failed to start with "s6-overlay-suexec: fatal: can only run as pid 1" (set `init: false`)
+
 ## 1.0.0 - 2026-10-20
 
 First release.
