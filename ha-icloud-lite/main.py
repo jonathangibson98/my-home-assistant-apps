@@ -91,6 +91,7 @@ class Account:
         self.near_distance = int(cfg.get("near_distance", 1500))  # meters outside a zone edge
         self.poll_note = ""
         self.last_relogin = 0.0
+        self.throttle_count = 0  # consecutive Apple 503/429 refusals
         self.selected = list(cfg.get("devices", []))
         self.names = dict(cfg.get("names", {}))  # device_id -> custom name for HA
         self.label = cfg.get("label", "")  # tab name in the web UI
@@ -141,11 +142,25 @@ class Account:
                 return
             self.status = "ok"
             self.message = ""
+            self.throttle_count = 0
             self.fetch(locate=False)
             log.info("%s: logged in, %d device(s) on the account", self.tag, len(self.devices))
         except Exception as err:  # noqa: BLE001
             self.status = "error"
-            self.message = f"Login failed: {err}"
+            text = str(err)
+            if any(k in text for k in ("503", "429", "Service Temporarily Unavailable", "Too Many")):
+                # Apple is throttling logins from this connection. Back off (1h, 2h, 4h, then 6h)
+                # because retrying sooner just extends the block.
+                self.throttle_count += 1
+                wait = min(6 * 3600, 3600 * 2 ** (self.throttle_count - 1))
+                self.next_login = time.time() + wait
+                self.message = (
+                    f"Apple is temporarily refusing logins (error 503). Trying again automatically in "
+                    f"{wait // 3600} hr. Tapping Retry makes the block last longer."
+                )
+            else:
+                self.throttle_count = 0
+                self.message = f"Login failed: {text[:200]}"
             log.warning("%s: %s", self.tag, self.message)
 
     def send_code(self):
@@ -574,7 +589,7 @@ def render_account(acct, zones=()):
             f"<form method='post' action='resend'>{hidden}<button class='grey'>Send a new code</button></form>"
         )
     elif acct.status == "error":
-        out.append(f"<form method='post' action='retry'>{hidden}<button class='grey'>Retry login</button></form>")
+        out.append(f"<form method='post' action='retry'>{hidden}<button class='grey'>{'Retry anyway (can extend the block)' if acct.throttle_count else 'Retry login'}</button></form>")
     elif failing:
         out.append(f"<form method='post' action='retry'>{hidden}<button>Reconnect</button></form>")
     if acct.status == "error" or failing:
