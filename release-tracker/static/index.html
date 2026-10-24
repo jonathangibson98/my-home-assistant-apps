@@ -52,6 +52,10 @@
   .hint { color: var(--dim); font-size: 0.8rem; margin-top: 4px; }
   h2 { font-size: 1rem; margin: 22px 0 4px; }
   .empty { text-align: center; color: var(--dim); padding: 36px 10px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+  .chip { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--dim); font: inherit; font-size: 0.78rem; cursor: pointer; }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: #1a0f14; font-weight: 600; }
+  .who { margin-bottom: 14px; }
   .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ok); color: #08261a; padding: 10px 16px; border-radius: 10px; font-weight: 600; opacity: 0; transition: opacity .2s; pointer-events: none; }
   .toast.show { opacity: 1; }
   @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
@@ -76,6 +80,10 @@
       <input id="q" placeholder="Search a show or movie" enterkeyhint="search">
       <button class="btn" id="go">Search</button>
     </div>
+    <div class="who">
+      <div class="quiet">Who cares about it?</div>
+      <div class="chips" id="who"></div>
+    </div>
     <div id="results"></div>
   </section>
 
@@ -86,6 +94,10 @@
 
     <label for="s-region">Region for movie release dates (2-letter code, like US)</label>
     <input id="s-region" maxlength="2">
+
+    <label for="s-people">People who track things (comma separated)</label>
+    <input id="s-people" placeholder="Jon, MJ">
+    <div class="hint">Each person gets their own sensors in Home Assistant.</div>
 
     <label for="s-hours">Check for changes every (hours)</label>
     <input id="s-hours" type="number" min="1">
@@ -110,6 +122,7 @@
 const $ = s => document.querySelector(s);
 const IMG = "https://image.tmdb.org/t/p/w154";
 let state = null;
+let chosen = new Set();
 
 async function api(path, opts) {
   const r = await fetch("api/" + path, opts);
@@ -163,6 +176,19 @@ function render() {
     body.append(el("div", "title", info.title || it.title));
     body.append(el("div", "sub", info.label || "Not checked yet"));
     if (info.next_date) body.append(el("div", "sub", prettyDate(info.next_date)));
+    const chips = el("div", "chips");
+    for (const name of state.settings.people) {
+      const on = (it.people || []).includes(name);
+      const c = el("button", "chip" + (on ? " on" : ""), name);
+      c.setAttribute("aria-pressed", on);
+      c.onclick = async () => {
+        const next = on ? it.people.filter(p => p !== name) : [...(it.people || []), name];
+        await api(`track/${it.type}/${it.id}/people`, { method: "PUT", body: JSON.stringify({ people: next }) });
+        await load();
+      };
+      chips.append(c);
+    }
+    body.append(chips);
     if (it.error) body.append(el("div", "err", it.error));
     card.append(body);
 
@@ -191,6 +217,15 @@ function render() {
 function renderSettings() {
   const s = state.settings;
   $("#s-region").value = s.region;
+  $("#s-people").value = s.people.join(", ");
+  chosen = new Set([...chosen].filter(n => s.people.includes(n)));
+  const who = $("#who"); who.replaceChildren();
+  for (const name of s.people) {
+    const c = el("button", "chip" + (chosen.has(name) ? " on" : ""), name);
+    c.setAttribute("aria-pressed", chosen.has(name));
+    c.onclick = () => { chosen.has(name) ? chosen.delete(name) : chosen.add(name); c.classList.toggle("on"); c.setAttribute("aria-pressed", chosen.has(name)); };
+    who.append(c);
+  }
   $("#s-hours").value = s.refresh_hours;
   $("#s-window").value = s.window_days;
   $("#s-mhost").value = s.mqtt_host;
@@ -228,7 +263,7 @@ async function search() {
       b.disabled = tracked;
       b.onclick = async () => {
         b.disabled = true; b.textContent = "Adding...";
-        try { await api("track", { method: "POST", body: JSON.stringify(r) }); b.textContent = "Tracking"; await load(); toast("Added " + r.title); }
+        try { await api("track", { method: "POST", body: JSON.stringify({ ...r, people: [...chosen] }) }); b.textContent = "Tracking"; await load(); toast("Added " + r.title); }
         catch (e) { b.disabled = false; b.textContent = "Track"; toast(e.message); }
       };
       when.append(b); card.append(when); box.append(card);
@@ -250,7 +285,7 @@ $("#refresh").onclick = async () => {
 $("#save").onclick = async () => {
   const body = {
     tmdb_key: $("#s-key").value, region: $("#s-region").value.toUpperCase() || "US",
-    refresh_hours: Number($("#s-hours").value) || 6, window_days: Number($("#s-window").value) || 60,
+    people: $("#s-people").value, refresh_hours: Number($("#s-hours").value) || 6, window_days: Number($("#s-window").value) || 60,
     mqtt_host: $("#s-mhost").value.trim(), mqtt_port: Number($("#s-mport").value) || 1883,
     mqtt_user: $("#s-muser").value.trim(), mqtt_pass: $("#s-mpass").value,
   };
