@@ -1,5 +1,5 @@
 name: Release Tracker
-version: "1.0.0"
+version: "1.1.0"
 slug: release_tracker
 description: Track the TV shows and movies you pick and see exactly when they drop
 arch:

@@ -12,6 +12,7 @@ from flask import Flask, jsonify, request, send_from_directory
 DATA = "/data"
 TRACK_FILE = f"{DATA}/tracked.json"
 SET_FILE = f"{DATA}/settings.json"
+DISC_FILE = f"{DATA}/discovered_people.json"
 SUP = "http://supervisor"
 SUP_HEADERS = {"Authorization": "Bearer " + os.environ.get("SUPERVISOR_TOKEN", "")}
 TMDB = "https://api.themoviedb.org/3"
@@ -21,6 +22,7 @@ DEFAULTS = {
     "region": "US",
     "refresh_hours": 6,
     "window_days": 60,
+    "people": ["Jon", "MJ"],
     "mqtt_host": "",
     "mqtt_port": 1883,
     "mqtt_user": "",
@@ -185,6 +187,7 @@ def upcoming():
                 "date": nd,
                 "days_until": d,
                 "label": info.get("label"),
+                "people": it.get("people", []),
             }
         )
     rows.sort(key=lambda r: (r["date"], r["title"]))
@@ -254,6 +257,59 @@ def send_discovery(c):
         c.publish(f"homeassistant/{comp}/release_tracker/{key}/config", json.dumps(cfg), retain=True)
 
 
+_disc_people = None
+
+
+def slug(name):
+    out = "".join(ch if ch.isalnum() else "_" for ch in name.lower()).strip("_")
+    return out or "person"
+
+
+def people_list():
+    people = {}
+    for p in settings().get("people", []):
+        p = str(p).strip()
+        if p and slug(p) not in people:
+            people[slug(p)] = p
+    return people
+
+
+def person_topic(sl, key):
+    return f"release_tracker/person/{sl}/{key}"
+
+
+def sync_people_discovery():
+    global _disc_people
+    if client is None:
+        return
+    want = people_list()
+    if _disc_people == set(want):
+        return
+    old = set(load(DISC_FILE, [])) | (_disc_people or set())
+    for sl in old - set(want):
+        client.publish(f"homeassistant/sensor/release_tracker/p_{sl}_upcoming/config", "", retain=True)
+        client.publish(f"homeassistant/binary_sensor/release_tracker/p_{sl}_today/config", "", retain=True)
+    common = {"device": DEVICE, "availability_topic": T_STATUS}
+    for sl, name in want.items():
+        up = {
+            "name": f"{name} Upcoming", "icon": "mdi:account-clock",
+            "unique_id": f"release_tracker_p_{sl}_upcoming",
+            "state_topic": person_topic(sl, "upcoming"), "value_template": "{{ value_json.state }}",
+            "json_attributes_topic": person_topic(sl, "upcoming"),
+            "json_attributes_template": "{{ value_json.attributes | tojson }}", **common}
+        td = {
+            "name": f"{name} Releasing Today", "icon": "mdi:bell-ring",
+            "unique_id": f"release_tracker_p_{sl}_today",
+            "state_topic": person_topic(sl, "today"), "value_template": "{{ value_json.state }}",
+            "payload_on": "ON", "payload_off": "OFF",
+            "json_attributes_topic": person_topic(sl, "today"),
+            "json_attributes_template": "{{ value_json.attributes | tojson }}", **common}
+        client.publish(f"homeassistant/sensor/release_tracker/p_{sl}_upcoming/config", json.dumps(up), retain=True)
+        client.publish(f"homeassistant/binary_sensor/release_tracker/p_{sl}_today/config", json.dumps(td), retain=True)
+    save(DISC_FILE, sorted(want))
+    _disc_people = set(want)
+
+
 def publish():
     rows = upcoming()
     s = settings()
@@ -269,13 +325,27 @@ def publish():
         "items": window[:25], "window_days": int(s["window_days"]),
         "tracked_count": len(load(TRACK_FILE, []))}})
     now = [r for r in rows if r["days_until"] == 0]
+    people = people_list()
     pub(T["today"], {"state": "ON" if now else "OFF", "attributes": {
-        "titles": [r["title"] for r in now], "items": now}})
+        "titles": [r["title"] for r in now], "items": now,
+        "by_person": {name: [r["title"] for r in now if name in r["people"]] for name in people.values()}}})
+    sync_people_discovery()
+    w = int(s["window_days"])
+    for sl, name in people.items():
+        mine = [r for r in rows if name in r["people"]]
+        soon = [r for r in mine if r["days_until"] <= w]
+        pub(person_topic(sl, "upcoming"), {"state": len(soon), "attributes": {
+            "person": name, "items": soon[:25]}})
+        todays = [r for r in mine if r["days_until"] == 0]
+        pub(person_topic(sl, "today"), {"state": "ON" if todays else "OFF", "attributes": {
+            "person": name, "titles": [r["title"] for r in todays], "items": todays}})
 
 
 def on_connect(c, userdata, flags, reason_code, properties=None):
     print(f"[mqtt] connected: {reason_code}", flush=True)
+    global _disc_people
     _sent.clear()
+    _disc_people = None
     send_discovery(c)
     c.publish(T_STATUS, "online", retain=True)
     publish()
@@ -369,14 +439,38 @@ def api_search():
     return jsonify(out[:12])
 
 
+def clean_people(v):
+    if isinstance(v, str):
+        v = v.split(",")
+    return [str(p).strip() for p in (v or []) if str(p).strip()]
+
+
+@app.route("/api/track/<media_type>/<int:tid>/people", methods=["PUT"])
+def api_set_people(media_type, tid):
+    people = clean_people(request.get_json(force=True).get("people"))
+    with lock:
+        tracked = load(TRACK_FILE, [])
+        for t in tracked:
+            if t["id"] == tid and t["type"] == media_type:
+                t["people"] = people
+        save(TRACK_FILE, tracked)
+    publish()
+    return jsonify({"ok": True})
+
+
 @app.route("/api/track", methods=["POST"])
 def api_track():
     b = request.get_json(force=True)
-    item = {"id": int(b["id"]), "type": b["type"], "title": b.get("title", ""), "poster": b.get("poster")}
+    item = {"id": int(b["id"]), "type": b["type"], "title": b.get("title", ""), "poster": b.get("poster"),
+            "people": clean_people(b.get("people"))}
     with lock:
         tracked = load(TRACK_FILE, [])
-        if any(t["id"] == item["id"] and t["type"] == item["type"] for t in tracked):
-            return jsonify({"ok": True})
+        for t in tracked:
+            if t["id"] == item["id"] and t["type"] == item["type"]:
+                t["people"] = sorted(set(t.get("people", [])) | set(item["people"]))
+                save(TRACK_FILE, tracked)
+                publish()
+                return jsonify({"ok": True})
         try:
             item["info"] = fetch_info(item)
         except Exception as e:
@@ -411,7 +505,7 @@ def api_settings():
             continue
         if k in SECRETS and not str(b[k]).strip():
             continue  # blank = keep the saved one
-        s[k] = b[k]
+        s[k] = clean_people(b[k]) if k == "people" else b[k]
     save(SET_FILE, s)
     threading.Thread(target=connect_mqtt, daemon=True).start()
     threading.Thread(target=refresh_all, daemon=True).start()
