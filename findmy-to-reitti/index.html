@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Find My to Reitti</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; padding:14px; font-family:-apple-system,Roboto,sans-serif; background:#0d0d0d; color:#eee; }
+  h2 { margin:22px 0 8px; font-size:15px; text-transform:uppercase; letter-spacing:.08em; color:#9aa; }
+  .card { background:#1a1a2e; border-radius:12px; padding:12px; margin-bottom:8px; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .sub { color:#889; font-size:12px; margin:6px 0; }
+  input, select, button { font-size:16px; border-radius:8px; border:1px solid #334; background:#12122a; color:#eee; padding:9px; }
+  input, select { width:100%; box-sizing:border-box; margin:4px 0; }
+  input[type=checkbox] { width:auto; }
+  button { background:#3b4cca; border:none; cursor:pointer; padding:9px 14px; }
+  button.x { background:#5a2030; }
+  button.save { width:100%; margin:10px 0 30px; padding:13px; }
+  label { font-size:12px; color:#9aa; }
+</style>
+</head>
+<body>
+
+<h2>Reitti</h2>
+<div class="card">
+  <label>Reitti address (your ExtraPi)</label>
+  <input id="url" placeholder="http://192.168.1.50:8181" oninput="S.cfg.reitti_url=this.value">
+  <label>Default API token</label>
+  <div class="row"><input id="token" type="password" oninput="S.cfg.token=this.value"><button onclick="tog()">Show</button></div>
+  <label>Check for new locations every (seconds, min 10)</label>
+  <input id="interval" type="number" min="10" oninput="S.cfg.interval=+this.value">
+</div>
+
+<h2>Devices</h2>
+<div id="devs"></div>
+<div class="card"><button onclick="addDev()">+ Add device</button></div>
+<button class="save" onclick="saveAll()">Save</button>
+
+<script>
+let S = {cfg: {devices: []}, status: {}}, ENT = [];
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const D = (i, k, v) => { S.cfg.devices[i][k] = v; };
+
+async function api(path, body) {
+  const r = await fetch(path, body ? {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)} : undefined);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+async function load() { S = await api('api/state'); ENT = await api('api/entities'); render(); }
+
+function opts(sel) {
+  const list = (!sel || ENT.some(e => e.id === sel)) ? ENT : [{id: sel, name: sel}, ...ENT];
+  return list.map(e => `<option value="${esc(e.id)}" ${e.id === sel ? 'selected' : ''}>${esc(e.name)} (${esc(e.id)})</option>`).join('');
+}
+function stText(d) {
+  const s = S.status[d.id];
+  return s ? (s.ok ? '✅ ' : '❌ ') + s.msg + ' · ' + new Date(s.t * 1000).toLocaleTimeString() : 'Not sent yet';
+}
+function devCard(d, i) {
+  return `<div class="card">
+    <div class="row"><b>${esc(d.name || 'New device')}</b>
+      <label><input type="checkbox" ${d.enabled !== false ? 'checked' : ''} onchange="D(${i},'enabled',this.checked)"> On</label></div>
+    <label>Name</label><input value="${esc(d.name)}" oninput="D(${i},'name',this.value)">
+    <label>Find My device (from the Apple iCloud integration)</label>
+    <select onchange="D(${i},'entity',this.value)">${opts(d.entity)}</select>
+    <label>Device ID (2 to 4 letters, blank = auto)</label>
+    <input maxlength="4" value="${esc(d.tid)}" oninput="D(${i},'tid',this.value)">
+    <label>Token override (blank = use default; set for someone else's Reitti user)</label>
+    <input type="password" value="${esc(d.token)}" oninput="D(${i},'token',this.value)">
+    <div class="sub" id="st${i}">${esc(stText(d))}</div>
+    <div class="row"><button onclick="sendNow(${i})">Send now</button><button class="x" onclick="delDev(${i})">Remove</button></div>
+  </div>`;
+}
+function render() {
+  $('url').value = S.cfg.reitti_url || '';
+  $('token').value = S.cfg.token || '';
+  $('interval').value = S.cfg.interval || 30;
+  $('devs').innerHTML = S.cfg.devices.map(devCard).join('') || '<div class="sub">No devices yet. Add one below.</div>';
+}
+function paint() { S.cfg.devices.forEach((d, i) => { const el = $('st' + i); if (el) el.textContent = stText(d); }); }
+
+function tog() { const t = $('token'); t.type = t.type === 'password' ? 'text' : 'password'; }
+function addDev() {
+  const e = ENT.find(x => x.id.startsWith('device_tracker.')) || ENT[0];
+  if (!e) return alert('No device_tracker entities found. Set up the Apple iCloud integration in Home Assistant first.');
+  S.cfg.devices.push({name: e.name, entity: e.id, tid: '', token: '', enabled: true});
+  render();
+}
+function delDev(i) {
+  if (!confirm('Remove ' + (S.cfg.devices[i].name || 'this device') + '?')) return;
+  S.cfg.devices.splice(i, 1);
+  render();
+}
+async function saveAll() {
+  try { await api('api/config', S.cfg); await load(); alert('Saved.'); }
+  catch (e) { alert('Save failed: ' + e.message); }
+}
+async function sendNow(i) {
+  const d = S.cfg.devices[i];
+  if (!d.id) return alert('Hit Save first.');
+  S.status[d.id] = await api('api/send', {id: d.id});
+  paint();
+}
+
+load();
+setInterval(() => api('api/state').then(s => { S.status = s.status; paint(); }).catch(() => {}), 15000);
+</script>
+</body>
+</html>
