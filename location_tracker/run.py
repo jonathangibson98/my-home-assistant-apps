@@ -11,6 +11,7 @@ CONFIG_PATH = "/data/options.json"
 DEVICES_PATH = "/data/devices.json"
 SETTINGS_PATH = "/data/settings.json"
 TRACKERS_PATH = "/data/trackers.json"
+CARD_PATH = "/data/card.json"
 
 def load_options():
     try:
@@ -464,6 +465,142 @@ async def listen(s):
             if eid in sources:
                 await safe_update_trackers(s)
 
+# ---------------- Dashboard card generator ----------------
+CARD_SEED = {
+    "jon": ("household", "person.jon"),
+    "mj": ("household", "person.mj"),
+    "nova": ("household", "input_boolean.nova_here"),
+    "blake": ("household", "input_boolean.blake_here"),
+    "von": ("friends", "input_boolean.von_here"),
+    "justin": ("friends", "person.justin"),
+    "alli": ("friends", "input_boolean.alli_here"),
+    "tyler": ("friends", "input_boolean.tyler_here"),
+    "mikala": ("friends", "person.mikala"),
+    "noah": ("friends", "person.noah"),
+    "aaron": ("friends", "person.aaron"),
+    "derek": ("friends", "input_boolean.d_here"),
+    "steph": ("friends", "input_boolean.steph_here"),
+}
+CARD_GROUPS = ("household", "friends", "hidden")
+
+def card_key(label):
+    return label.strip().lower().replace(" ", "_")
+
+def load_card():
+    data = {}
+    if os.path.exists(CARD_PATH):
+        try:
+            with open(CARD_PATH, "r") as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+    saved = data.get("rows", {})
+    rows = []
+    for d in load_devices():
+        label = (d.get("label") or "").strip()
+        if not label:
+            continue
+        key = card_key(label)
+        r = saved.get(key)
+        if r is None:
+            grp, ent = CARD_SEED.get(key, ("friends", "person." + key))
+            r = {"group": grp, "entity": ent, "picture": ""}
+        grp = r.get("group", "friends")
+        rows.append({
+            "key": key,
+            "label": label,
+            "group": grp if grp in CARD_GROUPS else "friends",
+            "entity": (r.get("entity") or "").strip(),
+            "picture": (r.get("picture") or "").strip(),
+        })
+    try:
+        cols = int(data.get("columns", 4))
+    except Exception:
+        cols = 4
+    return {
+        "household_title": data.get("household_title") or "Household Locations",
+        "friends_title": data.get("friends_title") or "Friends Locations",
+        "columns": max(1, min(8, cols)),
+        "separator": bool(data.get("separator", True)),
+        "rows": rows,
+    }
+
+def save_card(card):
+    out = {
+        "household_title": card.get("household_title", ""),
+        "friends_title": card.get("friends_title", ""),
+        "columns": card.get("columns", 4),
+        "separator": bool(card.get("separator", True)),
+        "rows": {r["key"]: {"group": r["group"], "entity": r["entity"], "picture": r["picture"]}
+                 for r in card.get("rows", [])},
+    }
+    with open(CARD_PATH, "w") as f:
+        json.dump(out, f, indent=2)
+
+def _yq(s):
+    # YAML single-quoted string: a single quote is written as two
+    return "'" + str(s).replace("'", "''") + "'"
+
+def card_tile(row, sensor):
+    key, ent = row["key"], row["entity"]
+    toggle = ent.startswith("input_boolean.")
+    sec = "{{ state_attr('" + sensor + "','" + key + "') }}"
+    home_if = "is_state_attr('" + sensor + "','" + key + "','Home')"
+    if row["picture"]:
+        pic = _yq(row["picture"])
+    elif ent.startswith("person."):
+        pic = _yq("{{ state_attr('" + ent + "','entity_picture') }}")
+    else:
+        pic = "/local/person/" + key + ".png"
+    lines = [
+        "- type: custom:mushroom-template-card",
+        "  primary: " + _yq(row["label"]),
+        "  secondary: " + _yq(sec),
+    ]
+    if ent:
+        lines.append("  entity: " + ent)
+    lines += [
+        "  picture: " + pic,
+        "  badge_icon: >-",
+        "    {{ 'mdi:home' if " + home_if + " else 'mdi:home-off' }}",
+        "  badge_color: >-",
+        "    {{ 'green' if " + home_if + " else 'red' }}",
+    ]
+    if toggle:
+        lines += ["  tap_action:", "    action: toggle",
+                  "  icon_tap_action:", "    action: toggle"]
+    else:
+        lines += ["  tap_action:", "    action: none",
+                  "  hold_action:", "    action: none",
+                  "  double_tap_action:", "    action: none"]
+    return lines
+
+def build_card_yaml(card=None):
+    card = card or load_card()
+    sensor = entity_id()
+
+    def grid(title, rows):
+        out = ["- type: grid", "  title: " + _yq(title), "  columns: " + str(card["columns"]),
+               "  square: false", "  cards:"]
+        for r in rows:
+            out += ["    " + ln for ln in card_tile(r, sensor)]
+        return out
+
+    grids = []
+    for grp, title in (("household", card["household_title"]), ("friends", card["friends_title"])):
+        rows = [r for r in card["rows"] if r["group"] == grp]
+        if rows:
+            grids += ["      " + ln for ln in grid(title, rows)]
+    if not grids:
+        return "# No people in the card yet. Add devices above and save."
+
+    out = ["type: vertical-stack", "cards:"]
+    if card["separator"]:
+        out += ["  - type: custom:bubble-card", "    card_type: separator",
+                "    sub_button:", "      main: []", "      bottom: []"]
+    out += ["  - type: vertical-stack", "    cards:"] + grids
+    return "\n".join(out) + "\n"
+
 HTML_PAGE = """<!DOCTYPE html>
 <html>
 <head>
@@ -483,6 +620,8 @@ HTML_PAGE = """<!DOCTYPE html>
         button.delete { background: #dc2626; }
         button:hover { opacity: 0.9; }
         p.hint { color: #94a3b8; font-size: 13px; }
+        input[type="number"], select { padding: 6px; background: #0f172a; color: #fff; border: 1px solid #334155; border-radius: 4px; }
+        textarea { width: 100%; box-sizing: border-box; padding: 8px; background: #0f172a; color: #e1e1e1; border: 1px solid #334155; border-radius: 4px; font-family: monospace; font-size: 12px; white-space: pre; }
     </style>
 </head>
 <body>
@@ -523,6 +662,31 @@ HTML_PAGE = """<!DOCTYPE html>
     </table>
     </div>
     <button onclick="addTracker()">+ Add Sensor</button>
+
+    <h2>Dashboard Card</h2>
+    <p class="hint">Builds a Mushroom card from the people listed above, using this sensor's attributes. Add a person above and save first, then they show up here. Tap entity: leave blank for none, <code>input_boolean.*</code> toggles on tap. Picture: leave blank for automatic.</p>
+    <p>
+        Household title <input type="text" id="card-title-h" style="width:30%">
+        Friends title <input type="text" id="card-title-f" style="width:30%">
+        Columns <input type="number" id="card-cols" min="1" max="8" style="width:60px">
+        <label><input type="checkbox" id="card-sep"> Bubble separator</label>
+    </p>
+    <div class="scroll">
+    <table>
+        <thead>
+            <tr>
+                <th>Person</th>
+                <th>Group</th>
+                <th>Tap entity</th>
+                <th>Picture (optional)</th>
+            </tr>
+        </thead>
+        <tbody id="cardrows"></tbody>
+    </table>
+    </div>
+    <p class="hint">Save Changes below regenerates the YAML. In your dashboard: Edit, Add card, Manual, paste.</p>
+    <textarea id="card-yaml" readonly rows="14"></textarea>
+    <p><button onclick="copyCard()">Copy Card YAML</button></p>
 
     <p style="margin-top:28px"><button onclick="saveData()">Save Changes</button></p>
 
@@ -570,6 +734,37 @@ HTML_PAGE = """<!DOCTYPE html>
             document.getElementById('trackers').appendChild(tr);
         }
 
+        function addCardRow(item) {
+            const tr = document.createElement('tr');
+            tr.dataset.key = item.key;
+            const sel = document.createElement('select');
+            [['household', 'Household'], ['friends', 'Friends'], ['hidden', 'Hidden']].forEach(o => {
+                const op = document.createElement('option');
+                op.value = o[0];
+                op.textContent = o[1];
+                sel.appendChild(op);
+            });
+            sel.value = item.group;
+            tr.append(
+                cell(item.label, 'ro'),
+                cell(sel),
+                cell(textInput(item.entity, 'e.g. person.jon')),
+                cell(textInput(item.picture, 'blank = automatic')));
+            document.getElementById('cardrows').appendChild(tr);
+        }
+
+        function copyCard() {
+            const ta = document.getElementById('card-yaml');
+            ta.select();
+            const done = () => alert('Card YAML copied.');
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(ta.value).then(done, () => { document.execCommand('copy'); done(); });
+            } else {
+                document.execCommand('copy');
+                done();
+            }
+        }
+
         async function loadData() {
             const sdata = await (await fetch('api/settings')).json();
             document.getElementById('sensor-name').value = sdata.name;
@@ -583,6 +778,15 @@ HTML_PAGE = """<!DOCTYPE html>
             const trackers = await (await fetch('api/trackers')).json();
             document.getElementById('trackers').innerHTML = '';
             trackers.forEach(item => addTracker(item));
+
+            const card = await (await fetch('api/card')).json();
+            document.getElementById('card-title-h').value = card.household_title;
+            document.getElementById('card-title-f').value = card.friends_title;
+            document.getElementById('card-cols').value = card.columns;
+            document.getElementById('card-sep').checked = card.separator;
+            document.getElementById('cardrows').innerHTML = '';
+            card.rows.forEach(item => addCardRow(item));
+            document.getElementById('card-yaml').value = card.yaml;
         }
 
         async function saveData() {
@@ -609,6 +813,23 @@ HTML_PAGE = """<!DOCTYPE html>
                     });
                 }
             });
+            const cardRows = [];
+            document.querySelectorAll('#cardrows tr').forEach(tr => {
+                const inputs = tr.querySelectorAll('input');
+                cardRows.push({
+                    key: tr.dataset.key,
+                    group: tr.querySelector('select').value,
+                    entity: inputs[0].value.trim(),
+                    picture: inputs[1].value.trim()
+                });
+            });
+            const cardBody = {
+                household_title: document.getElementById('card-title-h').value.trim(),
+                friends_title: document.getElementById('card-title-f').value.trim(),
+                columns: parseInt(document.getElementById('card-cols').value, 10) || 4,
+                separator: document.getElementById('card-sep').checked,
+                rows: cardRows
+            };
             const post = (url, body) => fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -617,7 +838,8 @@ HTML_PAGE = """<!DOCTYPE html>
             const r1 = await post('api/devices', { entities });
             const r2 = await post('api/settings', { name: document.getElementById('sensor-name').value.trim() });
             const r3 = await post('api/trackers', { trackers });
-            if (r1.ok && r2.ok && r3.ok) {
+            const r4 = await post('api/card', cardBody);
+            if (r1.ok && r2.ok && r3.ok && r4.ok) {
                 alert('Saved successfully!');
                 loadData();
             } else {
@@ -691,6 +913,39 @@ async def handle_post_trackers(request):
     await safe_update_trackers(request.app["session"])
     return web.json_response({"status": "ok"})
 
+async def handle_get_card(request):
+    card = load_card()
+    card["yaml"] = build_card_yaml(card)
+    return web.json_response(card)
+
+async def handle_post_card(request):
+    data = await request.json()
+    rows = []
+    for r in data.get("rows", []):
+        key = (r.get("key") or "").strip()
+        if not key:
+            continue
+        grp = r.get("group")
+        rows.append({
+            "key": key,
+            "group": grp if grp in CARD_GROUPS else "friends",
+            "entity": (r.get("entity") or "").strip(),
+            "picture": (r.get("picture") or "").strip(),
+        })
+    try:
+        cols = int(data.get("columns", 4))
+    except Exception:
+        cols = 4
+    save_card({
+        "household_title": (data.get("household_title") or "").strip(),
+        "friends_title": (data.get("friends_title") or "").strip(),
+        "columns": max(1, min(8, cols)),
+        "separator": bool(data.get("separator", True)),
+        "rows": rows,
+    })
+    logging.info("Updated dashboard card settings via Web UI")
+    return web.json_response({"status": "ok"})
+
 async def handle_get_settings(request):
     return web.json_response({
         "name": SETTINGS["name"],
@@ -719,6 +974,8 @@ async def start_web_server(s):
     app.router.add_post('/api/devices', handle_post_devices)
     app.router.add_get('/api/trackers', handle_get_trackers)
     app.router.add_post('/api/trackers', handle_post_trackers)
+    app.router.add_get('/api/card', handle_get_card)
+    app.router.add_post('/api/card', handle_post_card)
     app.router.add_get('/api/settings', handle_get_settings)
     app.router.add_post('/api/settings', handle_post_settings)
 

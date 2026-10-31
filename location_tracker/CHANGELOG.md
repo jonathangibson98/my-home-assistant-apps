@@ -1,6 +1,17 @@
 # Changelog
 
-## Latest v0.8.1
+## Latest v0.9.0
+
+### Added
+- **Dashboard Card** section in the web UI. It builds a Mushroom card (with the Bubble separator on top) from your people list, ready to copy and paste into a dashboard.
+  - Per person: group (Household, Friends, or Hidden), tap entity, and an optional picture.
+  - `input_boolean.*` tap entities toggle on tap. Anything else does nothing on tap.
+  - Picture is automatic: `person.*` uses that person's profile picture, anything else uses `/local/person/<name>.png`.
+  - Group titles, column count, and the separator are editable.
+  - **Copy Card YAML** button. The YAML refreshes every time you save.
+  - Your first load is pre-filled to match your current card.
+
+## Earlier v0.8.1
 
 ### Added
 - **Sensors to Device Trackers** section in the web UI. Pick a sensor, and it becomes a real `device_tracker` entity.

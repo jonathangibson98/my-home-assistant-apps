@@ -10,6 +10,7 @@ Shows everyone's location as a single Home Assistant sensor. Anyone who's away g
 - Entities with no GPS (simple presence sensors) are trusted at their word
 - Named HA zones (like "Work") are shown as-is
 - **Custom places:** add your own spots (name, coordinates, radius) in the Web UI and anyone inside one shows that name instead of City, State
+- **Dashboard card generator:** builds a Mushroom card for everyone from the Web UI, ready to copy into your dashboard
 - Updates instantly when any tracked entity changes, plus a 30-minute safety refresh
 - Creates a real sensor with a **unique ID** (via MQTT discovery), so you can rename it, change its icon, and assign it an area from the HA UI
 

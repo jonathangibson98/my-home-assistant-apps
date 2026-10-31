@@ -12,7 +12,7 @@ If MQTT can't be reached, the app falls back to the REST API. Everything still w
 
 ## Web UI
 
-Open the app from the sidebar. There are three sections, and **Save Changes** at the bottom saves all of them.
+Open the app from the sidebar. There are four sections, and **Save Changes** at the bottom saves all of them.
 
 ### Sensor
 
@@ -45,6 +45,21 @@ How it converts:
 - **Anything else:** the tracker state is `not_home`, with no coordinates.
 - **Unavailable or unknown:** ignored. The tracker keeps its last state, so a restart doesn't flip anyone to away.
 - Deleting a row and saving removes that device tracker from Home Assistant.
+
+### Dashboard Card
+
+Builds the Mushroom card for your dashboard from the people in the list above. New people show up here after you save.
+
+| Column | What it does |
+|---|---|
+| Person | The label from the devices list. Read only. |
+| Group | Household, Friends, or Hidden (left out of the card). |
+| Tap entity | The entity behind the tile. `input_boolean.*` toggles on tap. Anything else does nothing. Blank means no entity. |
+| Picture | Optional. Blank is automatic: `person.*` uses that person's profile picture, anything else uses `/local/person/<name>.png`. |
+
+Above the table you can change the two group titles, the number of columns, and whether the Bubble Card separator is included.
+
+To use it: click **Save Changes**, click **Copy Card YAML**, then in your dashboard choose Edit, Add card, Manual, and paste. The card needs the Mushroom and Bubble Card integrations from HACS.
 
 ## The sensor
 
@@ -93,6 +108,7 @@ Saved inside the app's private storage and included in Home Assistant backups of
 - `devices.json`: the people list
 - `trackers.json`: the sensors to convert
 - `settings.json`: the sensor name and its permanent IDs
+- `card.json`: the dashboard card settings
 
 ## Troubleshooting
 
