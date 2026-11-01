@@ -2,6 +2,7 @@ name: Work Hours Tracker
 version: "1.0.0"
 slug: work_hours
 description: Logs time spent in chosen zones, one file per person
+url: https://github.com/jonathangibson98/ha-work-hours
 arch:
   - aarch64
   - amd64
