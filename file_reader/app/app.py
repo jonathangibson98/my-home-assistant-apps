@@ -1,10 +1,14 @@
 import os
 import re
 import json
+import hmac
 import shutil
 import logging
+import threading
+import time
 import paho.mqtt.client as mqtt
-from flask import Flask, render_template, request, jsonify, Response
+from flask import Flask, render_template, request, jsonify, Response, abort
+from werkzeug.serving import make_server
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("file_reader")
@@ -14,8 +18,20 @@ app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LEGACY_DIR = "/data/files"
 MAPPED_ROOTS = ("/data", "/share", "/media", "/homeassistant", "/config")
-MAX_ATTR_CHARS = 8000          # keep MQTT attributes small enough for Home Assistant
-SKIP_NAMES = {"secrets.yaml"}  # never expose these, even if they sit in the folder
+
+API_PORT = 8100                  # token protected REST port for automations and scripts
+MAX_FILES = 500                  # safety limit for how many files are tracked
+MAX_ATTR_CHARS = 8000            # keep MQTT attributes small enough for Home Assistant
+MAX_EDIT_BYTES = 2 * 1024 * 1024 # biggest file the web editor will open
+SKIP_NAMES = {"secrets.yaml"}    # never exposed, anywhere in the folder tree
+SKIP_SUFFIXES = (".pem", ".key", ".crt", ".db", ".sqlite", ".sqlite3", ".db-wal", ".db-shm")
+SKIP_DIRS = {"__pycache__", "node_modules"}
+
+API_TOKEN = os.getenv("API_TOKEN") or ""
+_si = os.getenv("SCAN_INTERVAL") or "30"
+SCAN_INTERVAL = int(_si) if _si.isdigit() and int(_si) >= 5 else 30
+
+write_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------- storage
@@ -45,11 +61,14 @@ def migrate_legacy_files():
     if os.path.exists(marker) and open(marker).read().strip() == DATA_DIR:
         return
     copied = 0
-    for name in os.listdir(LEGACY_DIR):
-        src, dst = os.path.join(LEGACY_DIR, name), os.path.join(DATA_DIR, name)
-        if os.path.isfile(src) and not os.path.exists(dst):
-            shutil.copy2(src, dst)
-            copied += 1
+    for dp, _dns, fns in os.walk(LEGACY_DIR):
+        for name in fns:
+            src = os.path.join(dp, name)
+            dst = os.path.join(DATA_DIR, os.path.relpath(src, LEGACY_DIR))
+            if not os.path.exists(dst):
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(src, dst)
+                copied += 1
     try:
         with open(marker, "w") as f:
             f.write(DATA_DIR)
@@ -62,31 +81,127 @@ def migrate_legacy_files():
 migrate_legacy_files()
 
 
+def root_dir():
+    return os.path.realpath(DATA_DIR)
+
+
 def resolve(name):
-    """Return a safe absolute path inside DATA_DIR, or None if the name is not allowed."""
+    """Safe absolute path for a relative name like 'logs/door.txt', or None if not allowed."""
     try:
-        if not name or name in (".", "..") or name.lower() in SKIP_NAMES:
+        if not name or "\0" in name:
             return None
-        root = os.path.realpath(DATA_DIR)
-        path = os.path.realpath(os.path.join(DATA_DIR, name))
-        return path if os.path.dirname(path) == root else None
-    except ValueError:
+        parts = name.replace("\\", "/").split("/")
+        for p in parts:
+            if p in ("", ".", "..") or p.startswith(".") or p.lower() in SKIP_NAMES:
+                return None
+        if parts[-1].lower().endswith(SKIP_SUFFIXES):
+            return None
+        root = root_dir()
+        path = os.path.realpath(os.path.join(root, *parts))
+        if path == root or os.path.commonpath([root, path]) != root:
+            return None  # blocks ../ tricks and symlinks that point outside the folder
+        return path
+    except (ValueError, OSError):
         return None
 
 
+def rel_name(path):
+    return os.path.relpath(path, root_dir()).replace(os.sep, "/")
+
+
+def is_text(path):
+    try:
+        with open(path, "rb") as f:
+            return b"\0" not in f.read(4096)
+    except OSError:
+        return False
+
+
 def list_files():
-    if not os.path.isdir(DATA_DIR):
-        return []
-    return sorted(
-        f for f in os.listdir(DATA_DIR)
-        if os.path.isfile(os.path.join(DATA_DIR, f))
-        and not f.startswith(".") and f.lower() not in SKIP_NAMES
-    )
+    """Every text file in the folder and all subfolders, as relative paths."""
+    root, out = root_dir(), []
+    if not os.path.isdir(root):
+        return out
+    for dp, dns, fns in os.walk(root):
+        dns[:] = sorted(d for d in dns if not d.startswith(".") and d not in SKIP_DIRS)
+        for f in sorted(fns):
+            rel = os.path.relpath(os.path.join(dp, f), root).replace(os.sep, "/")
+            full = resolve(rel)
+            if full and os.path.isfile(full) and is_text(full):
+                out.append(rel)
+                if len(out) >= MAX_FILES:
+                    log.warning("More than %d files found, ignoring the rest.", MAX_FILES)
+                    return out
+    return out
 
 
-def read_text(path):
+def read_text(path, limit=None):
     with open(path, "r", encoding="utf-8", errors="replace") as f:
-        return f.read()
+        return f.read(limit) if limit else f.read()
+
+
+def read_tail(path):
+    """Return (tail_text, line_count, truncated) without loading huge files."""
+    size = os.path.getsize(path)
+    keep = MAX_ATTR_CHARS * 4
+    with open(path, "rb") as f:
+        if size > keep:
+            f.seek(size - keep)
+        raw = f.read()
+    text = raw.decode("utf-8", errors="replace")
+    if size <= keep:
+        return text, len(text.splitlines()), len(text) > MAX_ATTR_CHARS
+    count, last = 0, b"\n"
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            count += chunk.count(b"\n")
+            last = chunk[-1:]
+    return text, count + (0 if last == b"\n" else 1), True
+
+
+def normalize_mode(mode):
+    mode = (mode or "append").lower()
+    if mode == "append":
+        return "append"
+    if mode in ("overwrite", "write", "replace"):
+        return "overwrite"
+    raise ValueError("mode must be 'append' or 'overwrite'")
+
+
+def do_write(name, text, mode):
+    """Create or update a file (folders are created automatically) and sync MQTT."""
+    mode = normalize_mode(mode)
+    if not isinstance(text, str):
+        raise ValueError("text must be a string")
+    path = resolve(name)
+    if not path or os.path.isdir(path):
+        raise ValueError("Invalid file name")
+    with write_lock:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        had_content = os.path.exists(path) and os.path.getsize(path) > 0
+        with open(path, "a" if mode == "append" else "w", encoding="utf-8") as f:
+            f.write(("\n" + text) if (mode == "append" and had_content) else text)
+    rel = rel_name(path)
+    publish_mqtt_discovery(rel)
+    remember(rel)
+    return rel
+
+
+def do_delete(name):
+    path = resolve(name)
+    if not (path and os.path.isfile(path)):
+        return False
+    os.remove(path)
+    root, parent = root_dir(), os.path.dirname(path)
+    while parent != root:  # tidy up empty folders
+        try:
+            os.rmdir(parent)
+        except OSError:
+            break
+        parent = os.path.dirname(parent)
+    clear_mqtt(rel_name(path))
+    known.pop(rel_name(path), None)
+    return True
 
 
 # ---------------------------------------------------------------- MQTT
@@ -95,6 +210,10 @@ _port = os.getenv("MQTT_PORT")
 MQTT_PORT = int(_port) if _port and _port.isdigit() else 1883
 MQTT_USER = os.getenv("MQTT_USER") or ""
 MQTT_PASS = os.getenv("MQTT_PASS") or ""
+
+T_WRITE = "file_reader/write"
+T_APPEND = "file_reader/append/"
+T_OVERWRITE = "file_reader/overwrite/"
 
 
 def make_client():
@@ -109,12 +228,13 @@ if MQTT_USER:
     mqtt_client.username_pw_set(MQTT_USER, MQTT_PASS)
 
 
-def safe_name(filename):
-    return re.sub(r"[^A-Za-z0-9_]", "_", filename)
+def safe_name(rel):
+    # top level files keep their old entity ids, folders become "__"
+    return re.sub(r"[^A-Za-z0-9_]", "_", rel.replace("/", "__"))
 
 
-def topics(filename):
-    s = safe_name(filename)
+def topics(rel):
+    s = safe_name(rel)
     return (
         f"homeassistant/sensor/file_reader/{s}/config",
         f"file_reader/sensor/{s}/state",
@@ -123,17 +243,16 @@ def topics(filename):
     )
 
 
-def publish_mqtt_discovery(filename):
-    path = resolve(filename)
-    if not path:
+def publish_mqtt_discovery(rel):
+    path = resolve(rel)
+    if not path or not os.path.isfile(path):
         return
-    discovery_topic, state_topic, attr_topic, s = topics(filename)
-
-    content = read_text(path) if os.path.exists(path) else ""
-    lines = content.splitlines()
+    discovery_topic, state_topic, attr_topic, s = topics(rel)
+    tail, line_count, truncated = read_tail(path)
+    lines = tail.splitlines()
 
     payload = {
-        "name": f"File Reader {filename}",
+        "name": f"File Reader {rel}",
         "unique_id": f"file_reader_{s}",
         "state_topic": state_topic,
         "json_attributes_topic": attr_topic,
@@ -152,21 +271,86 @@ def publish_mqtt_discovery(filename):
         state_val = state_val[:252] + "..."
     mqtt_client.publish(state_topic, state_val, retain=True)
 
-    truncated = len(content) > MAX_ATTR_CHARS
     attrs = {
-        "content": content[-MAX_ATTR_CHARS:] if truncated else content,
-        "line_count": len(lines),
+        "path": rel,
+        "content": tail[-MAX_ATTR_CHARS:] if truncated else tail,
+        "line_count": line_count,
         "truncated": truncated,
     }
     mqtt_client.publish(attr_topic, json.dumps(attrs), retain=True)
 
 
-def sync_all_files():
-    for fname in list_files():
+def clear_mqtt(rel):
+    for t in topics(rel)[:3]:
+        mqtt_client.publish(t, "", retain=True)
+
+
+# ---- keep sensors in sync with what is really on disk (also catches edits made outside the UI)
+known = {}
+
+
+def signature(rel):
+    st = os.stat(os.path.join(root_dir(), *rel.split("/")))
+    return (st.st_mtime_ns, st.st_size)
+
+
+def remember(rel):
+    try:
+        known[rel] = signature(rel)
+    except OSError:
+        pass
+
+
+def scan_once(force=False):
+    current = {}
+    for rel in list_files():
         try:
-            publish_mqtt_discovery(fname)
+            sig = signature(rel)
+        except OSError:
+            continue
+        current[rel] = sig
+        if force or known.get(rel) != sig:
+            try:
+                publish_mqtt_discovery(rel)
+            except Exception as e:
+                log.error("Could not sync %s: %s", rel, e)
+    for rel in set(known) - set(current):
+        clear_mqtt(rel)
+        log.info("File removed, cleared sensor: %s", rel)
+    known.clear()
+    known.update(current)
+
+
+def scan_loop():
+    while True:
+        time.sleep(SCAN_INTERVAL)
+        try:
+            scan_once()
         except Exception as e:
-            log.error("Could not sync %s: %s", fname, e)
+            log.error("Scan failed: %s", e)
+
+
+# ---- incoming MQTT commands from automations
+def on_message(client, userdata, msg):
+    if msg.retain:
+        log.warning("Ignoring retained message on %s (don't use retain when sending updates).", msg.topic)
+        return
+    try:
+        payload = msg.payload.decode("utf-8", errors="replace")
+        t = msg.topic
+        if t == T_WRITE:
+            data = json.loads(payload)
+            name = data.get("file") or data.get("filename") or data.get("path")
+            rel = do_write(name, str(data.get("text", "")), data.get("mode", "append"))
+        elif t.startswith(T_APPEND):
+            rel = do_write(t[len(T_APPEND):], payload, "append")
+        elif t.startswith(T_OVERWRITE):
+            rel = do_write(t[len(T_OVERWRITE):], payload, "overwrite")
+        else:
+            return
+        log.info("Updated %s via MQTT", rel)
+    except Exception as e:
+        log.error("Bad MQTT update on %s: %s", msg.topic, e)
 
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
@@ -175,7 +359,8 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         log.error("MQTT connection refused: %s", reason_code)
         return
     log.info("Connected to MQTT broker at %s:%s", MQTT_HOST, MQTT_PORT)
-    sync_all_files()
+    client.subscribe([(T_WRITE, 0), (T_APPEND + "#", 0), (T_OVERWRITE + "#", 0)])
+    scan_once(force=True)
 
 
 def on_disconnect(client, userdata, *args):
@@ -184,15 +369,44 @@ def on_disconnect(client, userdata, *args):
 
 mqtt_client.on_connect = on_connect
 mqtt_client.on_disconnect = on_disconnect
+mqtt_client.on_message = on_message
 mqtt_client.reconnect_delay_set(min_delay=1, max_delay=60)
-try:
-    mqtt_client.connect_async(MQTT_HOST, MQTT_PORT, 60)  # retries until the broker is up
-    mqtt_client.loop_start()
-except Exception as e:
-    log.error("MQTT setup failed: %s", e)
+
+
+def start_background():
+    try:
+        mqtt_client.connect_async(MQTT_HOST, MQTT_PORT, 60)  # retries until the broker is up
+        mqtt_client.loop_start()
+    except Exception as e:
+        log.error("MQTT setup failed: %s", e)
+    threading.Thread(target=scan_loop, daemon=True).start()
+    try:
+        srv = make_server("0.0.0.0", API_PORT, app, threaded=True)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        log.info("REST API listening on port %d (%s)", API_PORT,
+                 "token required" if API_TOKEN else "DISABLED until you set api_token")
+    except OSError as e:
+        log.error("Could not open REST API port %d: %s", API_PORT, e)
 
 
 # ---------------------------------------------------------------- web
+@app.before_request
+def guard_api_port():
+    """The sidebar page (ingress) is trusted. The extra REST port needs a token."""
+    if request.environ.get("SERVER_PORT") != str(API_PORT):
+        return None
+    if not request.path.startswith("/api/"):
+        abort(404)
+    if not API_TOKEN:
+        return jsonify({"error": "REST API is off. Set api_token in the add-on options."}), 403
+    auth = request.headers.get("Authorization", "")
+    given = auth[7:] if auth.lower().startswith("bearer ") else (
+        request.headers.get("X-API-Token") or request.args.get("token") or "")
+    if not hmac.compare_digest(given.encode(), API_TOKEN.encode()):
+        return jsonify({"error": "Invalid or missing token"}), 401
+    return None
+
+
 def read_changelog():
     for p in ("/usr/src/app/CHANGELOG.md", os.path.join(BASE_DIR, "..", "CHANGELOG.md")):
         if os.path.exists(p):
@@ -213,7 +427,8 @@ def index():
 @app.route("/api/info", methods=["GET"])
 def info():
     return jsonify({"version": current_version(), "files_path": DATA_DIR,
-                    "mqtt_connected": mqtt_client.is_connected()})
+                    "mqtt_connected": mqtt_client.is_connected(),
+                    "api_enabled": bool(API_TOKEN), "api_port": API_PORT})
 
 
 @app.route("/api/changelog", methods=["GET"])
@@ -226,43 +441,39 @@ def api_list_files():
     return jsonify({"files": list_files()})
 
 
-@app.route("/api/file/<filename>", methods=["GET"])
+@app.route("/api/file/<path:filename>", methods=["GET"])
 def read_file(filename):
     path = resolve(filename)
-    if path and os.path.isfile(path):
-        return jsonify({"filename": filename, "content": read_text(path)})
-    return jsonify({"error": "File not found"}), 404
+    if not (path and os.path.isfile(path)):
+        return jsonify({"error": "File not found"}), 404
+    if os.path.getsize(path) > MAX_EDIT_BYTES:
+        return jsonify({"error": "File is too large to open in the browser"}), 413
+    return jsonify({"filename": rel_name(path), "content": read_text(path)})
 
 
-@app.route("/api/file/<filename>", methods=["POST"])
+@app.route("/api/file/<path:filename>", methods=["POST", "PUT"])
 def write_file(filename):
-    path = resolve(filename)
-    if not path:
-        return jsonify({"error": "Invalid file name"}), 400
-    data = request.get_json(force=True, silent=True) or {}
-    text = data.get("text", "")
-    mode = data.get("mode", "append")
-    if not isinstance(text, str) or mode not in ("append", "overwrite"):
-        return jsonify({"error": "Bad request"}), 400
-
-    had_content = os.path.exists(path) and os.path.getsize(path) > 0
-    with open(path, "a" if mode == "append" else "w", encoding="utf-8") as f:
-        f.write(("\n" + text) if (mode == "append" and had_content) else text)
-
-    publish_mqtt_discovery(filename)
-    return jsonify({"status": "success", "filename": filename})
+    data = request.get_json(force=True, silent=True)
+    if isinstance(data, dict):
+        text, mode = data.get("text", ""), data.get("mode", "append")
+    else:  # plain text body, handy for curl: --data "hello" ".../api/file/log.txt?mode=append"
+        text, mode = request.get_data(as_text=True), request.args.get("mode", "append")
+    try:
+        rel = do_write(filename, text, mode)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except OSError as e:
+        return jsonify({"error": f"Could not write file: {e.strerror or e}"}), 400
+    return jsonify({"status": "success", "filename": rel})
 
 
-@app.route("/api/file/<filename>", methods=["DELETE"])
+@app.route("/api/file/<path:filename>", methods=["DELETE"])
 def delete_file(filename):
-    path = resolve(filename)
-    if path and os.path.isfile(path):
-        os.remove(path)
-        for t in topics(filename)[:3]:  # remove sensor config, state and attributes
-            mqtt_client.publish(t, "", retain=True)
+    if do_delete(filename):
         return jsonify({"status": "deleted"})
     return jsonify({"error": "File not found"}), 404
 
 
 if __name__ == "__main__":
+    start_background()
     app.run(host="0.0.0.0", port=8099)
