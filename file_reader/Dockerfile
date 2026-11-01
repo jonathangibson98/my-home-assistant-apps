@@ -2,12 +2,13 @@ FROM python:3.11-alpine
 
 WORKDIR /usr/src/app
 
-# Install jq for parsing Home Assistant options.json
+# jq parses the Home Assistant options.json
 RUN apk add --no-cache jq
 
-RUN pip install --no-cache-dir flask paho-mqtt requests
+RUN pip install --no-cache-dir flask "paho-mqtt>=2.0,<3" requests
 
 COPY app /usr/src/app/app
+COPY CHANGELOG.md /usr/src/app/CHANGELOG.md
 COPY run.sh /run.sh
 
 RUN chmod +x /run.sh
