@@ -167,6 +167,7 @@ function itemCard(it, idx) {
   const c = it.checks || {};
   if (c.preview != null) card.append(el("div", {class: "good"}, "Right now this would show: " + c.preview));
   if (c.error) card.append(el("div", {class: "bad"}, "Template problem: " + c.error));
+  for (const f of c.fixes || []) card.append(el("div", {class: "good"}, "Fixed automatically: " + f));
   for (const n of c.notes || []) card.append(el("div", {class: "warn"}, "Heads up: " + n));
   if (c.unknown && c.unknown.length) card.append(el("div", {class: "warn"}, "Not found in your Home Assistant: " + c.unknown.join(", ")));
   card.append(el("details", {}, el("summary", {}, "See the code / config"), el("pre", {}, it.yaml || "")));

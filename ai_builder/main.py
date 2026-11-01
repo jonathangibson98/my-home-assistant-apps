@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import platform
 import re
 import shutil
 import time
@@ -82,6 +83,11 @@ PRIORITY = {"helper": 0, "template": 1, "scene": 2, "script": 2, "pyscript": 3,
 EDIT_ID_KINDS = ("automation", "scene", "appdaemon", "pyscript", "addon")
 TEXT_EXT = (".yaml", ".yml", ".json", ".py", ".sh", ".md", ".txt", ".html", ".js", ".css", ".cfg", ".toml", ".ini")
 BACKUPS = Path("/data/backups")
+HOST_ARCH = {"aarch64": "aarch64", "arm64": "aarch64", "x86_64": "amd64", "amd64": "amd64"}.get(
+    platform.machine().lower(), platform.machine())
+GOOD_BASE = "ghcr.io/home-assistant/base:latest"
+SCHEMA_RE = re.compile(r"^(str|password|email|url|bool|int|float|port|match|list|device|ssl)(\(.*\))?\??$")
+MAP_RE = re.compile(r"^(homeassistant_config|addon_config|all_addon_configs|ssl|addons|backup|share|media)(:(rw|ro))?$")
 ADDONS_DIR = Path("/addons")
 
 STOP = set(
@@ -304,9 +310,32 @@ def validate_item(it):
             missing = [x for x in ("name", "version", "slug", "description") if x not in y]
             if missing:
                 return "config.yaml is missing: " + ", ".join(missing), notes
-            run = next((c for p, c in files if p == "run.sh"), "")
-            if "with-contenv" in run and y.get("init") is not False:
-                notes.append("run.sh uses with-contenv but config.yaml lacks 'init: false'. The add-on will crash at start with a pid 1 error.")
+            if not isinstance(y.get("version"), str):
+                return "config.yaml: version must be a quoted string like \"1.0.0\".", notes
+            for key, ok in (("startup", ("initialize", "system", "services", "application", "once")),
+                            ("boot", ("auto", "manual", "manual_only"))):
+                if key in y and y[key] not in ok:
+                    return f"config.yaml: {key} must be one of {', '.join(ok)}.", notes
+            opts, sch = y.get("options"), y.get("schema")
+            if isinstance(opts, dict) and opts:
+                if not isinstance(sch, dict):
+                    return "config.yaml has options but no schema. Every option needs a schema entry.", notes
+                miss = [k for k in opts if k not in sch]
+                if miss:
+                    return "config.yaml: these options are missing from schema: " + ", ".join(miss), notes
+            if isinstance(sch, dict):
+                for k, v in sch.items():
+                    if isinstance(v, str) and not SCHEMA_RE.match(v):
+                        return f"config.yaml: schema type {v!r} for {k} isn't valid (use str, int, float, bool, password, url, port, email, list(a|b), match(regex), add ? if optional).", notes
+            if isinstance(y.get("map"), list):
+                badmap = [x for x in y["map"] if not MAP_RE.match(str(x))]
+                if badmap:
+                    return "config.yaml: invalid map entries " + ", ".join(map(str, badmap)) + ". Valid: homeassistant_config, addon_config, all_addon_configs, ssl, addons, backup, share, media.", notes
+            if isinstance(y.get("arch"), list) and HOST_ARCH not in y["arch"]:
+                return f"config.yaml: arch must include {HOST_ARCH}, which is what this system runs.", notes
+            dk = next((c for p, c in files if p == "Dockerfile"), "")
+            if dk and not re.search(r"home-assistant/", dk) and "image" not in y:
+                notes.append("The Dockerfile isn't built on a Home Assistant base image, so bashio and with-contenv won't exist.")
             if "Dockerfile" not in names and "image" not in y and not edit:
                 notes.append("No Dockerfile and no image set. The add-on can't build.")
         elif not edit:
@@ -323,6 +352,81 @@ def validate_item(it):
         if bp.get("domain") != cfg.get("domain", "automation"):
             return "The blueprint's domain doesn't match.", notes
     return None, notes
+
+
+def fix_addon_files(files, edit=False):
+    """Repair the known ways AI-written add-ons fail on this system. Returns (files, list of fixes). Idempotent."""
+    fixes = []
+    out = dict(files)
+
+    for p in list(out):
+        if p.lower() in ("build.yaml", "build.yml", "build.json"):
+            del out[p]
+            fixes.append("Removed build.yaml (legacy per-architecture build file that points at images that don't exist).")
+
+    if "run.sh" in out:
+        lines = out["run.sh"].split("\n")
+        if not lines[0].startswith("#!/usr/bin/with-contenv bashio"):
+            if lines[0].startswith("#!"):
+                lines[0] = "#!/usr/bin/with-contenv bashio"
+            else:
+                lines.insert(0, "#!/usr/bin/with-contenv bashio")
+            out["run.sh"] = "\n".join(lines)
+            fixes.append("Set run.sh's first line to #!/usr/bin/with-contenv bashio so options and the Supervisor token are available.")
+
+    if "Dockerfile" in out:
+        d = orig = out["Dockerfile"]
+        d = re.sub(r"ghcr\.io/home-assistant/(?:amd64|aarch64|armv7|armhf|i386|\{arch\})-base[\w.-]*(?::[\w.-]+)?", GOOD_BASE, d)
+        if d != orig:
+            fixes.append("Replaced a per-architecture base image with the multi-arch one (" + GOOD_BASE + "). The old one fails with 'no match for platform' on this system.")
+        if "BUILD_FROM" not in d and re.search(r"^FROM\s+\S*home-assistant\S*", d, re.M):
+            d = re.sub(r"^FROM\s+\S*home-assistant\S*", "ARG BUILD_FROM=" + GOOD_BASE + "\nFROM ${BUILD_FROM}", d, count=1, flags=re.M)
+            fixes.append("Made the Dockerfile start from ${BUILD_FROM}.")
+        d2 = re.sub(r"(pip3?\s+install)(?![^\n]*--break-system-packages)", r"\1 --break-system-packages", d)
+        if d2 != d:
+            d = d2
+            fixes.append("Added --break-system-packages to pip install (Alpine blocks plain pip installs).")
+        if "/run.sh" in d and "chmod" not in d:
+            if re.search(r"^CMD", d, re.M):
+                d = re.sub(r"^(CMD)", "RUN chmod a+x /run.sh\n\\1", d, count=1, flags=re.M)
+            else:
+                d = d.rstrip("\n") + "\nRUN chmod a+x /run.sh\n"
+            fixes.append("Added RUN chmod a+x /run.sh.")
+        out["Dockerfile"] = d
+
+    cname = next((p for p in ("config.yaml", "config.yml") if p in out), None)
+    if cname:
+        c = orig = out[cname]
+        c = re.sub(r"^version:\s*([0-9][0-9.]*)\s*$", r'version: "\1"', c, flags=re.M)
+        c = re.sub(r"^(\s*-\s*)(?:config)((?::(?:rw|ro))?)\s*$", r"\1homeassistant_config\2", c, flags=re.M)
+        c = re.sub(r"^(\s*-\s*)addon_configs((?::(?:rw|ro))?)\s*$", r"\1all_addon_configs\2", c, flags=re.M)
+        if c != orig:
+            fixes.append("Corrected config.yaml (quoted the version and/or fixed folder-map names to homeassistant_config / all_addon_configs).")
+        try:
+            y = yaml.safe_load(c) or {}
+        except yaml.YAMLError:
+            y = None
+        if isinstance(y, dict):
+            arch = y.get("arch")
+            bad = (not isinstance(arch, list) or not arch or HOST_ARCH not in arch
+                   or any(a in ("armv7", "armhf", "i386") for a in arch))
+            if bad and not (edit and arch is None):
+                new = "arch:\n  - aarch64\n  - amd64\n"
+                if re.search(r"^arch:\s*\[.*\]\s*$", c, re.M):
+                    c = re.sub(r"^arch:\s*\[.*\]\s*$", new.rstrip("\n"), c, count=1, flags=re.M)
+                elif re.search(r"^arch:\s*\n(?:\s+-.*\n?)+", c, re.M):
+                    c = re.sub(r"^arch:\s*\n(?:\s+-.*\n?)+", new, c, count=1, flags=re.M)
+                else:
+                    c = c.rstrip("\n") + "\n" + new
+                fixes.append("Set arch to aarch64 and amd64 (old 32-bit architectures are gone, and your system must be listed).")
+            if "run.sh" in out and y.get("init") is not False:
+                if re.search(r"^init:.*$", c, re.M):
+                    c = re.sub(r"^init:.*$", "init: false", c, count=1, flags=re.M)
+                else:
+                    c = c.rstrip("\n") + "\ninit: false\n"
+                fixes.append("Added init: false (without it the add-on crashes at start with a pid 1 error).")
+        out[cname] = c
+    return list(out.items()), sorted(set(fixes), key=fixes.index)
 
 
 def describe(it):
@@ -421,6 +525,37 @@ Rules:
 """
 
 
+
+KNOWHOW = """
+VERIFIED FACTS ABOUT THIS SYSTEM (follow these exactly; they come from real failures):
+Add-ons
+- This system's CPU is @@ARCH@@. Never hard-code any architecture in an image name.
+- The ONLY base image that works is ghcr.io/home-assistant/base:latest (multi-arch). Images named amd64-base, aarch64-base, armv7-base, or *-base-python do NOT work ("no match for platform"). Do not create build.yaml.
+- Known-good Dockerfile:
+  ARG BUILD_FROM=ghcr.io/home-assistant/base:latest
+  FROM ${BUILD_FROM}
+  RUN apk add --no-cache python3 py3-aiohttp py3-yaml
+  WORKDIR /app
+  COPY main.py /app/
+  COPY run.sh /run.sh
+  RUN chmod a+x /run.sh
+  CMD [ "/run.sh" ]
+- Known-good run.sh: first line #!/usr/bin/with-contenv bashio, then: exec python3 -u /app/main.py. config.yaml MUST contain init: false.
+- Install Python libraries with apk when possible (py3-flask, py3-aiohttp, py3-requests, py3-yaml, py3-paho-mqtt). If pip is unavoidable, use pip install --break-system-packages.
+- config.yaml: version must be a quoted string. arch is [aarch64, amd64] only. startup is one of initialize, system, services, application, once. boot is auto, manual or manual_only.
+- Valid map entries only: homeassistant_config (mounted at /homeassistant), addon_config (the add-on's own folder, at /config), all_addon_configs (at /addon_configs), ssl, addons, backup, share, media. Never use "config".
+- Every key in options needs a matching schema entry. Schema types: str, int, float, bool, password, url, port, email, list(a|b), match(regex); add ? for optional. Options are read from /data/options.json. Persistent data lives in /data.
+- Home Assistant API from inside an add-on: needs homeassistant_api: true, then http://supervisor/core/api with header Authorization: Bearer $SUPERVISOR_TOKEN. WebSocket: ws://supervisor/core/websocket. Supervisor API needs hassio_api: true.
+- Web UI: ingress: true, ingress_port: 8099, listen on 0.0.0.0, use only relative URLs in the page (no leading slash), set panel_icon and panel_title.
+Home Assistant templates and code
+- A state is limited to 255 characters. Put long text in an attribute.
+- There is no from_yaml filter. from_json and to_json exist.
+- Always use defaults in templates (| float(0), | default('')).
+- pyscript can only import modules if allow_all_imports is true in its config; prefer pyscript's built-ins.
+- AppDaemon callbacks look like def cb(self, entity, attribute, old, new, **kwargs).
+"""
+
+
 def build_prompt(text, kind, ctx, existing, target, previous, feedback, cfg):
     p = RULES.format(
         version=cfg.get("version", "recent"),
@@ -429,7 +564,7 @@ def build_prompt(text, kind, ctx, existing, target, previous, feedback, cfg):
     )
     if kind and kind != "auto":
         p += f"\nThe person specifically wants this built as: {kind}.\n"
-    p += "\n" + ctx + "\n"
+    p += KNOWHOW.replace("@@ARCH@@", HOST_ARCH) + "\n" + ctx + "\n"
     if existing is not None and target:
         p += (
             f"\nTHE PERSON IS EDITING AN EXISTING {target['kind'].upper()} (id: {target['id']}). Current config:\n"
@@ -531,6 +666,10 @@ async def enrich(app, result, states, services):
         it["checks"] = {"unknown": [], "preview": None, "error": None}
         if it["kind"] == "answer":
             continue
+        if it["kind"] == "addon":
+            files, fixes = fix_addon_files(addon_files(it["config"]), bool(it.get("edit_id")))
+            it["config"]["files"] = [{"path": p, "content": c} for p, c in files]
+            it["checks"]["fixes"] = fixes
         it["yaml"] = describe(it)
         if it["kind"] not in ("addon", "blueprint"):
             it["checks"]["unknown"] = find_unknown(it["config"], known, domains, services)
@@ -780,11 +919,12 @@ async def create_pyscript(app, it):
 
 
 async def create_addon(app, it):
+    cfg = it["config"]
+    files, _ = fix_addon_files(addon_files(cfg), bool(it.get("edit_id")))
+    cfg["files"] = [{"path": p, "content": c} for p, c in files]
     err, _ = validate_item(it)
     if err:
         raise RuntimeError(err)
-    cfg = it["config"]
-    files = addon_files(cfg)
     folder = it.get("edit_id") or slug(cfg.get("slug") or "")
     if not folder:
         cf = next((c for p, c in files if p in ("config.yaml", "config.yml")), "")
@@ -797,7 +937,7 @@ async def create_addon(app, it):
         raise FileExistsError(str(base))
     for p, c in files:
         safe_write(inside(base, p), c, True, 0o755 if p.endswith(".sh") else None)
-    return {"name": folder, "note": f"Wrote /addons/{folder}. Now: Settings, Add-ons, Add-on Store, menu, Check for updates, then open it under Local add-ons."}
+    return {"name": folder, "note": f"Wrote /addons/{folder}. Now open the add-on store (called Apps in newer versions), use the menu, Check for updates, then find it under Local add-ons."}
 
 
 async def create_blueprint(app, it):

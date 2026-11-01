@@ -40,6 +40,20 @@ Not right? Type a change in the box under the results and tap **Revise**.
 
 **Add-ons**: after creating one, go to Settings -> Add-ons -> Add-on Store -> menu -> Check for updates, then open it under Local add-ons. The add-on checks that `config.yaml` is valid, Python files parse, and warns if `run.sh` uses `with-contenv` without `init: false`.
 
+### Add-on auto-fixes
+
+AI-written add-ons break in predictable ways, so the add-on knows what works on your system and repairs these before you create anything. Each fix is shown on the card as "Fixed automatically".
+
+- Per-architecture base images like `amd64-base` (fail with "no match for platform") are replaced with `ghcr.io/home-assistant/base:latest`
+- A leftover `build.yaml` is removed
+- `run.sh` gets the `#!/usr/bin/with-contenv bashio` first line, and `config.yaml` gets `init: false`
+- `pip install` gets `--break-system-packages`, and a missing `chmod` on `run.sh` is added
+- Unquoted versions are quoted, old 32-bit architectures are dropped, and old folder-map names are corrected
+
+It also blocks creation when `config.yaml` has bad schema types, options missing from the schema, invalid `map` entries, or a bad `startup`/`boot` value.
+
+If an add-on you already have fails to build, pick it in the **Change something that already exists** dropdown, paste the build error from the Supervisor log into your request, and create the fix.
+
 ### Safety for files and code
 
 AppDaemon apps, pyscripts and add-ons are real code that runs on your system. Read it before you tap Create. The add-on also:

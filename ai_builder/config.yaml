@@ -1,5 +1,5 @@
 name: "AI Builder"
-version: "1.1.0"
+version: "1.1.1"
 slug: ai_builder
 description: "Type what you want in plain English; your ai_task entity builds automations, scenes, scripts, templates, helpers, AppDaemon apps, pyscripts, blueprints and add-ons."
 url: "https://github.com/jonathangibson98/ha-ai-builder"
@@ -16,7 +16,7 @@ panel_title: AI Builder
 homeassistant_api: true
 map:
   - homeassistant_config:rw
-  - addon_configs:rw
+  - all_addon_configs:rw
   - addons:rw
 options:
   ai_task_entity: ai_task.gemini_pro_ai_task

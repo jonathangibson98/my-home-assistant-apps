@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.1 - 2026-11-01
+
+- Fix: generated add-ons failed to build on aarch64 ("no match for platform in manifest") because the AI used an amd64 base image
+- The AI is now told what works on this system (base image, run.sh, config.yaml rules, valid folder maps, template and code gotchas)
+- Add-ons are auto-repaired before creation, with each fix shown; stricter config.yaml checks
+- Fix: the add-on's own config used an invalid map name; it is now `all_addon_configs`
+
 ## 1.1.0 - 2026-11-01
 
 - New types: scenes, AppDaemon apps, pyscripts, blueprints and full add-ons
