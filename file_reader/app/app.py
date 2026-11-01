@@ -9,10 +9,11 @@ logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 DATA_DIR = "/data/files"
 
-MQTT_HOST = os.getenv("MQTT_HOST", "core-mosquitto")
-MQTT_PORT = int(os.getenv("MQTT_PORT", 1883))
-MQTT_USER = os.getenv("MQTT_USER", "")
-MQTT_PASS = os.getenv("MQTT_PASS", "")
+MQTT_HOST = os.getenv("MQTT_HOST") or "core-mosquitto"
+mqtt_port_raw = os.getenv("MQTT_PORT")
+MQTT_PORT = int(mqtt_port_raw) if mqtt_port_raw and mqtt_port_raw.isdigit() else 1883
+MQTT_USER = os.getenv("MQTT_USER") or ""
+MQTT_PASS = os.getenv("MQTT_PASS") or ""
 
 mqtt_client = mqtt.Client(client_id="file_reader_addon")
 
