@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.2
+
+### Changed
+- The web page no longer shows the changelog.
+- Files in the list show a friendly name (`music_fact.txt` shows as Music Fact). Hover to see the real path.
+
 ## 1.2.1
 
 ### Fixed
