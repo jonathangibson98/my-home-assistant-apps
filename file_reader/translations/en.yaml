@@ -1,1 +1,19 @@
-h
+configuration:
+  files_path:
+    name: Files folder
+    description: >-
+      Folder where your files are stored. Must start with /data, /share, /media,
+      /homeassistant or /config (for example /share/file_reader). Use a dedicated
+      subfolder, because every file in it becomes an MQTT sensor.
+  mqtt_host:
+    name: MQTT host
+    description: Hostname of your MQTT broker. The default works with the Mosquitto add-on.
+  mqtt_port:
+    name: MQTT port
+    description: Port of your MQTT broker (usually 1883).
+  mqtt_user:
+    name: MQTT username
+    description: Leave empty if your broker has no login.
+  mqtt_password:
+    name: MQTT password
+    description: Leave empty if your broker has no login.
