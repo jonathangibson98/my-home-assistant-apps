@@ -1,6 +1,7 @@
 # Changelog
 
-## 0.3.1
+## 0.3.2
+- Real fix: the live game's select state was published as "FSU vs CLEM (NCAAF)" instead of "Live game: FSU vs CLEM (NCAAF)", so Home Assistant rejected it and the dropdown snapped back.
 - Fix: picking a live game could snap the Home Assistant team dropdown back to the previously tracked team. The add-on now re-sends the dropdown's current choice a couple of seconds after any change, and on every refresh.
 
 ## 0.3.0

@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import paho.mqtt.client as mqtt
 from zoneinfo import ZoneInfo
 
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 # Settings live in the add-on's config folder (/addon_configs/<id>_team_tracker_lite/data on the host).
 DATA = os.environ.get("TTL_DATA", "/config/data")
 SETTINGS_FILE = os.path.join(DATA, "settings.json")
@@ -156,7 +156,7 @@ def active_fav():
     with LOCK:
         if S["active"] == "LIVE" and S.get("live_game"):
             lg = S["live_game"]
-            return {"key": "LIVE", "live": True, "label": live_label(), **lg}
+            return {**lg, "key": "LIVE", "live": True, "label": live_label()}
         for f in S["favorites"]:
             if f["key"] == S["active"]:
                 return dict(f)
