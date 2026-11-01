@@ -7,6 +7,7 @@ import logging
 import threading
 import time
 import urllib.request
+from datetime import datetime, timezone
 import paho.mqtt.client as mqtt
 from flask import Flask, render_template, request, jsonify, Response, abort
 from werkzeug.serving import make_server
@@ -290,6 +291,7 @@ def publish_mqtt_discovery(rel):
         "unique_id": f"file_reader_{s}",
         "state_topic": state_topic,
         "json_attributes_topic": attr_topic,
+        "device_class": "timestamp",
         "icon": "mdi:file-text",
         "device": {
             "identifiers": ["file_reader_addon"],
@@ -300,13 +302,14 @@ def publish_mqtt_discovery(rel):
     }
     mqtt_client.publish(discovery_topic, json.dumps(payload), retain=True)
 
-    state_val = lines[-1] if lines else "Empty"
-    if len(state_val) > 255:
-        state_val = state_val[:252] + "..."
-    mqtt_client.publish(state_topic, state_val, retain=True)
+    # The sensor state is the time the file content last changed.
+    changed = datetime.fromtimestamp(os.path.getmtime(path), timezone.utc).isoformat()
+    mqtt_client.publish(state_topic, changed, retain=True)
 
+    last_line = lines[-1] if lines else ""
     attrs = {
         "path": rel,
+        "last_line": last_line[:MAX_ATTR_CHARS],
         "content": tail[-MAX_ATTR_CHARS:] if truncated else tail,
         "line_count": line_count,
         "truncated": truncated,
