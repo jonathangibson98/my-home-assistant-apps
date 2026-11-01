@@ -43,7 +43,7 @@
 
         <div class="card">
             <h3 style="margin-top:0">Manage File</h3>
-            <input type="text" id="filename" placeholder="log.txt" style="width: 60%; margin-bottom: 8px;">
+            <input type="text" id="filename" placeholder="log.txt or folder/log.txt" style="width: 60%; margin-bottom: 8px;">
             <select id="mode" style="width: 38%; margin-bottom: 8px;">
                 <option value="append">Append Line</option>
                 <option value="overwrite">Overwrite Content</option>
@@ -56,8 +56,31 @@
         </div>
 
         <div class="card">
-            <h3 style="margin-top:0">Managed Files</h3>
+            <h3 style="margin-top:0">Managed Files <span class="badge" id="count"></span></h3>
             <ul id="file-list"></ul>
+        </div>
+
+        <div class="card">
+            <details>
+                <summary>Send updates from automations</summary>
+                <pre>MQTT (no token needed)
+  topic:   file_reader/append/folder/log.txt
+  payload: the text to add as a new line
+
+  topic:   file_reader/overwrite/folder/log.txt
+  payload: the text that replaces the file
+
+  topic:   file_reader/write
+  payload: {"file": "folder/log.txt", "text": "hello", "mode": "append"}
+
+Don't tick "retain" on these messages.
+
+REST (needs api_token): POST http://127.0.0.1:8100/api/file/folder/log.txt
+Header:  Authorization: Bearer YOUR_TOKEN
+Body:    {"text": "hello", "mode": "append"}   (or "overwrite")
+
+Folders are created automatically. More examples are in the Documentation tab.</pre>
+            </details>
         </div>
 
         <div class="card">
@@ -70,7 +93,7 @@
 
     <script>
         const $ = id => document.getElementById(id);
-        const api = name => `./api/file/${encodeURIComponent(name)}`;
+        const api = name => './api/file/' + name.split('/').map(encodeURIComponent).join('/');
 
         function say(msg) { $('status').textContent = msg; }
 
@@ -94,6 +117,7 @@
                 list.appendChild(p);
                 return;
             }
+            $('count').textContent = data.files.length + ' files';
             data.files.forEach(file => {
                 const li = document.createElement('li');
                 const name = document.createElement('span');
