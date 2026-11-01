@@ -6,6 +6,7 @@ import shutil
 import logging
 import threading
 import time
+import urllib.request
 import paho.mqtt.client as mqtt
 from flask import Flask, render_template, request, jsonify, Response, abort
 from werkzeug.serving import make_server
@@ -210,6 +211,39 @@ _port = os.getenv("MQTT_PORT")
 MQTT_PORT = int(_port) if _port and _port.isdigit() else 1883
 MQTT_USER = os.getenv("MQTT_USER") or ""
 MQTT_PASS = os.getenv("MQTT_PASS") or ""
+
+
+def autodetect_mqtt():
+    """The Mosquitto add-on refuses anonymous logins. When no username is set in the options,
+    ask Home Assistant (Supervisor) for the broker login it provides to add-ons."""
+    global MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASS
+    if MQTT_USER:
+        log.info("Using the MQTT username from the add-on options.")
+        return
+    token = os.getenv("SUPERVISOR_TOKEN")
+    if not token:
+        log.warning("No MQTT username set and no Supervisor token, trying without a login.")
+        return
+    try:
+        req = urllib.request.Request("http://supervisor/services/mqtt",
+                                     headers={"Authorization": f"Bearer {token}"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.load(r).get("data") or {}
+        if not data.get("username"):
+            log.warning("Home Assistant returned no MQTT login, trying without one.")
+            return
+        MQTT_HOST = data.get("host") or MQTT_HOST
+        MQTT_PORT = int(data.get("port") or MQTT_PORT)
+        MQTT_USER = data["username"]
+        MQTT_PASS = data.get("password") or ""
+        log.info("Got MQTT login from Home Assistant (broker %s:%s, user %s).",
+                 MQTT_HOST, MQTT_PORT, MQTT_USER)
+    except Exception as e:
+        log.error("Could not get the MQTT login from Home Assistant: %s. "
+                  "Is the Mosquitto broker add-on installed and running?", e)
+
+
+autodetect_mqtt()
 
 T_WRITE = "file_reader/write"
 T_APPEND = "file_reader/append/"
