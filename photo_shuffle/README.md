@@ -1,16 +1,11 @@
-# Photo Shuffle
+# Photo Shuffle – Home Assistant add-on
 
-Each entry under `shuffles` becomes its own device in Home Assistant with:
-- an **image entity** that changes to a random picture every `interval` seconds
-- a **Next photo** button to shuffle on demand
+Shuffle pictures from any number of folders. Each folder becomes an **image entity** that rotates to a random photo, with a **Next photo** button.
 
-Pictures are shown in random order without repeats until the whole folder has been used, then reshuffled.
+- Unlimited folders, each with its own interval
+- Random order with no repeats until the folder is exhausted
+- Optional subfolder scanning
+- Auto-resized JPEGs for fast dashboards
+- Works with the Mosquitto add-on out of the box
 
-## Options
-- `shuffles`: list of `name`, `path`, `interval` (seconds), `recursive`
-- `max_dimension`: longest side in px (default 1920)
-- `jpeg_quality`: 30-100 (default 85)
-- `mqtt_*`: optional, only if you don't use the Mosquitto add-on
-
-Paths must be under `/media` or `/share`, e.g. `/media/photos/vacation`.
-Requires the MQTT integration. Supports jpg, png, webp, gif (first frame), bmp.
+See the **Documentation** tab for setup and options.
