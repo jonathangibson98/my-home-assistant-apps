@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.2.0
+
+### Added
+- **Subfolders:** every text file in the Files folder and all of its subfolders is now listed and becomes a sensor (up to 500 files). Folders show up in the name, for example `logs/door.txt`.
+- **Send updates over MQTT:** publish to `file_reader/append/<path>` or `file_reader/overwrite/<path>` with the text as the payload, or to `file_reader/write` with JSON. No token needed.
+- **REST API on port 8100** for `rest_command`, `curl` and scripts. Protected by the new **REST API token** option (off until you set one).
+- Plain text bodies work on the REST API too, for example `curl --data "hello" .../api/file/log.txt`.
+- Files changed outside the add-on (Samba, File editor, other add-ons) now update their sensors automatically. Check interval is the new **Scan interval** option.
+- Writing to a path like `folder/sub/file.txt` creates the folders for you. Empty folders are removed when you delete the last file.
+- Sensors have a new `path` attribute.
+
+### Changed
+- Very large files are read from the end, so growing logs stay fast. `line_count` still counts every line.
+- Binary files and certificate/key/database files are ignored. Hidden files and folders (starting with a dot) are ignored.
+- Retained MQTT update messages are ignored, so an update can never be applied twice after a restart.
+
+### Fixed
+- Symlinks can no longer be used to read files outside the Files folder.
+
 ## 1.1.0
 
 ### Added

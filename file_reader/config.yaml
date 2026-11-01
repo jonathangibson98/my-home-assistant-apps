@@ -1,6 +1,6 @@
 name: "File Reader"
 description: "Web UI and MQTT file manager for Home Assistant sensors, automations, and text logging."
-version: "1.1.0"
+version: "1.2.0"
 slug: "file_reader"
 init: false
 arch:
@@ -12,6 +12,10 @@ ingress: true
 ingress_port: 8099
 panel_icon: mdi:file-document-edit-outline
 panel_title: File Reader
+ports:
+  8100/tcp: 8100
+ports_description:
+  8100/tcp: "REST API for automations and scripts (needs api_token)"
 map:
   - type: share
     read_only: false
@@ -25,12 +29,16 @@ services:
   - mqtt:need
 options:
   files_path: "/data/files"
+  scan_interval: 30
+  api_token: ""
   mqtt_host: "core-mosquitto"
   mqtt_port: 1883
   mqtt_user: ""
   mqtt_password: ""
 schema:
   files_path: "match(^/(data|share|media|homeassistant|config)(/.*)?$)"
+  scan_interval: "int(5,3600)"
+  api_token: password?
   mqtt_host: str
   mqtt_port: int
   mqtt_user: str?
