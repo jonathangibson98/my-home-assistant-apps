@@ -5,10 +5,12 @@
 1. Install and start the add-on.
 2. Turn on **Show in sidebar** (Info tab).
 3. Open **Work Hours** in the sidebar.
-4. Tick the **people** to track and the **zones** that count as work, then press **Save**.
+4. Tick each **person** you want to track. Under their name, tick the **zones**
+   that count as work for *that person*, then press **Save**.
 
-You can pick as many zones as you like. Every ticked person is tracked in
-every ticked zone.
+Every person has their own zone list, so one person can work at Site A while
+someone else works at Site B and Site C. Someone standing in a zone that isn't
+ticked for them is not logged.
 
 ## Options
 
@@ -25,8 +27,9 @@ the sidebar page takes effect immediately.
 
 ## Files
 
-Each person gets a CSV named after their person entity, for example
-`person.jon` becomes `jon.csv`:
+Each person gets a CSV named after them. The name comes from the person
+entity's name the first time they are saved, with spaces turned into
+underscores, for example `Jonathan Gibson` becomes `Jonathan_Gibson.csv`:
 
 ```
 date,zone,start,end,hours
@@ -39,6 +42,13 @@ date,zone,start,end,hours
 - A visit that crosses midnight becomes two rows. The first ends at `24:00`.
 - Lunch or errands shorter than the grace period do not split the shift.
 
+Once a person's file name is set it never changes, even if you rename the
+person in Home Assistant, so their history stays in one file. If two people
+end up with the same name, the second gets `_2` on the end.
+
+Upgrading from 1.0.0: existing people keep their old file names and their zones
+are copied to each person automatically.
+
 The files open in Excel, Numbers and Google Sheets.
 
 ## Cleanup
@@ -50,7 +60,7 @@ left alone.
 ## How it decides someone is "at work"
 
 The add-on reads each person entity's state. If it matches the name of one of
-the ticked zones, the person is in that zone. If the person's state is
+the zones ticked for that person, the person is in that zone. If the person's state is
 `unavailable` or `unknown`, nothing changes until a real state returns.
 
 ## Tips

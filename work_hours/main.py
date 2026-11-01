@@ -14,7 +14,8 @@ TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 API = "http://supervisor/core/api"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
-with open("/data/options.json") as f:
+DATA_DIR = os.environ.get("WH_DATA_DIR", "/data")
+with open(os.path.join(DATA_DIR, "options.json")) as f:
     OPTS = json.load(f)
 
 FOLDER = OPTS.get("save_folder", "/homeassistant/work_hours").rstrip("/")
@@ -23,8 +24,8 @@ CHECK = int(OPTS.get("check_seconds", 30))
 GRACE = int(OPTS.get("grace_minutes", 10))
 MIN_MIN = int(OPTS.get("min_minutes", 5))
 
-SETTINGS = "/data/settings.json"
-SESSIONS = "/data/sessions.json"
+SETTINGS = os.path.join(DATA_DIR, "settings.json")
+SESSIONS = os.path.join(DATA_DIR, "sessions.json")
 HEADER = ["date", "zone", "start", "end", "hours"]
 
 lock = threading.RLock()
@@ -68,14 +69,27 @@ def save_json(path, data):
     os.replace(tmp, path)
 
 
-def csv_path(pid):
-    return os.path.join(FOLDER, pid.split(".", 1)[1] + ".csv")
+def load_settings():
+    """Settings shape: {"people": [{"id", "file", "zones": [zone ids]}]}.
+    Older versions stored a flat people list plus one shared zone list."""
+    s = load_json(SETTINGS, {"people": []})
+    people = s.get("people", [])
+    if people and isinstance(people[0], str):
+        zones = s.get("zones", [])
+        people = [
+            {"id": p, "file": p.split(".", 1)[1], "zones": list(zones)} for p in people
+        ]
+    return {"people": people}
 
 
-def read_rows(pid):
+def file_path(name):
+    return os.path.join(FOLDER, name + ".csv")
+
+
+def read_rows(name):
     rows = []
     try:
-        with open(csv_path(pid), newline="") as f:
+        with open(file_path(name), newline="") as f:
             for r in csv.DictReader(f):
                 try:
                     float(r["hours"])
@@ -89,7 +103,7 @@ def read_rows(pid):
     return rows
 
 
-def log_session(pid, zone, start, end):
+def log_session(name, zone, start, end):
     """Write one finished visit to the person's file (split at midnight)."""
     if (end - start).total_seconds() < MIN_MIN * 60:
         return
@@ -105,7 +119,7 @@ def log_session(pid, zone, start, end):
         rows.append([cur.date().isoformat(), zone, cur.strftime("%H:%M"), end_label, f"{hrs:.2f}"])
         cur = seg_end
     os.makedirs(FOLDER, exist_ok=True)
-    p = csv_path(pid)
+    p = file_path(name)
     new = not os.path.exists(p)
     with open(p, "a", newline="") as f:
         w = csv.writer(f)
@@ -142,31 +156,41 @@ def cleanup():
 # ---------- tracking ----------
 def tick():
     with lock:
-        s = load_json(SETTINGS, {"people": [], "zones": []})
+        s = load_settings()
         sessions = load_json(SESSIONS, {})
 
-    zone_names = {}
-    for zid in s["zones"]:
-        try:
-            st = ha(f"/states/{zid}")
-            zone_names[zid] = st["attributes"].get("friendly_name", zid).lower()
-        except Exception as e:
-            print("Zone lookup failed:", zid, e, flush=True)
+    cfg = {p["id"]: p for p in s["people"]}
+    zone_cache = {}
+
+    def zone_name(zid):
+        if zid not in zone_cache:
+            try:
+                st = ha(f"/states/{zid}")
+                zone_cache[zid] = st["attributes"].get("friendly_name", zid).lower()
+            except Exception as e:
+                print("Zone lookup failed:", zid, e, flush=True)
+                zone_cache[zid] = None
+        return zone_cache[zid]
 
     t = now()
 
-    # people removed from the list: close their open visit
+    # people removed from tracking: close their open visit
     for pid in list(sessions):
-        if pid not in s["people"]:
+        if pid not in cfg:
             sess = sessions[pid]
             end = datetime.fromisoformat(sess["left_at"]) if sess.get("left_at") else t
             try:
-                log_session(pid, sess["zone"], datetime.fromisoformat(sess["start"]), end)
+                log_session(
+                    sess.get("file", pid.split(".", 1)[1]),
+                    sess["zone"],
+                    datetime.fromisoformat(sess["start"]),
+                    end,
+                )
                 del sessions[pid]
             except Exception as e:
                 print("Write failed:", e, flush=True)
 
-    for pid in s["people"]:
+    for pid, person in cfg.items():
         try:
             state = ha(f"/states/{pid}")["state"]
         except Exception as e:
@@ -175,11 +199,8 @@ def tick():
         if state in ("unavailable", "unknown"):
             continue
 
-        cur = None
-        for zid, name in zone_names.items():
-            if state.lower() == name:
-                cur = state
-                break
+        names = [n for n in (zone_name(z) for z in person.get("zones", [])) if n]
+        cur = state if state.lower() in names else None
 
         sess = sessions.get(pid)
         if sess:
@@ -191,14 +212,23 @@ def tick():
                 left = datetime.fromisoformat(sess["left_at"])
                 if cur is not None or (t - left).total_seconds() >= GRACE * 60:
                     try:
-                        log_session(pid, sess["zone"], datetime.fromisoformat(sess["start"]), left)
+                        log_session(
+                            sess.get("file", person["file"]),
+                            sess["zone"],
+                            datetime.fromisoformat(sess["start"]),
+                            left,
+                        )
                         del sessions[pid]
-                        sess = None
                     except Exception as e:
                         print("Write failed (will retry):", e, flush=True)
                         continue
         if pid not in sessions and cur:
-            sessions[pid] = {"zone": cur, "start": t.isoformat(), "left_at": None}
+            sessions[pid] = {
+                "zone": cur,
+                "start": t.isoformat(),
+                "left_at": None,
+                "file": person["file"],
+            }
 
     with lock:
         save_json(SESSIONS, sessions)
@@ -220,13 +250,13 @@ def worker():
 # ---------- web UI ----------
 @app.get("/")
 def index():
-    return send_file("/app/index.html")
+    return send_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html"))
 
 
 @app.get("/api/state")
 def api_state():
     with lock:
-        s = load_json(SETTINGS, {"people": [], "zones": []})
+        s = load_settings()
         sessions = load_json(SESSIONS, {})
 
     err = None
@@ -243,6 +273,7 @@ def api_state():
         err = f"Can't reach Home Assistant: {ex}"
 
     names = {p["id"]: p["name"] for p in people}
+    zone_names = {z["id"]: z["name"] for z in zones}
     t = now()
     today = t.date().isoformat()
     week_start = t.date() - timedelta(days=t.weekday())
@@ -251,8 +282,9 @@ def api_state():
     week_mid = datetime.combine(week_start, datetime.min.time(), tzinfo=t.tzinfo)
 
     status = []
-    for pid in s["people"]:
-        rows = read_rows(pid)
+    for p in s["people"]:
+        pid = p["id"]
+        rows = read_rows(p["file"])
         td = sum(float(r["hours"]) for r in rows if r["date"] == today)
         wk = sum(float(r["hours"]) for r in rows if r["date"] >= week)
         live = None
@@ -265,10 +297,11 @@ def api_state():
         status.append({
             "id": pid,
             "name": names.get(pid, pid),
+            "zones": [zone_names.get(z, z) for z in p.get("zones", [])],
             "today": round(td, 2),
             "week": round(wk, 2),
             "live": live,
-            "file": csv_path(pid),
+            "file": file_path(p["file"]),
             "recent": rows[-8:][::-1],
         })
 
@@ -285,10 +318,29 @@ def api_state():
 @app.post("/api/settings")
 def api_settings():
     data = request.get_json(force=True) or {}
-    people = [x for x in data.get("people", []) if re.fullmatch(r"person\.[a-z0-9_]+", str(x))]
-    zones = [x for x in data.get("zones", []) if re.fullmatch(r"zone\.[a-z0-9_]+", str(x))]
     with lock:
-        save_json(SETTINGS, {"people": people, "zones": zones})
+        old = {p["id"]: p for p in load_settings()["people"]}
+        out, used = [], set()
+        for item in data.get("people", []):
+            pid = str(item.get("id", ""))
+            if not re.fullmatch(r"person\.[a-z0-9_]+", pid):
+                continue
+            zones = [z for z in item.get("zones", []) if re.fullmatch(r"zone\.[a-z0-9_]+", str(z))]
+            if pid in old:
+                fname = old[pid]["file"]  # keep the same file once it exists
+            else:
+                try:
+                    nm = ha(f"/states/{pid}")["attributes"].get("friendly_name", "")
+                except Exception:
+                    nm = ""
+                fname = re.sub(r"[^A-Za-z0-9_-]+", "_", nm).strip("_") or pid.split(".", 1)[1]
+            base, n = fname, 2
+            while fname.lower() in used:
+                fname = f"{base}_{n}"
+                n += 1
+            used.add(fname.lower())
+            out.append({"id": pid, "file": fname, "zones": zones})
+        save_json(SETTINGS, {"people": out})
     return jsonify({"ok": True})
 
 

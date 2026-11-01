@@ -14,6 +14,8 @@
   label { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid #374151; }
   label:last-child { border: 0; }
   input[type=checkbox] { width: 20px; height: 20px; }
+  .zones { margin: 6px 0 0 20px; padding-left: 10px; border-left: 2px solid #374151; }
+  .zones .hint { color: #9ca3af; font-size: 13px; padding: 4px 0; }
   button { background: #2563eb; color: #fff; border: 0; border-radius: 8px; padding: 12px 18px;
            font-size: 16px; width: 100%; margin-top: 10px; }
   .big { font-size: 28px; font-weight: 700; }
@@ -30,11 +32,9 @@
 <h1>⏱ Work Hours</h1>
 <div id="err" class="err"></div>
 
-<h2>Who to track</h2>
-<div class="card" id="people"></div>
-
-<h2>Which zones count as work</h2>
-<div class="card" id="zones"></div>
+<h2>People and their work zones</h2>
+<div class="muted">Tick a person to track them, then tick the zones that count as work for that person.</div>
+<div id="people"></div>
 
 <button id="save">Save</button>
 
@@ -52,17 +52,38 @@ function el(tag, cls, text) {
 
 let first = true;
 
-function checks(box, items, selected, name) {
+function buildPeople(d) {
+  const box = document.getElementById('people');
   box.innerHTML = '';
-  if (!items.length) { box.appendChild(el('div', 'muted', 'Nothing found.')); return; }
-  items.forEach(it => {
+  if (!d.people.length) { box.appendChild(el('div', 'muted', 'No person entities found.')); return; }
+  const cfg = {};
+  d.settings.people.forEach(p => { cfg[p.id] = p; });
+
+  d.people.forEach(p => {
+    const card = el('div', 'card');
     const l = el('label');
     const c = document.createElement('input');
-    c.type = 'checkbox'; c.value = it.id; c.name = name;
-    c.checked = selected.includes(it.id);
+    c.type = 'checkbox'; c.className = 'track'; c.value = p.id;
+    c.checked = !!cfg[p.id];
     l.appendChild(c);
-    l.appendChild(el('span', null, it.name + '  (' + it.id + ')'));
-    box.appendChild(l);
+    l.appendChild(el('b', null, p.name));
+    card.appendChild(l);
+
+    const zbox = el('div', 'zones');
+    zbox.style.display = c.checked ? 'block' : 'none';
+    if (!d.zones.length) zbox.appendChild(el('div', 'hint', 'No zones found.'));
+    d.zones.forEach(z => {
+      const zl = el('label');
+      const zc = document.createElement('input');
+      zc.type = 'checkbox'; zc.className = 'zonebox'; zc.value = z.id;
+      zc.checked = !!(cfg[p.id] && cfg[p.id].zones.includes(z.id));
+      zl.appendChild(zc);
+      zl.appendChild(el('span', null, z.name));
+      zbox.appendChild(zl);
+    });
+    c.onchange = () => { zbox.style.display = c.checked ? 'block' : 'none'; };
+    card.appendChild(zbox);
+    box.appendChild(card);
   });
 }
 
@@ -71,18 +92,15 @@ function render(d) {
   e.textContent = d.error || '';
   e.style.display = d.error ? 'block' : 'none';
 
-  if (first) {
-    checks(document.getElementById('people'), d.people, d.settings.people, 'p');
-    checks(document.getElementById('zones'), d.zones, d.settings.zones, 'z');
-    first = false;
-  }
+  if (first) { buildPeople(d); first = false; }
 
   const box = document.getElementById('status');
   box.innerHTML = '';
-  if (!d.status.length) box.appendChild(el('div', 'muted', 'Pick at least one person and one zone, then hit Save.'));
+  if (!d.status.length) box.appendChild(el('div', 'muted', 'Pick at least one person and one zone for them, then hit Save.'));
   d.status.forEach(p => {
     const c = el('div', 'card');
     c.appendChild(el('div', null, p.name));
+    c.appendChild(el('div', 'muted', 'Work zones: ' + (p.zones.length ? p.zones.join(', ') : 'none picked')));
     c.appendChild(el('div', 'muted live', p.live ? '● Clocked in at ' + p.live.zone + ' since ' + p.live.since : '○ Not at a work zone'));
     const row = el('div', 'row');
     const a = el('div'); a.appendChild(el('div', 'big', p.today.toFixed(2) + ' h')); a.appendChild(el('div', 'muted', 'Today'));
@@ -116,11 +134,17 @@ async function load() {
 }
 
 document.getElementById('save').onclick = async () => {
-  const pick = n => [...document.querySelectorAll('input[name=' + n + ']:checked')].map(x => x.value);
+  const people = [];
+  document.querySelectorAll('#people .card').forEach(card => {
+    const t = card.querySelector('.track');
+    if (!t.checked) return;
+    const zones = [...card.querySelectorAll('.zonebox:checked')].map(x => x.value);
+    people.push({ id: t.value, zones });
+  });
   await fetch('api/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ people: pick('p'), zones: pick('z') })
+    body: JSON.stringify({ people })
   });
   const b = document.getElementById('save');
   b.textContent = 'Saved ✓';
