@@ -1,0 +1,135 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Work Hours</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: system-ui, sans-serif; background: #111827; color: #e5e7eb;
+         margin: 0 auto; padding: 16px; max-width: 760px; }
+  h1 { font-size: 22px; }
+  h2 { font-size: 16px; margin: 24px 0 8px; color: #93c5fd; }
+  .card { background: #1f2937; border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+  label { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid #374151; }
+  label:last-child { border: 0; }
+  input[type=checkbox] { width: 20px; height: 20px; }
+  button { background: #2563eb; color: #fff; border: 0; border-radius: 8px; padding: 12px 18px;
+           font-size: 16px; width: 100%; margin-top: 10px; }
+  .big { font-size: 28px; font-weight: 700; }
+  .row { display: flex; gap: 16px; }
+  .row > div { flex: 1; }
+  .muted { color: #9ca3af; font-size: 13px; }
+  .live { color: #34d399; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  td, th { padding: 4px; text-align: left; }
+  .err { background: #7f1d1d; padding: 10px; border-radius: 8px; display: none; }
+</style>
+</head>
+<body>
+<h1>⏱ Work Hours</h1>
+<div id="err" class="err"></div>
+
+<h2>Who to track</h2>
+<div class="card" id="people"></div>
+
+<h2>Which zones count as work</h2>
+<div class="card" id="zones"></div>
+
+<button id="save">Save</button>
+
+<h2>Hours</h2>
+<div id="status"></div>
+<div class="muted" id="info"></div>
+
+<script>
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+let first = true;
+
+function checks(box, items, selected, name) {
+  box.innerHTML = '';
+  if (!items.length) { box.appendChild(el('div', 'muted', 'Nothing found.')); return; }
+  items.forEach(it => {
+    const l = el('label');
+    const c = document.createElement('input');
+    c.type = 'checkbox'; c.value = it.id; c.name = name;
+    c.checked = selected.includes(it.id);
+    l.appendChild(c);
+    l.appendChild(el('span', null, it.name + '  (' + it.id + ')'));
+    box.appendChild(l);
+  });
+}
+
+function render(d) {
+  const e = document.getElementById('err');
+  e.textContent = d.error || '';
+  e.style.display = d.error ? 'block' : 'none';
+
+  if (first) {
+    checks(document.getElementById('people'), d.people, d.settings.people, 'p');
+    checks(document.getElementById('zones'), d.zones, d.settings.zones, 'z');
+    first = false;
+  }
+
+  const box = document.getElementById('status');
+  box.innerHTML = '';
+  if (!d.status.length) box.appendChild(el('div', 'muted', 'Pick at least one person and one zone, then hit Save.'));
+  d.status.forEach(p => {
+    const c = el('div', 'card');
+    c.appendChild(el('div', null, p.name));
+    c.appendChild(el('div', 'muted live', p.live ? '● Clocked in at ' + p.live.zone + ' since ' + p.live.since : '○ Not at a work zone'));
+    const row = el('div', 'row');
+    const a = el('div'); a.appendChild(el('div', 'big', p.today.toFixed(2) + ' h')); a.appendChild(el('div', 'muted', 'Today'));
+    const b = el('div'); b.appendChild(el('div', 'big', p.week.toFixed(2) + ' h')); b.appendChild(el('div', 'muted', 'This week (Mon-Sun)'));
+    row.appendChild(a); row.appendChild(b); c.appendChild(row);
+    c.appendChild(el('div', 'muted', 'File: ' + p.file));
+    if (p.recent.length) {
+      const t = el('table');
+      const h = el('tr');
+      ['Date', 'Zone', 'In', 'Out', 'Hrs'].forEach(x => h.appendChild(el('th', null, x)));
+      t.appendChild(h);
+      p.recent.forEach(r => {
+        const tr = el('tr');
+        [r.date, r.zone, r.start, r.end, r.hours].forEach(x => tr.appendChild(el('td', null, x)));
+        t.appendChild(tr);
+      });
+      c.appendChild(t);
+    }
+    box.appendChild(c);
+  });
+
+  const i = d.info;
+  document.getElementById('info').textContent =
+    'Saving to ' + i.folder + ' | Keeping ' + (i.keep_days ? i.keep_days + ' days' : 'forever') +
+    ' | Grace ' + i.grace + ' min | Ignoring visits under ' + i.min + ' min';
+}
+
+async function load() {
+  const r = await fetch('api/state');
+  render(await r.json());
+}
+
+document.getElementById('save').onclick = async () => {
+  const pick = n => [...document.querySelectorAll('input[name=' + n + ']:checked')].map(x => x.value);
+  await fetch('api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ people: pick('p'), zones: pick('z') })
+  });
+  const b = document.getElementById('save');
+  b.textContent = 'Saved ✓';
+  setTimeout(() => b.textContent = 'Save', 2000);
+  load();
+};
+
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>
