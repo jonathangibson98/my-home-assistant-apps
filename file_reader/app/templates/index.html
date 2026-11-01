@@ -1,1 +1,95 @@
-hi
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Reader</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; background: #111a24; color: #e1e6eb; }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1 { font-weight: 400; color: #3b9eff; }
+        .card { background: #1c2734; border-radius: 8px; padding: 16px; margin-bottom: 20px; border: 1px solid #2e3c4e; }
+        input, select, textarea, button { background: #111a24; color: #fff; border: 1px solid #3b5066; padding: 8px 12px; border-radius: 4px; box-sizing: border-box; }
+        textarea { width: 100%; height: 120px; font-family: monospace; }
+        button { background: #03a9f4; border: none; font-weight: bold; cursor: pointer; }
+        button:hover { background: #0288d1; }
+        .danger { background: #e53935; }
+        .danger:hover { background: #c62828; }
+        ul { list-style: none; padding: 0; }
+        li { padding: 8px 12px; background: #243242; border-radius: 4px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>File Reader</h1>
+        
+        <div class="card">
+            <h3>Manage File</h3>
+            <input type="text" id="filename" placeholder="log.txt" style="width: 60%; margin-bottom: 8px;">
+            <select id="mode" style="width: 38%; margin-bottom: 8px;">
+                <option value="append">Append Line</option>
+                <option value="overwrite">Overwrite Content</option>
+            </select>
+            <textarea id="filetext" placeholder="Type multi-line message or text content here..."></textarea>
+            <div style="margin-top: 10px;">
+                <button onclick="saveFile()">Save File & Sync MQTT</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>Managed Files</h3>
+            <ul id="file-list"></ul>
+        </div>
+    </div>
+
+    <script>
+        async function loadFiles() {
+            const res = await fetch('./api/files');
+            const data = await res.json();
+            const list = document.getElementById('file-list');
+            list.innerHTML = '';
+            data.files.forEach(file => {
+                const li = document.createElement('li');
+                li.innerHTML = `<span><strong>${file}</strong></span>
+                    <div>
+                        <button onclick="loadFile('${file}')">Edit</button>
+                        <button class="danger" onclick="deleteFile('${file}')">Delete</button>
+                    </div>`;
+                list.appendChild(li);
+            });
+        }
+
+        async function saveFile() {
+            const filename = document.getElementById('filename').value.trim();
+            const text = document.getElementById('filetext').value;
+            const mode = document.getElementById('mode').value;
+            if(!filename) return alert('Enter a filename');
+
+            await fetch(`./api/file/${filename}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text, mode })
+            });
+
+            document.getElementById('filetext').value = '';
+            loadFiles();
+        }
+
+        async function loadFile(name) {
+            const res = await fetch(`./api/file/${name}`);
+            const data = await res.json();
+            document.getElementById('filename').value = data.filename;
+            document.getElementById('filetext').value = data.content;
+            document.getElementById('mode').value = 'overwrite';
+        }
+
+        async function deleteFile(name) {
+            if(!confirm(`Delete ${name}?`)) return;
+            await fetch(`./api/file/${name}`, { method: 'DELETE' });
+            loadFiles();
+        }
+
+        loadFiles();
+    </script>
+</body>
+</html>
