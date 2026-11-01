@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import paho.mqtt.client as mqtt
 from zoneinfo import ZoneInfo
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 # Settings live in the add-on's config folder (/addon_configs/<id>_team_tracker_lite/data on the host).
 DATA = os.environ.get("TTL_DATA", "/config/data")
 SETTINGS_FILE = os.path.join(DATA, "settings.json")
@@ -745,6 +745,12 @@ def publish_discovery():
             "device": device,
         }))
         publish_select_state()
+        # Home Assistant rebuilds the select when its options change and can drop a state
+        # that arrives during the rebuild, so it falls back to the old choice. Say it again.
+        for delay in (2, 6):
+            t = threading.Timer(delay, publish_select_state)
+            t.daemon = True
+            t.start()
     else:
         pub(D_SELECT, "")  # removes the select if it was ever created
 
@@ -768,6 +774,8 @@ def publish_sensor(state, attrs):
         log("debug", f"Sensor {state}: {attrs.get('team_score')}-{attrs.get('opponent_score')}")
     pub(T_STATE, state)
     pub(T_ATTR, json.dumps(attrs, default=str))
+    if OPTS.get("publish_team_selector"):
+        publish_select_state()
 
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
