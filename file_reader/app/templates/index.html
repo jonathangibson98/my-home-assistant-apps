@@ -83,12 +83,6 @@ Folders are created automatically. More examples are in the Documentation tab.</
             </details>
         </div>
 
-        <div class="card">
-            <details>
-                <summary>Changelog</summary>
-                <pre id="changelog">Loading...</pre>
-            </details>
-        </div>
     </div>
 
     <script>
@@ -103,7 +97,15 @@ Folders are created automatically. More examples are in the Documentation tab.</
             $('path').textContent = info.files_path;
             $('mqtt').textContent = info.mqtt_connected ? 'MQTT connected' : 'MQTT not connected';
             $('dot').className = 'dot' + (info.mqtt_connected ? ' ok' : '');
-            $('changelog').textContent = await (await fetch('./api/changelog')).text();
+        }
+
+        // "folder/music_fact.txt" -> "Folder / Music Fact"
+        function friendly(path) {
+            return path.split('/').map((part, i, all) => {
+                if (i === all.length - 1) part = part.replace(/\.[^.]*$/, '');
+                return part.replace(/[_\-.]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim()
+                    .split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+            }).join(' / ');
         }
 
         async function loadFiles() {
@@ -123,7 +125,8 @@ Folders are created automatically. More examples are in the Documentation tab.</
                 const name = document.createElement('span');
                 name.className = 'name';
                 const strong = document.createElement('strong');
-                strong.textContent = file;
+                strong.textContent = friendly(file);
+                name.title = file;
                 name.appendChild(strong);
 
                 const actions = document.createElement('div');
