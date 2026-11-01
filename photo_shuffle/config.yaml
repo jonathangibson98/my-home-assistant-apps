@@ -1,5 +1,5 @@
 name: Photo Shuffle
-version: "1.0.0"
+version: "1.0.1"
 slug: photo_shuffle
 description: Shuffle pictures from any number of folders, each exposed as a Home Assistant image entity
 url: ""
