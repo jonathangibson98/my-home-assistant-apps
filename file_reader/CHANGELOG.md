@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.3
+
+### Changed
+- **Sensor state is now the time the file last changed** (a timestamp sensor). The text is in the `content` attribute, the newest line in the new `last_line` attribute. If an automation used the old state as the last line, use `state_attr('sensor.file_reader_<name>', 'last_line')` instead.
+- **Easier automations:** every file in the web page has an **Automate** button with copy-paste Home Assistant code for adding a line, replacing the file, and reading it back.
+
 ## 1.2.2
 
 ### Changed
