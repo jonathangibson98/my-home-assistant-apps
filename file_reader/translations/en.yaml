@@ -23,7 +23,7 @@ configuration:
     description: Port of your MQTT broker (usually 1883).
   mqtt_user:
     name: MQTT username
-    description: Leave empty if your broker has no login.
+    description: Leave empty to use the Mosquitto add-on login from Home Assistant automatically.
   mqtt_password:
     name: MQTT password
     description: Leave empty if your broker has no login.
