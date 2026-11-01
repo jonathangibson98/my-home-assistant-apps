@@ -13,7 +13,7 @@ Files you edit outside the add-on (Samba, File editor) are picked up automatical
 | Scan interval | Seconds between checks for files changed outside the add-on. Default 30. |
 | REST API token | Password for the REST API on port 8100. Empty means the REST API is off. |
 | MQTT host / port | Your broker. The defaults work with the Mosquitto add-on. |
-| MQTT username / password | Leave empty if your broker has no login. |
+| MQTT username / password | Leave empty to use the login Home Assistant provides for the Mosquitto add-on automatically. Only fill in for an external broker. |
 
 ### Folder cheat sheet
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.1
+
+### Fixed
+- **"MQTT connection refused: Not authorized" with the Mosquitto add-on.** Mosquitto does not allow anonymous logins, so the add-on now gets the broker login from Home Assistant automatically when the MQTT username option is empty. No manual setup needed.
+
 ## 1.2.0
 
 ### Added
