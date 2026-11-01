@@ -1,0 +1,36 @@
+name: Photo Shuffle
+version: "1.0.0"
+slug: photo_shuffle
+description: Shuffle pictures from any number of folders, each exposed as a Home Assistant image entity
+url: ""
+arch:
+  - aarch64
+  - amd64
+init: false
+startup: application
+boot: auto
+map:
+  - media:ro
+  - share:ro
+services:
+  - mqtt:want
+options:
+  max_dimension: 1920
+  jpeg_quality: 85
+  shuffles:
+    - name: Family
+      path: /media/photos/family
+      interval: 60
+      recursive: true
+schema:
+  max_dimension: "int(320,4096)"
+  jpeg_quality: "int(30,100)"
+  shuffles:
+    - name: str
+      path: str
+      interval: "int(5,86400)"
+      recursive: bool
+  mqtt_host: str?
+  mqtt_port: port?
+  mqtt_username: str?
+  mqtt_password: password?
