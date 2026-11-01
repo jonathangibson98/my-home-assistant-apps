@@ -68,7 +68,7 @@
   </div>
 
   <section id="build">
-    <textarea id="req" placeholder="Example: When the entry temperature goes over 76 and someone is home, turn on the fans for 20 minutes, then off. Add a switch I can use to override it."></textarea>
+    <textarea id="req" placeholder="Examples: When the entry temp passes 76 and someone is home, run the fans 20 minutes. / A Movie Night scene. / An AppDaemon app that texts me when the garage is open 10 minutes. / A pyscript that logs my daily energy use."></textarea>
 
     <div class="chips" id="kinds"></div>
 
@@ -102,8 +102,8 @@ async function api(path, body) {
   } catch (e) { return {error: "Couldn't reach the add-on: " + e.message}; }
 }
 
-const KINDS = [["auto","Let AI decide"],["automation","Automation"],["script","Script"],["template","Template sensor"],["helper","Helper"]];
-const KIND_LABEL = {automation:"Automation", script:"Script", template:"Template entity", helper:"Helper", answer:"Answer"};
+const KINDS = [["auto","Let AI decide"],["automation","Automation"],["scene","Scene"],["script","Script"],["template","Template sensor"],["helper","Helper"],["appdaemon","AppDaemon app"],["pyscript","Pyscript"],["blueprint","Blueprint"],["addon","Add-on"]];
+const KIND_LABEL = {automation:"Automation", scene:"Scene", script:"Script", template:"Template entity", helper:"Helper", appdaemon:"AppDaemon app", pyscript:"Pyscript", blueprint:"Blueprint", addon:"Add-on", answer:"Answer"};
 let kind = "auto", current = null, targets = [];
 
 function renderChips() {
@@ -159,7 +159,7 @@ async function generate(feedback) {
 
 function itemCard(it, idx) {
   const card = el("div", {class: "card"});
-  const title = it.config.alias || it.config.name || (it.kind === "answer" ? "" : "Untitled");
+  const title = it.config.alias || it.config.name || it.config.slug || it.config.filename || (it.kind === "answer" ? "" : "Untitled");
   card.append(el("span", {class: "badge"}, KIND_LABEL[it.kind] || it.kind));
   if (title) card.append(el("div", {}, el("strong", {}, title)));
   if (it.kind === "answer") { card.append(el("p", {style: "white-space:pre-wrap"}, it.config.text || it.summary)); return card; }
@@ -167,8 +167,9 @@ function itemCard(it, idx) {
   const c = it.checks || {};
   if (c.preview != null) card.append(el("div", {class: "good"}, "Right now this would show: " + c.preview));
   if (c.error) card.append(el("div", {class: "bad"}, "Template problem: " + c.error));
+  for (const n of c.notes || []) card.append(el("div", {class: "warn"}, "Heads up: " + n));
   if (c.unknown && c.unknown.length) card.append(el("div", {class: "warn"}, "Not found in your Home Assistant: " + c.unknown.join(", ")));
-  card.append(el("details", {}, el("summary", {}, "See the config"), el("pre", {}, it.yaml || "")));
+  card.append(el("details", {}, el("summary", {}, "See the code / config"), el("pre", {}, it.yaml || "")));
   const status = el("div", {style: "margin-top:10px"});
   const btn = el("button", {class: "make", onclick: () => make(it, btn, status)}, it.edit_id || (it.kind === "template" && it.config.unique_id && targets.some(t => t.id === it.config.unique_id)) ? "Save changes" : "Create");
   const copy = el("button", {class: "ghost", onclick: async () => { try { await navigator.clipboard.writeText(it.yaml); copy.textContent = "Copied"; } catch (e) { copy.textContent = "Long-press the config to copy"; } }}, "Copy config");
@@ -177,18 +178,24 @@ function itemCard(it, idx) {
   return card;
 }
 
-async function make(it, btn, status) {
+async function make(it, btn, status, overwrite) {
   btn.disabled = true; status.replaceChildren(el("span", {class: "spin"}), "Creating...");
-  const r = await api("create", {item: {kind: it.kind, id: it.id, edit_id: it.edit_id, config: it.config}});
+  const r = await api("create", {overwrite: !!overwrite, item: {kind: it.kind, id: it.id, edit_id: it.edit_id, config: it.config}});
   if (r.ok) {
     btn.textContent = "Done";
-    const msg = el("div", {class: "good"}, "Created" + (r.entity ? " " + r.entity : "") + ".");
+    const msg = el("div", {class: "good"}, "Done" + (r.entity ? ": " + r.entity : "") + ".");
     status.replaceChildren(msg);
+    if (r.note) status.append(el("div", {class: "dim"}, r.note));
     if (r.needs_setup) status.append(el("div", {class: "warn"}, "It won't show up until you add the one-time packages line (banner at the top) and restart Home Assistant."));
     return true;
   }
   btn.disabled = false;
-  status.replaceChildren(el("div", {class: "bad"}, "Home Assistant said no: " + r.error),
+  if (r.exists) {
+    status.replaceChildren(el("div", {class: "warn"}, r.error + " Overwriting keeps a backup copy of the old file."),
+      el("div", {class: "row"}, el("button", {class: "ghost", onclick: () => make(it, btn, status, true)}, "Overwrite it")));
+    return false;
+  }
+  status.replaceChildren(el("div", {class: "bad"}, "That failed: " + r.error),
     el("div", {class: "row"}, el("button", {class: "ghost", onclick: () => { $("#fix").value = "Home Assistant rejected it with this error, please fix it: " + r.error; refine(); }}, "Ask AI to fix it")));
   return false;
 }
@@ -202,7 +209,7 @@ function renderResult() {
   if (makeable.length > 1)
     out.append(el("button", {class: "go", onclick: async (e) => {
       e.target.disabled = true;
-      const order = {helper:0, template:1, script:2, automation:3};
+      const order = {helper:0, template:1, scene:2, script:2, pyscript:3, appdaemon:3, automation:4, blueprint:5, addon:5};
       for (const it of [...makeable].sort((a, b) => order[a.kind] - order[b.kind])) { if (!(await make(it, it._btn, it._status))) break; }
       e.target.disabled = false;
     }}, "Create everything"));

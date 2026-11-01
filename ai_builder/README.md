@@ -6,10 +6,12 @@ AI Builder is a Home Assistant add-on with a sidebar web UI. You describe an aut
 
 ## What it can build
 
-- **Automations**, new or edits to ones you already have
+- **Automations and scenes**, new or edits to ones you already have
 - **Template sensors and binary sensors**, test-rendered against your live data before you create them
 - **Scripts**
 - **Helpers**: input_boolean, input_number, input_select, input_text, input_datetime, counter, timer
+- **AppDaemon apps**, **pyscripts**, and **blueprints**, with syntax checks before anything is written
+- **Whole add-ons**: config, Dockerfile, run.sh and docs, written to `/addons`
 - **Multi-part requests**, such as helpers + a template sensor + an automation from one sentence
 
 ## Features
@@ -19,6 +21,7 @@ AI Builder is a Home Assistant add-on with a sidebar web UI. You describe an aut
 - Revise box: tell it what to change and it rewrites the config
 - "Ask AI to fix it" button when Home Assistant rejects something
 - Lists what it has created, and lets you delete the template entities it manages
+- Never overwrites a file without asking, and backs up what it replaces
 - No cloud service of its own. It only talks to your Home Assistant
 
 ## Install

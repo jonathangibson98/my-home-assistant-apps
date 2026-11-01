@@ -1,5 +1,7 @@
 # AI Builder
 
+Builds Home Assistant things from plain English: automations, scenes, scripts, template sensors, helpers, AppDaemon apps, pyscripts, blueprints, and whole add-ons.
+
 ## How to use it
 
 1. Open **AI Builder** from the sidebar.
@@ -18,11 +20,40 @@ Not right? Type a change in the box under the results and tap **Revise**.
 - "Script that turns off all lights and locks the front door, called Goodnight."
 - "Helper to hold a target temperature between 65 and 80."
 
+### What each type does
+
+| Type | What it makes | Where it goes |
+|---|---|---|
+| Automation | Automation | HA, Settings -> Automations |
+| Scene | Scene | HA, Settings -> Scenes |
+| Script | Script | HA, Settings -> Scripts |
+| Template sensor | Sensor or binary sensor | The `template_file` path |
+| Helper | input_boolean, input_number, input_select, input_text, input_datetime, counter, timer | HA, Settings -> Helpers |
+| AppDaemon app | A Python app plus its config | `apps/ai_builder/<name>.py` and `.yaml` under `appdaemon_apps_dir` |
+| Pyscript | A pyscript file | `/config/pyscript/<name>.py` |
+| Blueprint | An automation or script blueprint | `/config/blueprints/<domain>/ai_builder/` |
+| Add-on | A full local add-on (config, Dockerfile, run.sh, docs) | `/addons/<slug>/` |
+
+**AppDaemon**: new apps go in an `ai_builder` subfolder with their own `.yaml`, so your existing `apps.yaml` is never touched. AppDaemon reloads on its own. Check the AppDaemon log afterward.
+
+**Pyscript**: needs the Pyscript integration installed (the `/config/pyscript` folder must exist). The add-on calls `pyscript.reload` after writing.
+
+**Add-ons**: after creating one, go to Settings -> Add-ons -> Add-on Store -> menu -> Check for updates, then open it under Local add-ons. The add-on checks that `config.yaml` is valid, Python files parse, and warns if `run.sh` uses `with-contenv` without `init: false`.
+
+### Safety for files and code
+
+AppDaemon apps, pyscripts and add-ons are real code that runs on your system. Read it before you tap Create. The add-on also:
+
+- Checks Python for syntax errors and blocks creating broken code
+- Refuses to write outside its allowed folders
+- Never overwrites a file without asking. If it exists, you get an **Overwrite it** button
+- Keeps a backup of every file it overwrites, in the add-on's own `/data/backups` folder
+
 ### Changing something that exists
 
-Use the **Change something that already exists** dropdown. It lists your UI-created automations, scripts, and the template entities this add-on made. Pick one, describe the change, and the AI gets the current config to edit. The result overwrites the original when you tap **Save changes**.
+Use the **Change something that already exists** dropdown. It lists your UI-created automations, scenes, scripts, the template entities this add-on made, your AppDaemon `.py` files, your pyscript files, and your local add-ons. Pick one, describe the change, and the AI gets the current config to edit. The result overwrites the original when you tap **Save changes**.
 
-Scripts and automations written directly in YAML can't be loaded this way.
+Scripts, scenes and automations written directly in YAML can't be loaded this way. For AppDaemon and pyscript, only the code is changed. For add-ons, it only rewrites the files the AI changed and asks it to bump the version.
 
 ## Configuration
 
@@ -30,6 +61,7 @@ Scripts and automations written directly in YAML can't be loaded this way.
 |---|---|---|
 | `ai_task_entity` | `ai_task.gemini_pro_ai_task` | The AI task entity used to write configs |
 | `request_timeout` | `180` | Seconds to wait for the AI before giving up (30 to 600) |
+| `appdaemon_apps_dir` | `/addon_configs/a0d7b954_appdaemon/apps` | Your AppDaemon apps folder. Must be under `/addon_configs` or your HA config folder |
 | `template_file` | `ai_builder/package.yaml` | Where template sensors are written, relative to your Home Assistant config folder. Must end in `.yaml` |
 
 Restart the add-on after changing options.
@@ -86,6 +118,10 @@ None of this guarantees the automation does what you meant. Read the config befo
 **Template sensor doesn't appear**: check the one-time setup above, then restart Home Assistant.
 
 **Create fails with a validation message**: tap **Ask AI to fix it**, or edit the request and revise.
+
+**"AppDaemon folder not found"**: set `appdaemon_apps_dir` to your apps folder. If AppDaemon's files are in your config folder, use something like `/config/appdaemon/apps`.
+
+**Long code gets cut off or isn't valid JSON**: add-ons are big outputs. Raise `request_timeout`, and consider asking for one add-on at a time.
 
 **Add-on log**: Settings -> Add-ons -> AI Builder -> Log.
 

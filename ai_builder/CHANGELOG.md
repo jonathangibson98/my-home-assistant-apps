@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0 - 2026-11-01
+
+- New types: scenes, AppDaemon apps, pyscripts, blueprints and full add-ons
+- Edit existing scenes, AppDaemon `.py` files, pyscript files and local add-ons
+- Python syntax checks and add-on `config.yaml` checks before anything is written; warns about the missing `init: false` crash
+- Existing files are never overwritten without confirmation, and overwritten files are backed up to `/data/backups`
+- New `appdaemon_apps_dir` option
+- The add-on now maps `/addon_configs` and `/addons`
+
 ## 1.0.2 - 2026-10-20
 
 - New `template_file` option: choose where template sensors are written (default stays `ai_builder/package.yaml`)
