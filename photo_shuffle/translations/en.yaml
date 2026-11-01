@@ -1,1 +1,35 @@
-h
+configuration:
+  shuffles:
+    name: Photo shuffles
+    description: One entry per folder. Each becomes an image entity plus a "Next photo" button.
+    fields:
+      name:
+        name: Name
+        description: Display name and entity ID base (Family becomes image.family).
+      path:
+        name: Folder path
+        description: Absolute path under /media or /share, e.g. /media/photos/family.
+      interval:
+        name: Interval (seconds)
+        description: How often to switch to a new picture (5 to 86400).
+      recursive:
+        name: Include subfolders
+        description: Also scan folders inside this folder.
+  max_dimension:
+    name: Max image size (px)
+    description: Longest side of the published image. Larger photos are scaled down.
+  jpeg_quality:
+    name: JPEG quality
+    description: Quality of the published JPEG (30 to 100).
+  mqtt_host:
+    name: MQTT host (optional)
+    description: Leave empty to use the Mosquitto add-on automatically.
+  mqtt_port:
+    name: MQTT port (optional)
+    description: Defaults to 1883.
+  mqtt_username:
+    name: MQTT username (optional)
+    description: Only needed with a manual MQTT broker.
+  mqtt_password:
+    name: MQTT password (optional)
+    description: Only needed with a manual MQTT broker.
