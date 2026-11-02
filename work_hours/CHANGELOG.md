@@ -2,6 +2,13 @@
 
 All notable changes to this add-on are documented here.
 
+## 1.3.0
+
+- Pay period settings (start day, length, anchor date, history size) moved from the add-on options to the sidebar page, and apply as soon as you press Save
+- People are now added one at a time from a drop-down instead of showing every person in a long list, with a short card for each person you track
+- Zones are added to each person from a drop-down and shown as removable chips
+- Settings from 1.2.0 are migrated automatically, including a pay period that was set in the options
+
 ## 1.2.0
 
 - MQTT device "Work Hours Tracker" appears in Home Assistant automatically, with an hours sensor and an at-work sensor for each person

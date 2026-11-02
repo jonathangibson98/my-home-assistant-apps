@@ -5,12 +5,18 @@
 1. Install and start the add-on.
 2. Turn on **Show in sidebar** (Info tab).
 3. Open **Work Hours** in the sidebar.
-4. Tick each **person** you want to track. Under their name, tick the **zones**
-   that count as work for *that person*, then press **Save**.
+4. Under **Pay period**, choose the start day and length.
+5. Under **People**, pick a person from the drop-down and press **Add person**.
+   Then add the **work zones** for that person from their zone drop-down.
+6. Press **Save**.
+
+Only the people you add are shown, so there's no long list to scroll through.
+Press **Edit** on a person to change their zones, or **Remove** to stop
+tracking them.
 
 Every person has their own zone list, so one person can work at Site A while
 someone else works at Site B and Site C. Someone standing in a zone that isn't
-ticked for them is not logged.
+added for them is not logged.
 
 ## Options
 
@@ -21,33 +27,33 @@ ticked for them is not logged.
 | `check_seconds` | `30` | How often locations are checked. |
 | `grace_minutes` | `10` | How long someone can be outside the zone before the shift ends. |
 | `min_minutes` | `5` | Visits shorter than this are ignored. |
-| `period_start_day` | `Thursday` | The weekday a new pay period begins. |
-| `period_weeks` | `1` | How many weeks a pay period lasts. |
-| `period_anchor_date` | empty | Only for periods of 2+ weeks. Any date a pay period started on. |
-| `history_periods` | `26` | How many finished pay periods the sensor remembers. |
 | `mqtt_host`, `mqtt_port`, `mqtt_username`, `mqtt_password` | empty | Only if you do **not** use the Mosquitto add-on. |
 
-Changing options requires restarting the add-on. Changing people and zones in
-the sidebar page takes effect immediately.
+Changing options requires restarting the add-on. Everything on the sidebar
+page (people, zones and the pay period) takes effect as soon as you press Save.
 
 ## Pay periods
+
+Set these in the **Pay period** box on the sidebar page.
 
 The sensor shows the hours worked **in the current pay period**, then starts
 again at zero when the next period begins (at midnight on the start day).
 
-| `period_start_day` | `period_weeks` | Period |
+| Starts on | Length | Period |
 | --- | --- | --- |
-| Thursday | 1 | Thursday to the next Wednesday, then resets on Thursday |
-| Thursday | 2 | Thursday to Wednesday two weeks later, then resets |
-| Monday | 1 | Monday to Sunday |
+| Thursday | 1 week | Thursday to the next Wednesday, then resets on Thursday |
+| Thursday | 2 weeks | Thursday to Wednesday two weeks later, then resets |
+| Monday | 1 week | Monday to Sunday |
 
-For periods of 2 weeks or more the add-on needs to know *which* weeks are paired
-together. Put any date a pay period started on in `period_anchor_date`, for
-example `2026-10-29`. If you leave it empty, the add-on uses the most recent
-start day from the first time it ran.
+- **A pay period started on** only matters for periods of 2 weeks or more. It
+  tells the add-on which weeks are paired together. Pick any date a pay period
+  began, for example `2026-10-29`. It is moved back to the start day
+  automatically if it falls on a different weekday.
+- **Periods of history to keep** is how many finished pay periods the sensor
+  remembers in its `history` attribute.
 
-If you change the period length later, finished periods stay in the history
-exactly as they were recorded, and the new length applies from now on.
+If you change the period later, finished periods stay in the history exactly
+as they were recorded, and the new length applies from now on.
 
 ## MQTT device
 
@@ -128,6 +134,8 @@ state is `unavailable` or `unknown`, nothing changes until a real state returns.
 ## Troubleshooting
 
 - **No people or zones listed:** check the Log tab for "Can't reach Home Assistant".
+- **The person I want isn't in the drop-down:** only people already added are
+  hidden from it. Check the person exists under Settings → People in Home Assistant.
 - **No MQTT device:** install and start the Mosquitto broker add-on and the MQTT
   integration, then restart this add-on. The bottom of the sidebar page shows
   the MQTT status.

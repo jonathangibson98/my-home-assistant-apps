@@ -15,7 +15,7 @@ try:
 except Exception:  # paho missing: MQTT is skipped, everything else still works
     paho = None
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 API = "http://supervisor/core/api"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
@@ -31,9 +31,6 @@ GRACE = int(OPTS.get("grace_minutes", 10))
 MIN_MIN = int(OPTS.get("min_minutes", 5))
 
 DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-START_DAY = DAY_NAMES.index(OPTS["period_start_day"]) if OPTS.get("period_start_day") in DAY_NAMES else 3
-WEEKS = max(1, int(OPTS.get("period_weeks", 1)))
-HIST_N = max(1, int(OPTS.get("history_periods", 26)))
 
 SETTINGS = os.path.join(DATA_DIR, "settings.json")
 SESSIONS = os.path.join(DATA_DIR, "sessions.json")
@@ -53,7 +50,6 @@ DEVICE = {
 
 lock = threading.RLock()
 _tz = None
-_anchor = None
 mq = None
 mq_state = {"ready": False, "resend": True}
 mq_last = {}
@@ -98,15 +94,59 @@ def save_json(path, data):
     os.replace(tmp, path)
 
 
+def snap_anchor(raw, start_idx, today):
+    """ISO date of a pay period start, moved back onto the start weekday."""
+    a = None
+    if raw:
+        try:
+            a = date.fromisoformat(str(raw))
+        except ValueError:
+            a = None
+    if a is None:
+        a = today
+    return (a - timedelta(days=(a.weekday() - start_idx) % 7)).isoformat()
+
+
+def clean_period(per, today):
+    day = per.get("start_day")
+    if day not in DAY_NAMES:
+        day = "Thursday"
+    try:
+        weeks = min(8, max(1, int(per.get("weeks", 1))))
+    except (TypeError, ValueError):
+        weeks = 1
+    try:
+        hist = min(100, max(1, int(per.get("history", 26))))
+    except (TypeError, ValueError):
+        hist = 26
+    anchor = snap_anchor(per.get("anchor"), DAY_NAMES.index(day), today)
+    return {"start_day": day, "weeks": weeks, "anchor": anchor, "history": hist}
+
+
 def load_settings():
-    """Settings shape: {"people": [{"id", "file", "name", "zones": [zone ids]}]}.
-    1.0.0 stored a flat people list plus one shared zone list."""
+    """Settings shape:
+    {"people": [{"id", "file", "name", "zones": [zone ids]}],
+     "period": {"start_day", "weeks", "anchor", "history"}}
+    1.0.0 stored a flat people list plus one shared zone list, and 1.2.0 kept
+    the pay period in the add-on options, so both are migrated here."""
     s = load_json(SETTINGS, {"people": []})
     people = s.get("people", [])
     if people and isinstance(people[0], str):
         zones = s.get("zones", [])
         people = [{"id": p, "file": p.split(".", 1)[1], "zones": list(zones)} for p in people]
-    return {"people": people}
+    per = s.get("period")
+    fresh = per is None
+    if fresh:
+        per = {
+            "start_day": OPTS.get("period_start_day") or "Thursday",
+            "weeks": OPTS.get("period_weeks") or 1,
+            "anchor": OPTS.get("period_anchor_date") or load_json(ANCHOR, {}).get("anchor") or "",
+            "history": OPTS.get("history_periods") or 26,
+        }
+    period = clean_period(per, now().date())
+    if fresh or period != per:
+        save_json(SETTINGS, {"people": people, "period": period})
+    return {"people": people, "period": period}
 
 
 def file_path(name):
@@ -191,44 +231,22 @@ def cleanup():
 
 
 # ---------- pay periods ----------
-def get_anchor(today):
-    """A date a pay period started on, snapped back to the chosen start day."""
-    global _anchor
-    if _anchor is None:
-        a = None
-        raw = (OPTS.get("period_anchor_date") or "").strip()
-        if raw:
-            try:
-                a = date.fromisoformat(raw)
-            except ValueError:
-                print(f"period_anchor_date '{raw}' is not YYYY-MM-DD, ignoring it", flush=True)
-        if a is None:
-            saved = load_json(ANCHOR, {}).get("anchor")
-            if saved:
-                a = date.fromisoformat(saved)
-            else:
-                a = today - timedelta(days=(today.weekday() - START_DAY) % 7)
-                save_json(ANCHOR, {"anchor": a.isoformat()})
-        _anchor = a - timedelta(days=(a.weekday() - START_DAY) % 7)
-    return _anchor
-
-
-def period_bounds(today, back=0):
+def period_bounds(per, today, back=0):
     """(start, end) dates of the pay period `back` periods before the current one."""
-    a = get_anchor(today)
-    length = 7 * WEEKS
+    a = date.fromisoformat(per["anchor"])
+    length = 7 * per["weeks"]
     idx = (today - a).days // length
     start = a + timedelta(days=(idx - back) * length)
     return start, start + timedelta(days=length - 1)
 
 
-def summarize(p, rows, sess, t):
+def summarize(per, rows, sess, t):
     today = t.date()
-    ps, pe = period_bounds(today)
+    ps, pe = period_bounds(per, today)
     ws = today - timedelta(days=today.weekday())
     td = sum_range(rows, today, today)
     wk = sum_range(rows, ws, ws + timedelta(days=6))
-    per = sum_range(rows, ps, pe)
+    total = sum_range(rows, ps, pe)
     live = None
     if sess:
         start = datetime.fromisoformat(sess["start"])
@@ -239,12 +257,12 @@ def summarize(p, rows, sess, t):
 
         td += part(today)
         wk += part(ws)
-        per += part(ps)
+        total += part(ps)
         live = {"zone": sess["zone"], "since": start}
     return {
         "today": td,
         "week": wk,
-        "period": per,
+        "period": total,
         "period_start": ps,
         "period_end": pe,
         "period_label": f"{ps:%a %b} {ps.day} – {pe:%a %b} {pe.day}",
@@ -252,18 +270,19 @@ def summarize(p, rows, sess, t):
     }
 
 
-def build_history(pid, rows, today, hist):
+def build_history(pid, rows, today, hist, per):
     """Totals for finished pay periods. Kept after old CSV rows are cleaned up."""
     store = hist.setdefault(pid, {})
+    n = per["history"]
     cutoff = today - timedelta(days=KEEP_DAYS) if KEEP_DAYS > 0 else None
-    for k in range(1, HIST_N + 1):
-        a, b = period_bounds(today, k)
+    for k in range(1, n + 1):
+        a, b = period_bounds(per, today, k)
         if cutoff is None or a >= cutoff:  # whole period still has its rows
             h = sum_range(rows, a, b)
             key = a.isoformat()
             if h > 0 or key in store:
                 store[key] = {"start": key, "end": b.isoformat(), "hours": round(h, 2)}
-    items = sorted(store.values(), key=lambda x: x["start"], reverse=True)[:HIST_N]
+    items = sorted(store.values(), key=lambda x: x["start"], reverse=True)[:n]
     hist[pid] = {i["start"]: i for i in items}
     return items
 
@@ -274,18 +293,19 @@ def snapshot_history():
     with lock:
         s = load_settings()
         hist = load_json(HISTORY, {})
+    per = s["period"]
     for p in s["people"]:
         rows = read_rows(p["file"])
         store = hist.setdefault(p["id"], {})
-        for k in range(1, HIST_N + 1):
-            a, b = period_bounds(today, k)
+        for k in range(1, per["history"] + 1):
+            a, b = period_bounds(per, today, k)
             h = round(sum_range(rows, a, b), 2)
             key = a.isoformat()
             if h > 0:
                 # max(): rows may already be partly deleted, so never go down
                 best = max(h, store.get(key, {}).get("hours", 0))
                 store[key] = {"start": key, "end": b.isoformat(), "hours": best}
-        items = sorted(store.values(), key=lambda x: x["start"], reverse=True)[:HIST_N]
+        items = sorted(store.values(), key=lambda x: x["start"], reverse=True)[: per["history"]]
         hist[p["id"]] = {i["start"]: i for i in items}
     with lock:
         save_json(HISTORY, hist)
@@ -473,6 +493,7 @@ def publish_mqtt():
         hist = load_json(HISTORY, {})
     t = now()
     today = t.date()
+    per = s["period"]
 
     people = [(slug_of(p), p, display_name(p)) for p in s["people"]]
 
@@ -516,13 +537,13 @@ def publish_mqtt():
     changed_hist = False
     for slug, p, name in people:
         rows = read_rows(p["file"])
-        sm = summarize(p, rows, sessions.get(p["id"]), t)
+        sm = summarize(per, rows, sessions.get(p["id"]), t)
         before = json.dumps(hist.get(p["id"]), sort_keys=True)
-        history = build_history(p["id"], rows, today, hist)
+        history = build_history(p["id"], rows, today, hist, per)
         if json.dumps(hist.get(p["id"]), sort_keys=True) != before:
             changed_hist = True
 
-        prev_start, _ = period_bounds(today, 1)
+        prev_start, _ = period_bounds(per, today, 1)
         last_hours = next((h["hours"] for h in history if h["start"] == prev_start.isoformat()), 0)
         live = sm["live"]
         attrs = {
@@ -530,7 +551,7 @@ def publish_mqtt():
             "period_label": sm["period_label"],
             "period_start": sm["period_start"].isoformat(),
             "period_end": sm["period_end"].isoformat(),
-            "period_length_days": 7 * WEEKS,
+            "period_length_days": 7 * per["weeks"],
             "days_left": (sm["period_end"] - today).days + 1,
             "today_hours": round(sm["today"], 2),
             "week_hours": round(sm["week"], 2),
@@ -614,7 +635,7 @@ def api_state():
     for p in s["people"]:
         pid = p["id"]
         rows = read_rows(p["file"])
-        sm = summarize(p, rows, sessions.get(pid), t)
+        sm = summarize(s["period"], rows, sessions.get(pid), t)
         live = None
         if sm["live"]:
             live = {"zone": sm["live"]["zone"], "since": sm["live"]["since"].strftime("%b %d, %I:%M %p")}
@@ -648,7 +669,6 @@ def api_state():
             "keep_days": KEEP_DAYS,
             "grace": GRACE,
             "min": MIN_MIN,
-            "period": f"{WEEKS} week(s) starting {DAY_NAMES[START_DAY]}",
             "mqtt": mqtt_text,
         },
     })
@@ -658,13 +678,17 @@ def api_state():
 def api_settings():
     data = request.get_json(force=True) or {}
     with lock:
-        old = {p["id"]: p for p in load_settings()["people"]}
+        cur = load_settings()
+        old = {p["id"]: p for p in cur["people"]}
         out, used = [], set()
         for item in data.get("people", []):
             pid = str(item.get("id", ""))
             if not re.fullmatch(r"person\.[a-z0-9_]+", pid):
                 continue
-            zones = [z for z in item.get("zones", []) if re.fullmatch(r"zone\.[a-z0-9_]+", str(z))]
+            zones = []
+            for z in item.get("zones", []):
+                if re.fullmatch(r"zone\.[a-z0-9_]+", str(z)) and z not in zones:
+                    zones.append(z)
             try:
                 nm = ha(f"/states/{pid}")["attributes"].get("friendly_name", "")
             except Exception:
@@ -679,7 +703,8 @@ def api_settings():
                 n += 1
             used.add(fname.lower())
             out.append({"id": pid, "file": fname, "name": nm or fname.replace("_", " "), "zones": zones})
-        save_json(SETTINGS, {"people": out})
+        period = clean_period(data.get("period") or cur["period"], now().date())
+        save_json(SETTINGS, {"people": out, "period": period})
     return jsonify({"ok": True})
 
 
