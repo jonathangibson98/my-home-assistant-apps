@@ -64,6 +64,14 @@ for _p in OPTIONS.get("photo_paths") or []:
 DISCOVERY = "homeassistant"
 BASE = "photo_shuffle"
 STATUS_TOPIC = f"{BASE}/status"
+
+# One shared Home Assistant device that holds every shuffle's image entity
+DEVICE = {
+    "identifiers": [BASE],
+    "name": "Photo Shuffle",
+    "manufacturer": "Photo Shuffle add-on",
+    "model": "Folder shuffle",
+}
 STORE = os.path.join(DATA_DIR, "shuffles.json")
 
 stop = threading.Event()
@@ -128,7 +136,8 @@ class Shuffle:
         self.stop_ev = threading.Event()
         self.thread = None
         self.image_topic = f"{BASE}/{sid}/image"
-        self.cmd_topic = f"{BASE}/{sid}/next"
+        self.seq = 0
+        self.cond = threading.Condition()
 
     def cfg(self):
         return {
@@ -217,6 +226,14 @@ class Shuffle:
         self.error = "Could not read any of the pictures"
         return False
 
+    def request_next(self, wait=15):
+        """Pick a new photo right now. Returns once it has been published (or failed)."""
+        with self.cond:
+            before = self.seq
+        self.trigger.set()
+        with self.cond:
+            self.cond.wait_for(lambda: self.seq != before, timeout=wait)
+
     def loop(self):
         while not self.stop_ev.is_set():
             forced = self.trigger.is_set()
@@ -224,12 +241,19 @@ class Shuffle:
             if not CONNECTED.is_set():
                 self.next_at = None
                 CONNECTED.wait(3)
+                # a Next press while MQTT was down must not hang the UI
+                with self.cond:
+                    self.seq += 1
+                    self.cond.notify_all()
                 continue
             if self.enabled or forced:
                 try:
                     self.publish_next()
                 except Exception:
                     log.exception("%s: unexpected error", self.name)
+                with self.cond:
+                    self.seq += 1
+                    self.cond.notify_all()
             if self.stop_ev.is_set():
                 break
             if self.enabled:
@@ -248,31 +272,16 @@ class Shuffle:
         self.trigger.set()
 
     def discovery(self, client):
-        device = {
-            "identifiers": [f"{BASE}_{self.id}"],
-            "name": self.name,
-            "manufacturer": "Photo Shuffle add-on",
-            "model": "Folder shuffle",
-        }
-        avail = {"availability_topic": STATUS_TOPIC}
         image_cfg = {
-            "name": None,
+            "name": self.name,
             "unique_id": f"{BASE}_{self.id}_image",
+            "default_entity_id": f"image.{self.id}",
             "image_topic": self.image_topic,
             "content_type": "image/jpeg",
-            "device": device,
-            **avail,
-        }
-        button_cfg = {
-            "name": "Next photo",
-            "unique_id": f"{BASE}_{self.id}_next",
-            "command_topic": self.cmd_topic,
-            "payload_press": "PRESS",
-            "device": device,
-            **avail,
+            "availability_topic": STATUS_TOPIC,
+            "device": DEVICE,
         }
         client.publish(f"{DISCOVERY}/image/{BASE}_{self.id}/config", json.dumps(image_cfg), qos=1, retain=True)
-        client.publish(f"{DISCOVERY}/button/{BASE}_{self.id}_next/config", json.dumps(button_cfg), qos=1, retain=True)
 
 
 # ---------------------------------------------------------------- manager
@@ -354,7 +363,6 @@ class Manager:
     def announce(self, s):
         if self.client is not None and CONNECTED.is_set():
             s.discovery(self.client)
-            self.client.subscribe(s.cmd_topic)
 
     # operations
     def validate(self, data, current=None):
@@ -494,7 +502,8 @@ def mqtt_worker():
         mq_state.update(status="connected", detail="%s:%s" % (cfg["host"], cfg["port"]))
         for s in mgr.all():
             s.discovery(c)
-            c.subscribe(s.cmd_topic)
+            # remove the old per-shuffle "Next photo" button left over from v2.0
+            c.publish(f"{DISCOVERY}/button/{BASE}_{s.id}_next/config", "", qos=1, retain=True)
         c.publish(STATUS_TOPIC, "online", qos=1, retain=True)
         CONNECTED.set()
         mgr.purge_removed()
@@ -505,14 +514,8 @@ def mqtt_worker():
         if not stop.is_set():
             log.warning("Lost MQTT connection, reconnecting")
 
-    def on_message(c, userdata, msg):
-        for s in mgr.all():
-            if s.cmd_topic == msg.topic:
-                s.trigger.set()
-
     client.on_connect = on_connect
     client.on_disconnect = on_disconnect
-    client.on_message = on_message
     mgr.client = client
     try:
         client.connect_async(cfg["host"], int(cfg["port"]), 60)
@@ -593,7 +596,7 @@ def api_next(sid):
     s = mgr.get(sid)
     if s is None:
         return err("Not found", 404)
-    s.trigger.set()
+    s.request_next()
     return jsonify({"ok": True})
 
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.0
+
+- All shuffle image entities now live under ONE device called "Photo Shuffle" instead of one device per shuffle
+- Removed the MQTT "Next photo" button. Use the Next button in the web UI
+- The old per-shuffle button entities are removed from Home Assistant automatically on start
+- Entity IDs are unchanged (`image.family` stays `image.family`)
+- Web UI Next now waits until the new picture is published, so the entity and the preview update right away
+
 ## 2.0.0
 
 - New web UI (sidebar panel): add, edit, pause and delete shuffles, with a live preview of the current picture, picture counts, next-change countdown and an activity log

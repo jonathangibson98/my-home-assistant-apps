@@ -202,7 +202,7 @@ $('#cards').addEventListener('click', async ev => {
   const id = b.closest('.card').dataset.id;
   const s = S.shuffles.find(x => x.id === id);
   try {
-    if (b.dataset.act === 'next') { await api('api/shuffles/' + id + '/next', 'POST', {}); setTimeout(refresh, 800); }
+    if (b.dataset.act === 'next') { await api('api/shuffles/' + id + '/next', 'POST', {}); refresh(); }
     else if (b.dataset.act === 'toggle') { await api('api/shuffles/' + id, 'PUT', {enabled: !s.enabled}); refresh(); }
     else if (b.dataset.act === 'edit') openForm(s);
     else if (b.dataset.act === 'del') {

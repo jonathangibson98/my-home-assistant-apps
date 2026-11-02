@@ -14,9 +14,7 @@ Turn folders of pictures into Home Assistant **image entities** that change to a
 3. Open **Photo Shuffle** in the sidebar and tap **+ Add shuffle**.
 4. Give it a name, tap **Browse** to choose a folder, set how often it changes, and **Save**.
 
-Each shuffle appears in Home Assistant as a device with:
-- an image entity, for example `image.family`
-- a button, for example `button.family_next_photo`
+All shuffles appear under one **Photo Shuffle** device in Home Assistant. Each shuffle is an image entity, for example `image.family`.
 
 ## The web UI
 
@@ -86,13 +84,7 @@ show_name: false
 show_state: false
 ```
 
-Skip to the next photo from an automation:
-
-```yaml
-action: button.press
-target:
-  entity_id: button.family_next_photo
-```
+The next photo is picked from the **Next** button in the web UI. There is no MQTT button entity.
 
 ## Troubleshooting
 
@@ -104,4 +96,5 @@ target:
 | MQTT badge is red or orange | Make sure the Mosquitto add-on is running and the MQTT integration is set up. |
 | Entities never appear | Wait for the MQTT badge to turn green, then check Settings, Devices & services, MQTT. |
 | Image looks stale on a dashboard | Reload the dashboard. The entity updates on every interval. |
+| Old per-shuffle devices or buttons still showing | They are cleaned up on add-on start. If an empty device is left behind, delete it in Settings, Devices & services, MQTT. |
 | Upgraded from 1.x | The old `shuffles` option is gone. Re-add your shuffles in the web UI. Use the same names and the entities keep their IDs. |

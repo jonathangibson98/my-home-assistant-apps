@@ -1,7 +1,7 @@
 name: Photo Shuffle
-version: "2.0.0"
+version: "2.1.0"
 slug: photo_shuffle
-description: Shuffle pictures from any number of folders, each exposed as a Home Assistant image entity. Manage shuffles from a web UI.
+description: Shuffle pictures from any number of folders, all exposed as image entities on one Home Assistant device. Manage shuffles from a web UI.
 url: "https://github.com/jonathangibson98/my-home-assistant-apps"
 arch:
   - aarch64

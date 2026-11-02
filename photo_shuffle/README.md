@@ -1,6 +1,6 @@
 # Photo Shuffle
 
-Shuffle pictures from any number of folders. Each folder becomes an **image entity** that rotates to a random photo, with a **Next photo** button.
+Shuffle pictures from any number of folders. Each folder becomes an **image entity** that rotates to a random photo. All of them sit under one **Photo Shuffle** device.
 
 - Manage shuffles from a web UI in the sidebar: add, edit, pause and delete
 - Live preview, picture counts, next-change countdown and an activity log
