@@ -16,7 +16,7 @@ A collection of custom Home Assistant add-ons (apps). Add this repository once a
 | 📍 | [**Location Tracker**](location_tracker) | Everyone's location as one sensor: a readable **City, State** for anyone who is away, a count of who is home, custom places, and a dashboard card generator. | MQTT (falls back to REST) |
 | 📁 | [**Mobile File Manager & Samba**](mobile_ide) | Mobile-friendly file manager with folder uploads and a native Samba share. *(aarch64 only)* | none |
 | 👤 | [**Personalized Info**](personalized_info) | Edit everyone's info and music preferences from a phone-friendly UI. Saved to one readable YAML file with automatic backups. | none (MQTT optional) |
-| 🖼️ | [**Photo Shuffle**](photo_shuffle) | Add as many photo folders as you like. Each one becomes an image entity that shuffles on a timer, with a "Next photo" button. | MQTT |
+| 🖼️ | [**Photo Shuffle**](photo_shuffle) | Add as many photo folders as you like from a web UI. Each one becomes an image entity that shuffles on a timer, with a "Next photo" button. Choose which formats (jpg, png, webp...) to include. | MQTT |
 | 🎬 | [**Release Tracker**](release-tracker) | Pick the TV shows and movies you care about and get sensors for what is coming out and when. | Free TMDB API key |
 | 🏈 | [**Team Tracker Lite**](team_tracker_lite) | One lightweight live sports sensor. Pick any team from a menu, with a calendar of every game for your saved teams. | MQTT |
 | ⏱️ | [**Work Hours Tracker**](work_hours) | Logs how long each person spends in the work zones you pick for them, saved as one CSV per person. | Home Assistant zones |
