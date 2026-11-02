@@ -1,7 +1,7 @@
 name: Work Hours Tracker
-version: "1.1.0"
+version: "1.2.0"
 slug: work_hours
-description: Logs time spent in chosen zones, one file per person
+description: Logs time spent in chosen zones, one file per person, with MQTT sensors
 url: https://github.com/jonathangibson98/ha-work-hours
 arch:
   - aarch64
@@ -14,6 +14,8 @@ ingress: true
 ingress_port: 8099
 panel_icon: mdi:clock-check-outline
 panel_title: Work Hours
+services:
+  - mqtt:want
 map:
   - homeassistant_config:rw
   - share:rw
@@ -24,9 +26,20 @@ options:
   check_seconds: 30
   grace_minutes: 10
   min_minutes: 5
+  period_start_day: Thursday
+  period_weeks: 1
+  history_periods: 26
 schema:
   save_folder: str
   keep_days: int(0,36500)
   check_seconds: int(10,300)
   grace_minutes: int(0,120)
   min_minutes: int(0,120)
+  period_start_day: list(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)
+  period_weeks: int(1,8)
+  period_anchor_date: str?
+  history_periods: int(1,100)
+  mqtt_host: str?
+  mqtt_port: port?
+  mqtt_username: str?
+  mqtt_password: password?

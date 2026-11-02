@@ -18,7 +18,7 @@
   .zones .hint { color: #9ca3af; font-size: 13px; padding: 4px 0; }
   button { background: #2563eb; color: #fff; border: 0; border-radius: 8px; padding: 12px 18px;
            font-size: 16px; width: 100%; margin-top: 10px; }
-  .big { font-size: 28px; font-weight: 700; }
+  .big { font-size: 24px; font-weight: 700; }
   .row { display: flex; gap: 16px; }
   .row > div { flex: 1; }
   .muted { color: #9ca3af; font-size: 13px; }
@@ -105,7 +105,8 @@ function render(d) {
     const row = el('div', 'row');
     const a = el('div'); a.appendChild(el('div', 'big', p.today.toFixed(2) + ' h')); a.appendChild(el('div', 'muted', 'Today'));
     const b = el('div'); b.appendChild(el('div', 'big', p.week.toFixed(2) + ' h')); b.appendChild(el('div', 'muted', 'This week (Mon-Sun)'));
-    row.appendChild(a); row.appendChild(b); c.appendChild(row);
+    const g = el('div'); g.appendChild(el('div', 'big', p.period.toFixed(2) + ' h')); g.appendChild(el('div', 'muted', 'Pay period: ' + p.period_label));
+    row.appendChild(a); row.appendChild(b); row.appendChild(g); c.appendChild(row);
     c.appendChild(el('div', 'muted', 'File: ' + p.file));
     if (p.recent.length) {
       const t = el('table');
@@ -125,7 +126,7 @@ function render(d) {
   const i = d.info;
   document.getElementById('info').textContent =
     'Saving to ' + i.folder + ' | Keeping ' + (i.keep_days ? i.keep_days + ' days' : 'forever') +
-    ' | Grace ' + i.grace + ' min | Ignoring visits under ' + i.min + ' min';
+    ' | Grace ' + i.grace + ' min | Ignoring visits under ' + i.min + ' min | Pay period: ' + i.period + ' | MQTT: ' + i.mqtt;
 }
 
 async function load() {

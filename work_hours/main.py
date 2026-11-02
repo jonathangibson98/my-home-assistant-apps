@@ -4,12 +4,18 @@ import os
 import re
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import requests
 from flask import Flask, jsonify, request, send_file
 
+try:
+    import paho.mqtt.client as paho
+except Exception:  # paho missing: MQTT is skipped, everything else still works
+    paho = None
+
+VERSION = "1.2.0"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 API = "http://supervisor/core/api"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
@@ -24,12 +30,35 @@ CHECK = int(OPTS.get("check_seconds", 30))
 GRACE = int(OPTS.get("grace_minutes", 10))
 MIN_MIN = int(OPTS.get("min_minutes", 5))
 
+DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+START_DAY = DAY_NAMES.index(OPTS["period_start_day"]) if OPTS.get("period_start_day") in DAY_NAMES else 3
+WEEKS = max(1, int(OPTS.get("period_weeks", 1)))
+HIST_N = max(1, int(OPTS.get("history_periods", 26)))
+
 SETTINGS = os.path.join(DATA_DIR, "settings.json")
 SESSIONS = os.path.join(DATA_DIR, "sessions.json")
-HEADER = ["date", "zone", "start", "end", "hours"]
+HISTORY = os.path.join(DATA_DIR, "history.json")
+ANCHOR = os.path.join(DATA_DIR, "anchor.json")
+MQTT_SLUGS = os.path.join(DATA_DIR, "mqtt_slugs.json")
+CSV_HEADER = ["date", "zone", "start", "end", "hours"]
+
+AVAIL = "work_hours/status"
+DEVICE = {
+    "identifiers": ["work_hours_tracker"],
+    "name": "Work Hours Tracker",
+    "manufacturer": "jonathangibson98",
+    "model": "Work Hours Tracker",
+    "sw_version": VERSION,
+}
 
 lock = threading.RLock()
 _tz = None
+_anchor = None
+mq = None
+mq_state = {"ready": False, "resend": True}
+mq_last = {}
+mq_sig = None
+name_cache = {}
 app = Flask(__name__)
 
 
@@ -70,15 +99,13 @@ def save_json(path, data):
 
 
 def load_settings():
-    """Settings shape: {"people": [{"id", "file", "zones": [zone ids]}]}.
-    Older versions stored a flat people list plus one shared zone list."""
+    """Settings shape: {"people": [{"id", "file", "name", "zones": [zone ids]}]}.
+    1.0.0 stored a flat people list plus one shared zone list."""
     s = load_json(SETTINGS, {"people": []})
     people = s.get("people", [])
     if people and isinstance(people[0], str):
         zones = s.get("zones", [])
-        people = [
-            {"id": p, "file": p.split(".", 1)[1], "zones": list(zones)} for p in people
-        ]
+        people = [{"id": p, "file": p.split(".", 1)[1], "zones": list(zones)} for p in people]
     return {"people": people}
 
 
@@ -103,6 +130,12 @@ def read_rows(name):
     return rows
 
 
+def sum_range(rows, a, b):
+    """Total hours for rows dated a..b inclusive (date objects)."""
+    lo, hi = a.isoformat(), b.isoformat()
+    return sum(float(r["hours"]) for r in rows if lo <= r["date"] <= hi)
+
+
 def log_session(name, zone, start, end):
     """Write one finished visit to the person's file (split at midnight)."""
     if (end - start).total_seconds() < MIN_MIN * 60:
@@ -124,7 +157,7 @@ def log_session(name, zone, start, end):
     with open(p, "a", newline="") as f:
         w = csv.writer(f)
         if new:
-            w.writerow(HEADER)
+            w.writerow(CSV_HEADER)
         w.writerows(rows)
 
 
@@ -132,6 +165,10 @@ def cleanup():
     """Delete rows older than keep_days. 0 = keep forever."""
     if KEEP_DAYS <= 0 or not os.path.isdir(FOLDER):
         return
+    try:
+        snapshot_history()
+    except Exception as e:
+        print("History snapshot failed:", e, flush=True)
     cutoff = (now().date() - timedelta(days=KEEP_DAYS)).isoformat()
     for name in os.listdir(FOLDER):
         if not name.endswith(".csv"):
@@ -140,7 +177,7 @@ def cleanup():
         try:
             with open(p, newline="") as f:
                 rows = list(csv.reader(f))
-            if not rows or rows[0] != HEADER:
+            if not rows or rows[0] != CSV_HEADER:
                 continue  # not one of our files, leave it alone
             kept = [rows[0]] + [r for r in rows[1:] if r and r[0] >= cutoff]
             if len(kept) != len(rows):
@@ -151,6 +188,107 @@ def cleanup():
                 print(f"Cleaned {len(rows) - len(kept)} old rows from {name}", flush=True)
         except Exception as e:
             print("Cleanup error:", e, flush=True)
+
+
+# ---------- pay periods ----------
+def get_anchor(today):
+    """A date a pay period started on, snapped back to the chosen start day."""
+    global _anchor
+    if _anchor is None:
+        a = None
+        raw = (OPTS.get("period_anchor_date") or "").strip()
+        if raw:
+            try:
+                a = date.fromisoformat(raw)
+            except ValueError:
+                print(f"period_anchor_date '{raw}' is not YYYY-MM-DD, ignoring it", flush=True)
+        if a is None:
+            saved = load_json(ANCHOR, {}).get("anchor")
+            if saved:
+                a = date.fromisoformat(saved)
+            else:
+                a = today - timedelta(days=(today.weekday() - START_DAY) % 7)
+                save_json(ANCHOR, {"anchor": a.isoformat()})
+        _anchor = a - timedelta(days=(a.weekday() - START_DAY) % 7)
+    return _anchor
+
+
+def period_bounds(today, back=0):
+    """(start, end) dates of the pay period `back` periods before the current one."""
+    a = get_anchor(today)
+    length = 7 * WEEKS
+    idx = (today - a).days // length
+    start = a + timedelta(days=(idx - back) * length)
+    return start, start + timedelta(days=length - 1)
+
+
+def summarize(p, rows, sess, t):
+    today = t.date()
+    ps, pe = period_bounds(today)
+    ws = today - timedelta(days=today.weekday())
+    td = sum_range(rows, today, today)
+    wk = sum_range(rows, ws, ws + timedelta(days=6))
+    per = sum_range(rows, ps, pe)
+    live = None
+    if sess:
+        start = datetime.fromisoformat(sess["start"])
+
+        def part(d):
+            mid = datetime.combine(d, datetime.min.time(), tzinfo=t.tzinfo)
+            return max(0, (t - max(start, mid)).total_seconds() / 3600)
+
+        td += part(today)
+        wk += part(ws)
+        per += part(ps)
+        live = {"zone": sess["zone"], "since": start}
+    return {
+        "today": td,
+        "week": wk,
+        "period": per,
+        "period_start": ps,
+        "period_end": pe,
+        "period_label": f"{ps:%a %b} {ps.day} – {pe:%a %b} {pe.day}",
+        "live": live,
+    }
+
+
+def build_history(pid, rows, today, hist):
+    """Totals for finished pay periods. Kept after old CSV rows are cleaned up."""
+    store = hist.setdefault(pid, {})
+    cutoff = today - timedelta(days=KEEP_DAYS) if KEEP_DAYS > 0 else None
+    for k in range(1, HIST_N + 1):
+        a, b = period_bounds(today, k)
+        if cutoff is None or a >= cutoff:  # whole period still has its rows
+            h = sum_range(rows, a, b)
+            key = a.isoformat()
+            if h > 0 or key in store:
+                store[key] = {"start": key, "end": b.isoformat(), "hours": round(h, 2)}
+    items = sorted(store.values(), key=lambda x: x["start"], reverse=True)[:HIST_N]
+    hist[pid] = {i["start"]: i for i in items}
+    return items
+
+
+def snapshot_history():
+    """Before old rows are deleted, record the totals of every period they touch."""
+    today = now().date()
+    with lock:
+        s = load_settings()
+        hist = load_json(HISTORY, {})
+    for p in s["people"]:
+        rows = read_rows(p["file"])
+        store = hist.setdefault(p["id"], {})
+        for k in range(1, HIST_N + 1):
+            a, b = period_bounds(today, k)
+            h = round(sum_range(rows, a, b), 2)
+            key = a.isoformat()
+            if h > 0:
+                # max(): rows may already be partly deleted, so never go down
+                best = max(h, store.get(key, {}).get("hours", 0))
+                store[key] = {"start": key, "end": b.isoformat(), "hours": best}
+        items = sorted(store.values(), key=lambda x: x["start"], reverse=True)[:HIST_N]
+        hist[p["id"]] = {i["start"]: i for i in items}
+    with lock:
+        save_json(HISTORY, hist)
 
 
 # ---------- tracking ----------
@@ -234,13 +372,209 @@ def tick():
         save_json(SESSIONS, sessions)
 
 
+# ---------- MQTT ----------
+def mqtt_creds():
+    host = (OPTS.get("mqtt_host") or "").strip()
+    if host:
+        return {
+            "host": host,
+            "port": int(OPTS.get("mqtt_port") or 1883),
+            "username": OPTS.get("mqtt_username") or None,
+            "password": OPTS.get("mqtt_password") or None,
+        }
+    r = requests.get("http://supervisor/services/mqtt", headers=HEADERS, timeout=10)
+    r.raise_for_status()
+    d = r.json()["data"]
+    return {
+        "host": d["host"],
+        "port": int(d["port"]),
+        "username": d.get("username"),
+        "password": d.get("password"),
+        "ssl": d.get("ssl"),
+    }
+
+
+def _on_connect(client, userdata, *args):
+    rc = args[1] if len(args) > 1 else 0
+    failed = rc.is_failure if hasattr(rc, "is_failure") else rc != 0
+    if failed:
+        print("MQTT connect refused:", rc, flush=True)
+        return
+    client.publish(AVAIL, "online", qos=1, retain=True)
+    mq_state["ready"] = True
+    mq_state["resend"] = True
+    print("MQTT connected", flush=True)
+
+
+def _on_disconnect(client, userdata, *args):
+    mq_state["ready"] = False
+    print("MQTT disconnected", flush=True)
+
+
+def mqtt_start():
+    global mq
+    if paho is None:
+        print("MQTT library missing, skipping MQTT sensors", flush=True)
+        mq = False
+        return
+    creds = mqtt_creds()
+    try:
+        c = paho.Client(paho.CallbackAPIVersion.VERSION2, client_id="work_hours_tracker")
+    except AttributeError:
+        c = paho.Client(client_id="work_hours_tracker")
+    if creds.get("username"):
+        c.username_pw_set(creds["username"], creds.get("password"))
+    if creds.get("ssl"):
+        c.tls_set()
+    c.will_set(AVAIL, "offline", qos=1, retain=True)
+    c.on_connect = _on_connect
+    c.on_disconnect = _on_disconnect
+    c.connect_async(creds["host"], creds["port"], 60)
+    c.loop_start()
+    mq = c
+
+
+def mq_pub(topic, payload):
+    mq.publish(topic, payload, qos=1, retain=True)
+
+
+def slug_of(p):
+    return re.sub(r"[^a-z0-9_]+", "_", p["file"].lower()).strip("_") or p["id"].split(".", 1)[1]
+
+
+def display_name(p):
+    if p.get("name"):
+        return p["name"]
+    pid = p["id"]
+    if pid not in name_cache:
+        try:
+            name_cache[pid] = ha(f"/states/{pid}")["attributes"].get("friendly_name") or ""
+        except Exception:
+            name_cache[pid] = ""
+    return name_cache[pid] or p["file"].replace("_", " ")
+
+
+def discovery_topics(slug):
+    base = "homeassistant"
+    return (
+        f"{base}/sensor/work_hours/{slug}_hours/config",
+        f"{base}/binary_sensor/work_hours/{slug}_at_work/config",
+    )
+
+
+def publish_mqtt():
+    global mq_sig
+    if not mq or not mq_state["ready"]:
+        return
+
+    with lock:
+        s = load_settings()
+        sessions = load_json(SESSIONS, {})
+        hist = load_json(HISTORY, {})
+    t = now()
+    today = t.date()
+
+    people = [(slug_of(p), p, display_name(p)) for p in s["people"]]
+
+    # discovery: (re)announce sensors, and remove ones for people no longer tracked
+    sig = json.dumps([(sl, nm) for sl, _, nm in people])
+    if mq_state["resend"] or sig != mq_sig:
+        for slug, p, name in people:
+            sensor_topic, bin_topic = discovery_topics(slug)
+            mq_pub(sensor_topic, json.dumps({
+                "name": f"{name} hours",
+                "unique_id": f"work_hours_{slug}_hours",
+                "state_topic": f"work_hours/{slug}/state",
+                "json_attributes_topic": f"work_hours/{slug}/attributes",
+                "availability_topic": AVAIL,
+                "unit_of_measurement": "h",
+                "device_class": "duration",
+                "suggested_display_precision": 2,
+                "icon": "mdi:briefcase-clock",
+                "device": DEVICE,
+            }))
+            mq_pub(bin_topic, json.dumps({
+                "name": f"{name} at work",
+                "unique_id": f"work_hours_{slug}_at_work",
+                "state_topic": f"work_hours/{slug}/at_work",
+                "availability_topic": AVAIL,
+                "payload_on": "ON",
+                "payload_off": "OFF",
+                "icon": "mdi:hard-hat",
+                "device": DEVICE,
+            }))
+        old = set(load_json(MQTT_SLUGS, []))
+        now_slugs = {sl for sl, _, _ in people}
+        for gone in old - now_slugs:
+            for topic in discovery_topics(gone):
+                mq_pub(topic, "")  # empty retained payload deletes the entity
+        save_json(MQTT_SLUGS, sorted(now_slugs))
+        mq_sig = sig
+        mq_last.clear()
+        mq_state["resend"] = False
+
+    changed_hist = False
+    for slug, p, name in people:
+        rows = read_rows(p["file"])
+        sm = summarize(p, rows, sessions.get(p["id"]), t)
+        before = json.dumps(hist.get(p["id"]), sort_keys=True)
+        history = build_history(p["id"], rows, today, hist)
+        if json.dumps(hist.get(p["id"]), sort_keys=True) != before:
+            changed_hist = True
+
+        prev_start, _ = period_bounds(today, 1)
+        last_hours = next((h["hours"] for h in history if h["start"] == prev_start.isoformat()), 0)
+        live = sm["live"]
+        attrs = {
+            "person": name,
+            "period_label": sm["period_label"],
+            "period_start": sm["period_start"].isoformat(),
+            "period_end": sm["period_end"].isoformat(),
+            "period_length_days": 7 * WEEKS,
+            "days_left": (sm["period_end"] - today).days + 1,
+            "today_hours": round(sm["today"], 2),
+            "week_hours": round(sm["week"], 2),
+            "last_period_hours": last_hours,
+            "clocked_in": bool(live),
+            "current_zone": live["zone"] if live else None,
+            "clocked_in_since": live["since"].isoformat() if live else None,
+            "file": file_path(p["file"]),
+            "history": history,
+        }
+        topics = {
+            f"work_hours/{slug}/state": f"{round(sm['period'], 2):.2f}",
+            f"work_hours/{slug}/attributes": json.dumps(attrs, ensure_ascii=False),
+            f"work_hours/{slug}/at_work": "ON" if live else "OFF",
+        }
+        for topic, payload in topics.items():
+            if mq_last.get(topic) != payload:
+                mq_pub(topic, payload)
+                mq_last[topic] = payload
+
+    if changed_hist:
+        with lock:
+            save_json(HISTORY, hist)
+
+
 def worker():
+    global mq
     last_clean = 0
+    last_mq_try = 0
     while True:
         try:
             tick()
         except Exception as e:
             print("Tick error:", e, flush=True)
+        if mq is None and time.time() - last_mq_try > 300:
+            last_mq_try = time.time()
+            try:
+                mqtt_start()
+            except Exception as e:
+                print("MQTT not available yet:", e, flush=True)
+        try:
+            publish_mqtt()
+        except Exception as e:
+            print("MQTT publish error:", e, flush=True)
         if time.time() - last_clean > 6 * 3600:
             cleanup()
             last_clean = time.time()
@@ -275,35 +609,33 @@ def api_state():
     names = {p["id"]: p["name"] for p in people}
     zone_names = {z["id"]: z["name"] for z in zones}
     t = now()
-    today = t.date().isoformat()
-    week_start = t.date() - timedelta(days=t.weekday())
-    week = week_start.isoformat()
-    midnight = datetime.combine(t.date(), datetime.min.time(), tzinfo=t.tzinfo)
-    week_mid = datetime.combine(week_start, datetime.min.time(), tzinfo=t.tzinfo)
 
     status = []
     for p in s["people"]:
         pid = p["id"]
         rows = read_rows(p["file"])
-        td = sum(float(r["hours"]) for r in rows if r["date"] == today)
-        wk = sum(float(r["hours"]) for r in rows if r["date"] >= week)
+        sm = summarize(p, rows, sessions.get(pid), t)
         live = None
-        sess = sessions.get(pid)
-        if sess:
-            start = datetime.fromisoformat(sess["start"])
-            td += max(0, (t - max(start, midnight)).total_seconds() / 3600)
-            wk += max(0, (t - max(start, week_mid)).total_seconds() / 3600)
-            live = {"zone": sess["zone"], "since": start.strftime("%b %d, %I:%M %p")}
+        if sm["live"]:
+            live = {"zone": sm["live"]["zone"], "since": sm["live"]["since"].strftime("%b %d, %I:%M %p")}
         status.append({
             "id": pid,
             "name": names.get(pid, pid),
             "zones": [zone_names.get(z, z) for z in p.get("zones", [])],
-            "today": round(td, 2),
-            "week": round(wk, 2),
+            "today": round(sm["today"], 2),
+            "week": round(sm["week"], 2),
+            "period": round(sm["period"], 2),
+            "period_label": sm["period_label"],
             "live": live,
             "file": file_path(p["file"]),
             "recent": rows[-8:][::-1],
         })
+
+    mqtt_text = "off"
+    if mq:
+        mqtt_text = "connected" if mq_state["ready"] else "connecting..."
+    elif mq is False:
+        mqtt_text = "library missing"
 
     return jsonify({
         "error": err,
@@ -311,7 +643,14 @@ def api_state():
         "zones": zones,
         "settings": s,
         "status": status,
-        "info": {"folder": FOLDER, "keep_days": KEEP_DAYS, "grace": GRACE, "min": MIN_MIN},
+        "info": {
+            "folder": FOLDER,
+            "keep_days": KEEP_DAYS,
+            "grace": GRACE,
+            "min": MIN_MIN,
+            "period": f"{WEEKS} week(s) starting {DAY_NAMES[START_DAY]}",
+            "mqtt": mqtt_text,
+        },
     })
 
 
@@ -326,20 +665,20 @@ def api_settings():
             if not re.fullmatch(r"person\.[a-z0-9_]+", pid):
                 continue
             zones = [z for z in item.get("zones", []) if re.fullmatch(r"zone\.[a-z0-9_]+", str(z))]
+            try:
+                nm = ha(f"/states/{pid}")["attributes"].get("friendly_name", "")
+            except Exception:
+                nm = old.get(pid, {}).get("name", "")
             if pid in old:
                 fname = old[pid]["file"]  # keep the same file once it exists
             else:
-                try:
-                    nm = ha(f"/states/{pid}")["attributes"].get("friendly_name", "")
-                except Exception:
-                    nm = ""
                 fname = re.sub(r"[^A-Za-z0-9_-]+", "_", nm).strip("_") or pid.split(".", 1)[1]
             base, n = fname, 2
             while fname.lower() in used:
                 fname = f"{base}_{n}"
                 n += 1
             used.add(fname.lower())
-            out.append({"id": pid, "file": fname, "zones": zones})
+            out.append({"id": pid, "file": fname, "name": nm or fname.replace("_", " "), "zones": zones})
         save_json(SETTINGS, {"people": out})
     return jsonify({"ok": True})
 

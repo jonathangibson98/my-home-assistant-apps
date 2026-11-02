@@ -2,6 +2,15 @@
 
 All notable changes to this add-on are documented here.
 
+## 1.2.0
+
+- MQTT device "Work Hours Tracker" appears in Home Assistant automatically, with an hours sensor and an at-work sensor for each person
+- Pick the pay period: start day (for example Thursday) and length in weeks
+- The sensor state is the hours worked in the current pay period and resets when the next one starts
+- Sensor attributes keep the history of totals for finished pay periods, even after old CSV rows are cleaned up
+- The sidebar page now shows the pay period total next to today and this week
+- Optional MQTT broker settings for people not using the Mosquitto add-on
+
 ## 1.1.0
 
 - Each person now has their own list of work zones, so different people can be tracked at different locations
