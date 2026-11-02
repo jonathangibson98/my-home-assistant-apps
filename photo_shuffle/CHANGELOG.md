@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.1
+
+- Fix: shuffles created by earlier versions stayed on their own device (e.g. "Baby & Me") and the shared "Photo Shuffle" device stayed empty. Home Assistant never moves an existing MQTT entity to another device, so on first start the add-on now re-creates each entity once on the shared device
+- Entity IDs are unchanged (`image.baby_me` stays `image.baby_me`)
+- The old, now empty per-shuffle devices can be deleted from Settings, Devices & services, MQTT if Home Assistant leaves them behind
+
 ## 2.1.0
 
 - All shuffle image entities now live under ONE device called "Photo Shuffle" instead of one device per shuffle

@@ -73,6 +73,7 @@ DEVICE = {
     "model": "Folder shuffle",
 }
 STORE = os.path.join(DATA_DIR, "shuffles.json")
+DEVICE_REV = 2  # 2 = every shuffle lives on the shared "Photo Shuffle" device
 
 stop = threading.Event()
 CONNECTED = threading.Event()
@@ -290,6 +291,7 @@ class Manager:
         self.lock = threading.RLock()
         self.shuffles = {}
         self.removed = []
+        self.device_rev = DEVICE_REV
         self.client = None
 
     # persistence
@@ -323,11 +325,13 @@ class Manager:
             except Exception as e:
                 log.warning("Skipping bad shuffle entry: %s", e)
         self.removed = list(data.get("removed", []))
+        # stores written before the shared device existed have no device_rev and need a one-time move
+        self.device_rev = data.get("device_rev", 0 if self.shuffles else DEVICE_REV)
         self.save()
 
     def save(self):
         with self.lock:
-            data = {"shuffles": [s.cfg() for s in self.shuffles.values()], "removed": self.removed}
+            data = {"shuffles": [s.cfg() for s in self.shuffles.values()], "removed": self.removed, "device_rev": self.device_rev}
             tmp = STORE + ".tmp"
             with open(tmp, "w") as f:
                 json.dump(data, f, indent=2)
@@ -467,6 +471,29 @@ def mqtt_settings():
         return json.load(r)["data"]
 
 
+def migrate_devices(c):
+    """Home Assistant never moves an existing MQTT entity to another device.
+    Remove each entity once, then announce it again on the shared device.
+    Entity IDs are kept because the discovery payload sets default_entity_id."""
+    shuffles = mgr.all()
+    log.info(
+        "Moving %d shuffle(s) onto the shared 'Photo Shuffle' device. Their entities are re-created once, entity IDs stay the same",
+        len(shuffles),
+    )
+    for s in shuffles:
+        c.publish(f"{DISCOVERY}/image/{BASE}_{s.id}/config", "", qos=1, retain=True)
+        c.publish(f"{DISCOVERY}/button/{BASE}_{s.id}_next/config", "", qos=1, retain=True)
+    if stop.wait(8) or not CONNECTED.is_set():
+        log.warning("Device move interrupted, it will be retried on the next connect")
+        return
+    for s in mgr.all():
+        s.discovery(c)
+        s.trigger.set()  # publish a fresh picture so the new entity is not empty
+    mgr.device_rev = DEVICE_REV
+    mgr.save()
+    log.info("Device move finished")
+
+
 def mqtt_worker():
     cfg = None
     while not stop.is_set():
@@ -500,12 +527,13 @@ def mqtt_worker():
             return
         log.info("Connected to MQTT")
         mq_state.update(status="connected", detail="%s:%s" % (cfg["host"], cfg["port"]))
-        for s in mgr.all():
-            s.discovery(c)
-            # remove the old per-shuffle "Next photo" button left over from v2.0
-            c.publish(f"{DISCOVERY}/button/{BASE}_{s.id}_next/config", "", qos=1, retain=True)
         c.publish(STATUS_TOPIC, "online", qos=1, retain=True)
         CONNECTED.set()
+        if mgr.device_rev < DEVICE_REV:
+            threading.Thread(target=migrate_devices, args=(c,), daemon=True).start()
+        else:
+            for s in mgr.all():
+                s.discovery(c)
         mgr.purge_removed()
 
     def on_disconnect(c, userdata, rc):
