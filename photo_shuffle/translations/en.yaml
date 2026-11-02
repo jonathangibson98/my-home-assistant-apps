@@ -1,23 +1,13 @@
 configuration:
-  shuffles:
-    name: Photo shuffles
-    description: One entry per folder. Each becomes an image entity plus a "Next photo" button.
-    fields:
-      name:
-        name: Name
-        description: Display name and entity ID base (Family becomes image.family).
-      path:
-        name: Folder path
-        description: Absolute path under /media or /share, e.g. /media/photos/family.
-      interval:
-        name: Interval (seconds)
-        description: How often to switch to a new picture (5 to 86400).
-      recursive:
-        name: Include subfolders
-        description: Also scan folders inside this folder.
+  photo_paths:
+    name: Allowed photo paths
+    description: Folders the add-on may read. Shuffles can only use folders inside these. Must start with /media, /share, /homeassistant or /addon_configs.
+  formats:
+    name: Picture formats
+    description: Which picture types to include. jpg covers .jpg and .jpeg.
   max_dimension:
     name: Max image size (px)
-    description: Longest side of the published image. Larger photos are scaled down.
+    description: Longest side of the picture sent to Home Assistant. Larger photos are scaled down.
   jpeg_quality:
     name: JPEG quality
     description: Quality of the published JPEG (30 to 100).
