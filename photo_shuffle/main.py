@@ -169,7 +169,17 @@ def main():
     except Exception:
         old = set()
 
-    cfg = mqtt_settings()
+    cfg = None
+    while not stop.is_set():
+        try:
+            cfg = mqtt_settings()
+            break
+        except Exception as e:
+            log.error("Could not get MQTT settings (%s). Is the Mosquitto add-on running? Retrying in 15s", e)
+            stop.wait(15)
+    if cfg is None:
+        return
+    log.info("Loaded %d shuffle(s); MQTT broker %s:%s", len(shuffles), cfg["host"], cfg["port"])
     try:
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id="photo_shuffle_addon")
     except AttributeError:
@@ -208,7 +218,13 @@ def main():
     client.on_connect = on_connect
     client.on_disconnect = on_disconnect
     client.on_message = on_message
-    client.connect(cfg["host"], int(cfg["port"]), 60)
+    while not stop.is_set():
+        try:
+            client.connect(cfg["host"], int(cfg["port"]), 60)
+            break
+        except Exception as e:
+            log.error("MQTT connect failed (%s). Retrying in 15s", e)
+            stop.wait(15)
     client.loop_start()
 
     for s in shuffles:

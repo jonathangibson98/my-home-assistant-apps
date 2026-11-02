@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.2
+
+- Fix: add-on did not appear in the add-on store because `config.yaml` had an empty `url`; now points at the repository
+- Fix: add-on no longer exits if the MQTT broker is not ready at startup, it retries every 15 seconds
+- Clearer startup log (number of shuffles loaded and MQTT broker used)
+
+## 1.0.1
+
+- Version bump
+
 ## 1.0.0
 
 - Initial release
