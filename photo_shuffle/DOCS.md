@@ -1,63 +1,79 @@
 # Photo Shuffle
 
-Turn any folder of pictures into a Home Assistant **image entity** that changes to a random photo on a timer. Add as many folders as you like; each one is an independent shuffle.
+Turn folders of pictures into Home Assistant **image entities** that change to a random photo on a timer. You manage the shuffles from a web UI in the sidebar, and the Configuration tab only controls what the add-on is allowed to read.
 
 ## Requirements
 
 - The **MQTT integration** and a broker (the Mosquitto add-on is detected automatically).
-- Your pictures somewhere under `/media` or `/share` (both mounted read-only).
+- Pictures somewhere under `/media`, `/share`, `/homeassistant` or `/addon_configs` (all mounted read-only).
 
 ## Quick start
 
-1. Put pictures in a folder such as `/media/photos/family`.
-2. Open the add-on **Configuration** tab and add a shuffle:
+1. In **Configuration**, list the paths the add-on may read and pick your picture formats. The defaults are `/media` and `/share`, with jpg, png and webp.
+2. Start the add-on and turn on **Show in sidebar**.
+3. Open **Photo Shuffle** in the sidebar and tap **+ Add shuffle**.
+4. Give it a name, tap **Browse** to choose a folder, set how often it changes, and **Save**.
 
-   ```yaml
-   shuffles:
-     - name: Family
-       path: /media/photos/family
-       interval: 60
-       recursive: true
-   ```
-3. Start the add-on. A device called **Family** appears under Settings → Devices & services → MQTT, with:
-   - `image.family` – the current picture
-   - `button.family_next_photo` – shuffle immediately
+Each shuffle appears in Home Assistant as a device with:
+- an image entity, for example `image.family`
+- a button, for example `button.family_next_photo`
 
-## Configuration
+## The web UI
 
-### Option: `shuffles` (required)
+Every shuffle is a card showing the current picture, the folder, how many pictures were found, what is showing now, when it changed and when it will change next.
 
-A list. Add one entry per folder.
+| Button | What it does |
+|---|---|
+| Next | Show another picture right away (also works while paused) |
+| Pause / Resume | Stop or restart the timer. The last picture stays on the entity |
+| Edit | Change the name, folder, interval, subfolders or enabled state |
+| Delete | Remove the shuffle and its Home Assistant entities |
+
+A red **Problem** badge means something is wrong, for example the folder is missing or has no pictures in the selected formats. The reason is shown on the card.
+
+The **Activity** panel at the bottom shows what the add-on is doing: every picture change, warnings, and MQTT connection events.
+
+### Shuffle settings
 
 | Field | Description |
 |---|---|
-| `name` | Display name. Also determines the entity ID (`Family` → `image.family`). |
-| `path` | Absolute folder path inside the add-on, e.g. `/media/photos/trip`. |
-| `interval` | Seconds between pictures (5–86400). |
-| `recursive` | `true` to include subfolders, `false` for the top level only. |
+| Name | Display name. The entity ID is created from it when you add the shuffle (`Family` becomes `image.family`). Renaming later changes the name, not the entity ID. |
+| Folder | Must be inside one of the allowed photo paths. |
+| Change picture every | 5 seconds to 24 hours. |
+| Include subfolders | Also use pictures in folders inside this folder. |
+| Enabled | Untick to pause. |
 
-Names should be unique. If two share a name, the second gets a `_2` suffix.
+## Configuration
+
+### Option: `photo_paths`
+
+The folders the add-on is allowed to read. Shuffles can only use folders inside these paths. Each must start with `/media`, `/share`, `/homeassistant` or `/addon_configs`. Add a more specific path, such as `/media/photos`, to keep the add-on out of everything else.
+
+### Option: `formats`
+
+Which picture types to include: `jpg`, `png`, `webp`, `gif`, `bmp`, `tiff`. `jpg` covers both `.jpg` and `.jpeg`. Animated GIFs use their first frame.
 
 ### Option: `max_dimension`
 
-Longest side of the published image in pixels (320–4096). Default `1920`. Lower it for wall tablets or slow networks.
+Longest side in pixels of the picture sent to Home Assistant (320 to 4096). Default 1920.
 
 ### Option: `jpeg_quality`
 
-JPEG quality 30–100. Default `85`.
+JPEG quality, 30 to 100. Default 85.
 
 ### Options: `mqtt_host`, `mqtt_port`, `mqtt_username`, `mqtt_password`
 
-Optional. Only needed if you are **not** using the Mosquitto add-on. Leave empty to use the broker the Supervisor provides.
+Only needed if you are not using the Mosquitto add-on.
+
+Changing options needs an add-on restart. Shuffles are not affected by it.
 
 ## Behaviour
 
-- Pictures are shown in random order **without repeats** until every picture in the folder has been used, then the deck is reshuffled. It never shows the same picture twice in a row across a reshuffle.
-- The folder is rescanned each time the deck runs out, so new pictures are picked up automatically.
-- Supported formats: JPG, PNG, WebP, GIF (first frame), BMP. Files that fail to open are skipped.
-- Photos are rotated according to EXIF data, resized, and published as JPEG.
-- The last picture is retained, so entities show an image right after a Home Assistant restart.
-- Removing a shuffle from the config removes its entities the next time the add-on starts.
+- Pictures are shown in random order **without repeats** until the whole folder has been used, then the order is reshuffled. The same picture is never shown twice in a row across a reshuffle.
+- The folder is rescanned whenever the order runs out, so new pictures are picked up automatically.
+- Photos are rotated using their EXIF data, resized and sent as JPEG. Hidden files and folders (starting with `.`) are skipped, and files that fail to open are skipped.
+- The last picture is retained, so entities show an image straight after a Home Assistant restart.
+- Shuffles are saved in the add-on's own storage, so they survive restarts and updates, and are included in add-on backups.
 
 ## Using it
 
@@ -82,8 +98,10 @@ target:
 
 | Problem | Fix |
 |---|---|
-| Log says `folder not found` | Check the path. Folders live under `/media` or `/share`, not `/config`. |
-| Log says `no pictures found` | Check the extensions and whether `recursive` should be `true`. |
-| Entities never appear | Make sure the MQTT integration is set up and the broker is running, then restart the add-on. |
-| Image looks stale in a dashboard | Browsers cache aggressively; reload the dashboard. The entity itself updates on every interval. |
-| Slow or failing updates with huge photos | Lower `max_dimension`. Very large retained MQTT messages can hit broker limits. |
+| Browse shows "No photo paths" | Add paths in Configuration and restart the add-on. |
+| "Folder is outside the allowed photo paths" | Add a path that contains the folder to `photo_paths` and restart. |
+| "No pictures found" | Check the `formats` option and whether Include subfolders should be on. |
+| MQTT badge is red or orange | Make sure the Mosquitto add-on is running and the MQTT integration is set up. |
+| Entities never appear | Wait for the MQTT badge to turn green, then check Settings, Devices & services, MQTT. |
+| Image looks stale on a dashboard | Reload the dashboard. The entity updates on every interval. |
+| Upgraded from 1.x | The old `shuffles` option is gone. Re-add your shuffles in the web UI. Use the same names and the entities keep their IDs. |
