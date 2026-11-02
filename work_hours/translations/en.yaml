@@ -20,23 +20,6 @@ configuration:
   min_minutes:
     name: Ignore visits shorter than (minutes)
     description: Drive-bys and short stops under this length are not logged.
-  period_start_day:
-    name: Pay period starts on
-    description: The weekday a new pay period begins. The sensor resets to zero on this day.
-  period_weeks:
-    name: Pay period length (weeks)
-    description: >-
-      1 = start day to the day before the next start day (Thursday to
-      Wednesday). 2 = two weeks, and so on.
-  period_anchor_date:
-    name: Pay period anchor date (optional)
-    description: >-
-      Only matters for periods of 2+ weeks. Any date (YYYY-MM-DD) a pay period
-      started on, so the add-on knows which weeks to group. If empty, the most
-      recent start day when the add-on first ran is used.
-  history_periods:
-    name: Periods of history to keep
-    description: How many finished pay periods are kept in the sensor's history attribute.
   mqtt_host:
     name: MQTT host (optional)
     description: Leave empty to use the Mosquitto broker add-on automatically.
