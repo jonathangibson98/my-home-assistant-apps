@@ -15,7 +15,7 @@ try:
 except Exception:  # paho missing: MQTT is skipped, everything else still works
     paho = None
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 API = "http://supervisor/core/api"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
@@ -125,28 +125,38 @@ def clean_period(per, today):
 
 def load_settings():
     """Settings shape:
-    {"people": [{"id", "file", "name", "zones": [zone ids]}],
-     "period": {"start_day", "weeks", "anchor", "history"}}
-    1.0.0 stored a flat people list plus one shared zone list, and 1.2.0 kept
-    the pay period in the add-on options, so both are migrated here."""
+    {"people": [{"id", "file", "name", "zones": [zone ids],
+                 "period": {"start_day", "weeks", "anchor", "history"}}]}
+    Older versions are migrated here: 1.0.0 had one shared zone list, and
+    1.2.0 / 1.3.0 had one pay period for everybody."""
     s = load_json(SETTINGS, {"people": []})
     people = s.get("people", [])
+    changed = False
     if people and isinstance(people[0], str):
         zones = s.get("zones", [])
         people = [{"id": p, "file": p.split(".", 1)[1], "zones": list(zones)} for p in people]
-    per = s.get("period")
-    fresh = per is None
-    if fresh:
-        per = {
+        changed = True
+    base = s.get("period")
+    if base is None:
+        base = {
             "start_day": OPTS.get("period_start_day") or "Thursday",
             "weeks": OPTS.get("period_weeks") or 1,
             "anchor": OPTS.get("period_anchor_date") or load_json(ANCHOR, {}).get("anchor") or "",
             "history": OPTS.get("history_periods") or 26,
         }
-    period = clean_period(per, now().date())
-    if fresh or period != per:
-        save_json(SETTINGS, {"people": people, "period": period})
-    return {"people": people, "period": period}
+    elif people:
+        changed = True  # the shared period is being copied onto each person
+    today = now().date()
+    out = []
+    for p in people:
+        per = p.get("period")
+        cleaned = clean_period(per if per is not None else base, today)
+        if per != cleaned:
+            changed = True
+        out.append({**p, "period": cleaned})
+    if changed:
+        save_json(SETTINGS, {"people": out})
+    return {"people": out}
 
 
 def file_path(name):
@@ -293,8 +303,8 @@ def snapshot_history():
     with lock:
         s = load_settings()
         hist = load_json(HISTORY, {})
-    per = s["period"]
     for p in s["people"]:
+        per = p["period"]
         rows = read_rows(p["file"])
         store = hist.setdefault(p["id"], {})
         for k in range(1, per["history"] + 1):
@@ -493,7 +503,6 @@ def publish_mqtt():
         hist = load_json(HISTORY, {})
     t = now()
     today = t.date()
-    per = s["period"]
 
     people = [(slug_of(p), p, display_name(p)) for p in s["people"]]
 
@@ -536,6 +545,7 @@ def publish_mqtt():
 
     changed_hist = False
     for slug, p, name in people:
+        per = p["period"]
         rows = read_rows(p["file"])
         sm = summarize(per, rows, sessions.get(p["id"]), t)
         before = json.dumps(hist.get(p["id"]), sort_keys=True)
@@ -635,7 +645,7 @@ def api_state():
     for p in s["people"]:
         pid = p["id"]
         rows = read_rows(p["file"])
-        sm = summarize(s["period"], rows, sessions.get(pid), t)
+        sm = summarize(p["period"], rows, sessions.get(pid), t)
         live = None
         if sm["live"]:
             live = {"zone": sm["live"]["zone"], "since": sm["live"]["since"].strftime("%b %d, %I:%M %p")}
@@ -663,6 +673,7 @@ def api_state():
         "people": people,
         "zones": zones,
         "settings": s,
+        "default_period": clean_period({}, t.date()),
         "status": status,
         "info": {
             "folder": FOLDER,
@@ -678,8 +689,8 @@ def api_state():
 def api_settings():
     data = request.get_json(force=True) or {}
     with lock:
-        cur = load_settings()
-        old = {p["id"]: p for p in cur["people"]}
+        today = now().date()
+        old = {p["id"]: p for p in load_settings()["people"]}
         out, used = [], set()
         for item in data.get("people", []):
             pid = str(item.get("id", ""))
@@ -702,9 +713,15 @@ def api_settings():
                 fname = f"{base}_{n}"
                 n += 1
             used.add(fname.lower())
-            out.append({"id": pid, "file": fname, "name": nm or fname.replace("_", " "), "zones": zones})
-        period = clean_period(data.get("period") or cur["period"], now().date())
-        save_json(SETTINGS, {"people": out, "period": period})
+            period = clean_period(item.get("period") or old.get(pid, {}).get("period") or {}, today)
+            out.append({
+                "id": pid,
+                "file": fname,
+                "name": nm or fname.replace("_", " "),
+                "zones": zones,
+                "period": period,
+            })
+        save_json(SETTINGS, {"people": out})
     return jsonify({"ok": True})
 
 

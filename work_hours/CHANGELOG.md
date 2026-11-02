@@ -2,6 +2,13 @@
 
 All notable changes to this add-on are documented here.
 
+## 1.4.0
+
+- Pay period is now set per person instead of one setting for everybody, so people on different pay schedules each get their own totals, resets and history
+- The pay period fields moved into each person's Edit section
+- A newly added person starts with the previous person's pay period to save typing
+- Settings from 1.3.0 are migrated automatically: everyone gets a copy of the old shared pay period
+
 ## 1.3.0
 
 - Pay period settings (start day, length, anchor date, history size) moved from the add-on options to the sidebar page, and apply as soon as you press Save

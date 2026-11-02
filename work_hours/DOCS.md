@@ -5,14 +5,15 @@
 1. Install and start the add-on.
 2. Turn on **Show in sidebar** (Info tab).
 3. Open **Work Hours** in the sidebar.
-4. Under **Pay period**, choose the start day and length.
-5. Under **People**, pick a person from the drop-down and press **Add person**.
-   Then add the **work zones** for that person from their zone drop-down.
+4. Under **People**, pick a person from the drop-down and press **Add person**.
+5. In their card, add their **work zones** from the zone drop-down and set their
+   **pay period** (see below).
 6. Press **Save**.
 
 Only the people you add are shown, so there's no long list to scroll through.
-Press **Edit** on a person to change their zones, or **Remove** to stop
-tracking them.
+Press **Edit** on a person to change their zones or pay period, or **Remove**
+to stop tracking them. A new person starts with the same pay period as the last
+person you added, since people often share one. Change it if theirs is different.
 
 Every person has their own zone list, so one person can work at Site A while
 someone else works at Site B and Site C. Someone standing in a zone that isn't
@@ -30,14 +31,15 @@ added for them is not logged.
 | `mqtt_host`, `mqtt_port`, `mqtt_username`, `mqtt_password` | empty | Only if you do **not** use the Mosquitto add-on. |
 
 Changing options requires restarting the add-on. Everything on the sidebar
-page (people, zones and the pay period) takes effect as soon as you press Save.
+page (people, zones and pay periods) takes effect as soon as you press Save.
 
 ## Pay periods
 
-Set these in the **Pay period** box on the sidebar page.
+Every person has their **own** pay period, so people on different pay schedules
+each get the right totals. Set it in the **Edit** section of their card.
 
-The sensor shows the hours worked **in the current pay period**, then starts
-again at zero when the next period begins (at midnight on the start day).
+The person's sensor shows the hours worked **in their current pay period**, then
+starts again at zero when their next period begins (at midnight on the start day).
 
 | Starts on | Length | Period |
 | --- | --- | --- |
@@ -46,14 +48,15 @@ again at zero when the next period begins (at midnight on the start day).
 | Monday | 1 week | Monday to Sunday |
 
 - **A pay period started on** only matters for periods of 2 weeks or more. It
-  tells the add-on which weeks are paired together. Pick any date a pay period
-  began, for example `2026-10-29`. It is moved back to the start day
-  automatically if it falls on a different weekday.
-- **Periods of history to keep** is how many finished pay periods the sensor
-  remembers in its `history` attribute.
+  tells the add-on which weeks are paired together. Pick any date one of that
+  person's pay periods began, for example `2026-10-29`. It is moved back to the
+  start day automatically if it falls on a different weekday.
+- **Periods of history to keep** is how many finished pay periods that person's
+  sensor remembers in its `history` attribute.
 
-If you change the period later, finished periods stay in the history exactly
-as they were recorded, and the new length applies from now on.
+If you change someone's period later, their finished periods stay in the history
+exactly as they were recorded, and the new schedule applies from now on. Other
+people are not affected.
 
 ## MQTT device
 

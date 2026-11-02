@@ -10,6 +10,7 @@
          margin: 0 auto; padding: 16px; max-width: 760px; }
   h1 { font-size: 22px; }
   h2 { font-size: 16px; margin: 24px 0 8px; color: #93c5fd; }
+  h3 { font-size: 14px; margin: 16px 0 8px; color: #93c5fd; }
   .card { background: #1f2937; border-radius: 12px; padding: 14px; margin-bottom: 12px; }
   label.field { display: block; margin-bottom: 12px; font-size: 14px; }
   label.field span { display: block; color: #9ca3af; font-size: 13px; margin-bottom: 4px; }
@@ -44,19 +45,8 @@
 <h1>⏱ Work Hours</h1>
 <div id="err" class="err"></div>
 
-<h2>Pay period</h2>
-<div class="card">
-  <div class="grid">
-    <label class="field"><span>Pay period starts on</span><select id="p_day"></select></label>
-    <label class="field"><span>Length</span><select id="p_weeks"></select></label>
-    <label class="field"><span>A pay period started on</span><input type="date" id="p_anchor"></label>
-    <label class="field"><span>Periods of history to keep</span><input type="number" id="p_hist" min="1" max="100"></label>
-  </div>
-  <div class="muted">The sensor shows hours for the current pay period and resets when the next one starts.
-    The date only matters for 2+ week periods: pick any day a pay period began so the add-on knows which weeks to group.</div>
-</div>
-
 <h2>People</h2>
+<div class="muted" style="margin-bottom:8px">Each person has their own work zones and their own pay period. Press Edit to change them.</div>
 <div id="people"></div>
 <div class="card">
   <div class="addrow">
@@ -86,25 +76,51 @@ function btn(text, cls, fn) {
   return b;
 }
 
-let catalog = { people: [], zones: [] };   // everything HA knows about
-let model = null;                          // what you are editing: { people: [{id, zones, open}] }
+let catalog = { people: [], zones: [], defaultPeriod: null };   // everything HA knows about
+let model = null;                                               // what you are editing
 const pname = id => (catalog.people.find(p => p.id === id) || { name: id }).name;
 const zname = id => (catalog.zones.find(z => z.id === id) || { name: id }).name;
+const periodText = per => per.start_day + ', ' + (per.weeks === 1 ? '1 week' : per.weeks + ' weeks');
 
-/* ---------- pay period ---------- */
-function fillPeriod(per) {
-  const day = document.getElementById('p_day');
-  day.innerHTML = '';
+/* ---------- pay period editor (one per person) ---------- */
+function field(label, input) {
+  const l = el('label', 'field');
+  l.appendChild(el('span', null, label));
+  l.appendChild(input);
+  return l;
+}
+
+function periodEditor(p) {
+  const per = p.period;
+  const box = el('div');
+  box.appendChild(el('h3', null, 'Pay period for ' + pname(p.id)));
+  const grid = el('div', 'grid');
+
+  const day = el('select');
   DAYS.forEach(d => { const o = el('option', null, d); o.value = d; day.appendChild(o); });
   day.value = per.start_day;
-  const weeks = document.getElementById('p_weeks');
-  weeks.innerHTML = '';
+  day.onchange = () => { per.start_day = day.value; };
+
+  const weeks = el('select');
   for (let w = 1; w <= 8; w++) {
     const o = el('option', null, w === 1 ? '1 week' : w + ' weeks'); o.value = w; weeks.appendChild(o);
   }
   weeks.value = per.weeks;
-  document.getElementById('p_anchor').value = per.anchor;
-  document.getElementById('p_hist').value = per.history;
+  weeks.onchange = () => { per.weeks = parseInt(weeks.value, 10); };
+
+  const anchor = el('input'); anchor.type = 'date'; anchor.value = per.anchor;
+  anchor.onchange = () => { per.anchor = anchor.value; };
+
+  const hist = el('input'); hist.type = 'number'; hist.min = 1; hist.max = 100; hist.value = per.history;
+  hist.onchange = () => { per.history = parseInt(hist.value, 10) || 26; };
+
+  grid.appendChild(field('Pay period starts on', day));
+  grid.appendChild(field('Length', weeks));
+  grid.appendChild(field('A pay period started on', anchor));
+  grid.appendChild(field('Periods of history to keep', hist));
+  box.appendChild(grid);
+  box.appendChild(el('div', 'muted', 'The date only matters for 2+ week periods: pick any day one of their pay periods began so the add-on knows which weeks to group.'));
+  return box;
 }
 
 /* ---------- people editor ---------- */
@@ -130,6 +146,7 @@ function renderPeople() {
     const info = el('div', 'grow');
     info.appendChild(el('b', null, pname(p.id)));
     info.appendChild(el('div', 'muted', p.zones.length ? p.zones.map(zname).join(', ') : 'No work zones yet'));
+    info.appendChild(el('div', 'muted', 'Pay period: ' + periodText(p.period)));
     head.appendChild(info);
     head.appendChild(btn(p.open ? 'Done' : 'Edit', 'small', () => { p.open = !p.open; renderPeople(); }));
     head.appendChild(btn('Remove', 'small danger', () => {
@@ -139,6 +156,7 @@ function renderPeople() {
     card.appendChild(head);
 
     if (p.open) {
+      card.appendChild(el('h3', null, 'Work zones'));
       const chips = el('div', 'chips');
       p.zones.forEach(z => {
         const c = el('span', 'chip', zname(z));
@@ -154,6 +172,8 @@ function renderPeople() {
       });
       sel.onchange = () => { if (sel.value) { p.zones.push(sel.value); renderPeople(); } };
       card.appendChild(sel);
+
+      card.appendChild(periodEditor(p));
     }
     box.appendChild(card);
   });
@@ -162,7 +182,10 @@ function renderPeople() {
 document.getElementById('addbtn').onclick = () => {
   const sel = document.getElementById('addperson');
   if (!sel.value) return;
-  model.people.push({ id: sel.value, zones: [], open: true });
+  // start from the last person's pay period (people often share one), else the default
+  const last = model.people[model.people.length - 1];
+  const per = Object.assign({}, last ? last.period : catalog.defaultPeriod);
+  model.people.push({ id: sel.value, zones: [], period: per, open: true });
   renderPeople(); renderAdd();
 };
 
@@ -213,37 +236,29 @@ async function load() {
   const e = document.getElementById('err');
   e.textContent = d.error || '';
   e.style.display = d.error ? 'block' : 'none';
-  if (!d.error) catalog = { people: d.people, zones: d.zones };
+  if (!d.error) catalog = { people: d.people, zones: d.zones, defaultPeriod: d.default_period };
+  if (!catalog.defaultPeriod) catalog.defaultPeriod = d.default_period;
   if (first) {
-    model = { people: d.settings.people.map(p => ({ id: p.id, zones: [...p.zones], open: false })) };
-    fillPeriod(d.settings.period);
+    model = { people: d.settings.people.map(p => ({
+      id: p.id, zones: [...p.zones], period: Object.assign({}, p.period), open: false })) };
     first = false;
   }
   renderPeople(); renderAdd(); renderStatus(d);
 }
 
 document.getElementById('save').onclick = async () => {
-  const body = {
-    people: model.people.map(p => ({ id: p.id, zones: p.zones })),
-    period: {
-      start_day: document.getElementById('p_day').value,
-      weeks: parseInt(document.getElementById('p_weeks').value, 10),
-      anchor: document.getElementById('p_anchor').value,
-      history: parseInt(document.getElementById('p_hist').value, 10) || 26
-    }
-  };
+  const body = { people: model.people.map(p => ({ id: p.id, zones: p.zones, period: p.period })) };
   await fetch('api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const b = document.getElementById('save');
   b.textContent = 'Saved ✓';
   setTimeout(() => b.textContent = 'Save', 2000);
-  first = true;       // reload the editor so the date shows what was actually saved
+  first = true;       // reload so the dates show what was actually saved
   load();
 };
 
 load();
 setInterval(async () => {   // keep the numbers fresh without touching what you're editing
-  const keep = first;
-  if (keep) return;
+  if (first) return;
   const r = await fetch('api/state'); renderStatus(await r.json());
 }, 60000);
 </script>
