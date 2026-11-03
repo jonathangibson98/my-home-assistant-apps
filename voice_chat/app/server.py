@@ -81,11 +81,18 @@ def reply_text(result) -> str:
         return ""
 
 
-async def speak(text: str) -> None:
+def chosen_speaker(request, body=None) -> str:
+    """Speaker picked on the page, falling back to the configured one."""
+    value = str((body or {}).get("media_player") or request.query.get("mp") or "").strip()
+    if re.fullmatch(r"media_player\.[a-z0-9_]+", value):
+        return value
+    return opt("media_player")
+
+
+async def speak(text: str, mp: str) -> None:
     message = clean_for_tts(text)
     if not message:
         return
-    mp = opt("media_player")
     volume = float(OPTIONS.get("volume") or 0)
     if volume > 0:
         await ha("POST", "/services/media_player/volume_set",
@@ -144,12 +151,17 @@ async def compute_status() -> dict:
             problems.append(f"Set “{key}” in the add-on Configuration tab. Available: {available(domain)}")
         elif value not in by_id:
             problems.append(f"“{value}” ({key}) doesn’t exist. Available: {available(domain)}")
+    speakers = sorted(
+        ({"entity_id": i, "name": name(i)} for i in by_id if i.startswith("media_player.")),
+        key=lambda x: x["name"].lower())
     stt = opt("stt_entity")
     if stt and stt not in by_id:
         problems.append(f"“{stt}” (stt_entity) doesn’t exist. Available: {available('stt')}")
 
     return {
         "problems": problems,
+        "media_player": opt("media_player"),
+        "speakers": speakers,
         "stt_entity": stt,
         "hands_free": bool(OPTIONS.get("hands_free", True)),
         "silence_ms": int(OPTIONS.get("silence_ms") or 1200),
@@ -201,17 +213,17 @@ async def chat(request):
     result = await ha("POST", "/conversation/process", json=payload)
     reply = reply_text(result) or "I didn’t get a reply from the agent."
     log.info("You: %s | Agent: %s", text, reply[:120])
-    await speak(reply)
+    await speak(reply, chosen_speaker(request, body))
     return web.json_response({"text": reply, "conversation_id": (result or {}).get("conversation_id")})
 
 
 async def wait(request):
-    await wait_playback(opt("media_player"))
+    await wait_playback(chosen_speaker(request))
     return web.json_response({"ok": True})
 
 
 async def stop(request):
-    await ha("POST", "/services/media_player/media_stop", json={"entity_id": opt("media_player")})
+    await ha("POST", "/services/media_player/media_stop", json={"entity_id": chosen_speaker(request)})
     return web.json_response({"ok": True})
 
 
