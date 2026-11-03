@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.0
+
+- Type to the AI as well as talk: a message box under the chat. Replies to typed messages are spoken on the chosen speaker by default; untick "Speak replies to typed messages" to read them silently. Typing and talking share the same conversation.
+
 ## 1.1.0
 
 - Speaker picker on the page: switch between any of your media players (Google, Sonos, Alexa and others) without touching the add-on configuration. Your choice is remembered per browser; the `media_player` option is the default.

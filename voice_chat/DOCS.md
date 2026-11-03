@@ -25,7 +25,7 @@ If an entity ID is wrong, the page shows a banner listing the entity IDs that do
 
 ## Using it
 
-Open **Voice Chat** in the sidebar, pick a speaker from the **Speaker** menu if you don't want the default, and tap the mic. Talk, pause, and the reply plays on your speaker. The mic is paused while the speaker talks, so it won't hear itself. Tap the orb to send early, cancel, or stop the speaker. **New chat** starts a fresh conversation with the agent.
+Open **Voice Chat** in the sidebar, pick a speaker from the **Speaker** menu if you don't want the default, and tap the mic, or type in the message box. Typed messages are answered in the same conversation; untick **Speak replies to typed messages** to keep those replies silent. Talk, pause, and the reply plays on your speaker. The mic is paused while the speaker talks, so it won't hear itself. Tap the orb to send early, cancel, or stop the speaker. **New chat** starts a fresh conversation with the agent.
 
 ## Which device listens, which device speaks
 
