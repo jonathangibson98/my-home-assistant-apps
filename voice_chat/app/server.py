@@ -213,7 +213,8 @@ async def chat(request):
     result = await ha("POST", "/conversation/process", json=payload)
     reply = reply_text(result) or "I didn’t get a reply from the agent."
     log.info("You: %s | Agent: %s", text, reply[:120])
-    await speak(reply, chosen_speaker(request, body))
+    if body.get("speak", True):
+        await speak(reply, chosen_speaker(request, body))
     return web.json_response({"text": reply, "conversation_id": (result or {}).get("conversation_id")})
 
 
