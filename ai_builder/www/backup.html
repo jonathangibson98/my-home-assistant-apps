@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Backup</title>
+<style>
+  :root{--ink:#0d0d0d;--panel:#16162a;--panel2:#1d1d36;--line:#2c2c4d;--text:#ecebf5;--dim:#9a9ab8;--accent:#8ea2ff;--ok:#7ee0b0;--bad:#ff8a8a;--warn:#ffcf70;color-scheme:dark}
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:linear-gradient(160deg,var(--ink),#1a1a2e) fixed;color:var(--text);font:16px/1.5 ui-rounded,"SF Pro Rounded",system-ui,-apple-system,sans-serif;padding:env(safe-area-inset-top,0) 14px calc(env(safe-area-inset-bottom,0) + 40px)}
+  main{max-width:720px;margin:0 auto}
+  h1{font-size:1.5rem;margin:18px 0 2px;letter-spacing:-.01em}
+  .sub{color:var(--dim);margin:0 0 14px;font-size:.9rem}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin:14px 0}
+  code{background:#0b0b16;border:1px solid var(--line);border-radius:6px;padding:1px 6px;font:13px ui-monospace,Menlo,monospace;word-break:break-all}
+  button{font:inherit;cursor:pointer}
+  button.go{width:100%;margin-top:12px;padding:14px;border-radius:12px;border:0;background:var(--accent);color:#0d0d1a;font-weight:700}
+  button.ghost{padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--text);font-size:.9rem}
+  button.danger{border-color:var(--warn);color:var(--warn)}
+  button:disabled{opacity:.5}
+  .li{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+  .li:last-child{border-bottom:0}
+  .li .t{min-width:0;word-break:break-all}
+  .dim{color:var(--dim);font-size:.85rem}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)}
+  h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin:0 0 6px}
+  #msg{margin-top:12px;font-size:.9rem;word-break:break-word}
+</style>
+</head>
+<body>
+<main>
+  <h1>Backup</h1>
+  <p class="sub">Save and restore this add-on's own data: template sensors it manages, the "Made so far" history, and announcement settings.</p>
+
+  <div class="card">
+    <h2>Backup location</h2>
+    <div id="where" class="dim">Loading...</div>
+    <div class="dim" style="margin-top:6px">Change it with the <code>backup_path</code> option in the add-on Configuration tab (a folder, or a single <code>.json</code> file).</div>
+    <button class="go" id="save">Save backup now</button>
+    <div id="msg" role="status" aria-live="polite"></div>
+  </div>
+
+  <div class="card">
+    <h2>Import a backup</h2>
+    <div class="dim">Importing replaces the current data with the backup. A safety copy of what you have now is saved first, so you can undo it.</div>
+    <div id="list" style="margin-top:8px"></div>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+async function api(path, body) {
+  const r = await fetch(new URL("api/" + path, document.baseURI), body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  return r.json();
+}
+function say(text, cls) { const m = $("msg"); m.className = cls || ""; m.textContent = text; }
+
+async function load() {
+  let d;
+  try { d = await api("backup"); } catch (e) { $("where").textContent = "Could not load: " + e; return; }
+  $("where").innerHTML = (d.mode === "file" ? "File: " : "Folder: ") + "<code>" + esc(d.path) + "</code><br>Right now: " +
+    d.current.templates + " template sensor(s), " + d.current.history + " history item(s)." +
+    (d.mode === "folder" ? " The newest " + d.keep + " backups are kept." : "");
+  const list = $("list");
+  list.innerHTML = "";
+  if (!d.files.length) { list.innerHTML = '<div class="dim">No backups found there yet. Tap "Save backup now", or copy a backup file into that location.</div>'; return; }
+  for (const f of d.files) {
+    const row = document.createElement("div");
+    row.className = "li";
+    row.innerHTML = '<div class="t">' + esc(f.file) + '<div class="dim">' + esc(f.modified) + " &middot; " + f.templates + " template(s), " + f.history + " history" + (f.announcements ? ", announcement settings" : "") + "</div></div>";
+    const b = document.createElement("button");
+    b.className = "ghost";
+    b.textContent = "Import";
+    let armed = null;
+    b.onclick = async () => {
+      if (!armed) {  /* two taps so a stray tap never replaces your data */
+        b.textContent = "Tap again to replace";
+        b.classList.add("danger");
+        armed = setTimeout(() => { armed = null; b.textContent = "Import"; b.classList.remove("danger"); }, 5000);
+        return;
+      }
+      clearTimeout(armed);
+      b.disabled = true;
+      say("Importing...");
+      try {
+        const r = await api("backup/import", {file: f.file});
+        if (r.ok) {
+          say("Imported " + r.file + ": " + r.templates + " template(s), " + r.history + " history item(s). Safety copy of the previous data: " + r.safety + (r.note ? " " + r.note : ""), "ok");
+        } else say(r.error || "Import failed.", "bad");
+      } catch (e) { say("Import failed: " + e, "bad"); }
+      load();
+    };
+    row.appendChild(b);
+    list.appendChild(row);
+  }
+}
+$("save").onclick = async () => {
+  $("save").disabled = true;
+  say("Saving...");
+  try {
+    const r = await api("backup/save", {});
+    say(r.ok ? "Saved to " + r.path : (r.error || "Backup failed."), r.ok ? "ok" : "bad");
+  } catch (e) { say("Backup failed: " + e, "bad"); }
+  $("save").disabled = false;
+  load();
+};
+load();
+</script>
+</body>
+</html>
