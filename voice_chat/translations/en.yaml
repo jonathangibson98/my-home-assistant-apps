@@ -1,1 +1,36 @@
-y
+configuration:
+  conversation_agent:
+    name: Conversation agent
+    description: The AI entity to talk to, for example conversation.home_assistant or conversation.ollama.
+  media_player:
+    name: Speaker
+    description: The media player entity that speaks the replies, for example media_player.kitchen_speaker.
+  tts_entity:
+    name: Text-to-speech engine
+    description: The TTS entity that turns replies into audio, for example tts.piper.
+  stt_entity:
+    name: Speech-to-text engine
+    description: The STT entity that transcribes your voice, for example stt.faster_whisper. Leave empty to use the browser's built-in recognition.
+  language:
+    name: Language
+    description: Optional language code such as en-US or de. Leave empty to use Home Assistant's language.
+  hands_free:
+    name: Hands-free
+    description: Keep listening after every reply. Turn off for one question per tap.
+  silence_ms:
+    name: Pause before sending (ms)
+    description: How long you must stay quiet before your sentence is sent. Default 1200.
+  volume:
+    name: Speaker volume
+    description: 0 leaves the speaker's volume alone. 0.1 to 1 sets it before each reply.
+  password:
+    name: Password for direct HTTPS page
+    description: Setting a password turns on the direct HTTPS page on port 8443. Leave empty to keep it off.
+  certfile:
+    name: Certificate file
+    description: Certificate name inside /ssl. A self-signed one is generated if it doesn't exist.
+  keyfile:
+    name: Private key file
+    description: Private key name inside /ssl.
+network:
+  8443/tcp: Direct HTTPS page (only starts when a password is set)
