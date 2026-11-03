@@ -1,8 +1,48 @@
 # Changelog
 
-## 1.0.0
-- Combined **Location Tracker** (0.10.0) and **Arrival Alerts** (1.0.4) into one add-on with one web UI.
-- One Python process, one ingress port. Every feature from both add-ons is kept.
-- New UI: **Location** (Switches, Devices, Sensor trackers, Dashboard card) and **Alerts** (Places, People & sensors, Notifications, Activity), one Save bar for everything.
-- Alerts now use this add-on's own location sensor as the "Our Locations" context when the Locations sensor field is left blank.
-- New optional `unique_id` option, so an existing location sensor can keep its identity when moving over from the old Location Tracker add-on.
+## 2.0.0
+
+- Combined **Mini Tracker** (1.1.1) and **Location Hub** (1.0.0) into one add-on. Every feature from both is kept.
+- One process, one ingress port, one sidebar entry. The map is the home page; **Location** and **Alerts** open from its tab bar, and the **Map** button returns.
+- The Hub's API moved to `/api/hub/*` and its files to `/data/hub`, so nothing clashes with the map's `/api/settings` and `/data/settings.json`.
+- An existing Location Hub 1.x install is migrated automatically on first start (files moved to `/data/hub`, same sensor and trackers).
+- Options are the Location Hub's (sensor name, unique ID, log level, MQTT broker). Log level is upper case (`INFO`).
+- The read-only map and ingest API on port 8100 are unchanged and do not expose any Hub page.
+
+## 1.1.1 - 2026-10-30
+
+- Fixed pictures being cropped to the middle of the photo, which cut the top off heads in portrait
+  photos. Pictures now keep the top by default. New setting *Display > Pictures in the circles*:
+  keep the top, center crop, or show the whole picture.
+- Coordinate links are readable in dark mode.
+- Accuracy is hidden when Home Assistant reports 0.
+
+## 1.1.0 - 2026-10-30
+
+- People and device trackers now automatically use the **picture Home Assistant has for them**
+  (person photo), or else the **icon Home Assistant has for them** (for example `mdi:account-heart`).
+  Zones show their Home Assistant icon too. Changes in Home Assistant show up on the map by themselves.
+- Every icon set you have is usable: all ~7,400 **MDI** icons (`mdi:` and the old `hass:`, bundled, works
+  offline), your `custom_icons` folder as **`local:`** (and `custom:`), and any folder you added with
+  **Auto Custom Icons** (found automatically, used as `<your prefix>:name`).
+- New **icon picker** with search across all sets, in Settings (people) and in the place editor.
+- Icons that cannot be loaded fall back to initials instead of a broken image.
+- Your own choice in Mini Tracker still wins; leave the icon blank to follow Home Assistant.
+
+## 1.0.0 - 2026-10-29
+
+First release.
+
+- Live map of your Home Assistant people and device trackers, styled like the HA map (circle
+  avatars, accuracy circles, zones), with dark mode after sunset.
+- History stored in SQLite on the Pi: trails, optional points, heatmap, and playback scrubber.
+- Day timeline: automatic stop detection, trips with distance/time/average speed, "save as place".
+- Places: your own named places plus Home Assistant zones, with time-at-place stats.
+- Your own pictures and `custom:` SVG icons for people and places.
+- Import history (Google Takeout, GPX, GeoJSON, OwnTracks, CSV, generic JSON) into any device.
+- Backfill from Home Assistant's own recorder history.
+- Export to GPX / CSV / JSON. Retention and delete tools.
+- Separate read-only map URL for dashboards (`?dev=`, `?trail=`, `?theme=`, `?chips=`, `?follow=`).
+- Ingest API for OwnTracks (HTTP), Overland, and plain JSON.
+- Optional MQTT discovery sensors (place, distance today) through the Mosquitto app.
+- Miles by default (kilometers optional).

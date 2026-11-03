@@ -1,3 +1,10 @@
-#!/usr/bin/with-contenv bashio
-bashio::log.info "Starting Location Hub"
+#!/command/with-contenv bashio
+
+export MT_LOG_LEVEL="$(bashio::config 'log_level')"
+export MT_DATA=/data
+export MT_HUB_DATA=/data/hub
+export MT_HA_CONFIG=/homeassistant
+
+bashio::log.info "Starting Location Hub..."
+cd /app
 exec python3 -u /app/main.py

@@ -1,8 +1,18 @@
 # Location Hub
 
-Everyone's location, clickable switches, device trackers, a dashboard card generator and AI arrival alerts, all in one add-on and one web UI.
+A location history map for Home Assistant, plus everyone's location sensor, clickable switches, device trackers, a dashboard card generator and AI arrival alerts. One add-on, one sidebar entry.
 
-**Location** (from Location Tracker)
+**Map** (from Mini Tracker)
+- Live map of your people and device trackers, styled like the HA map, with dark mode after sunset
+- History trails, heatmap, and a playback scrubber
+- Automatic stop detection and a day timeline (distance, time, average speed)
+- Named places plus your HA zones, with time-at-place stats
+- Follows Home Assistant's pictures and icons, with every icon set you have (all MDI, `local:` SVGs, Auto Custom Icons) and a searchable picker
+- Import Google Takeout / GPX / GeoJSON / OwnTracks / CSV, backfill from HA history, export GPX/CSV/JSON
+- Separate read-only map URL to embed on a dashboard, and an ingest API for OwnTracks, Overland and plain JSON
+- Optional MQTT sensors (current place, distance today)
+
+**Location** (from Location Hub)
 - One sensor with everyone's `Home` / `City, State` / zone name, and a count of who is home
 - Switches: tap `input_boolean` / `switch` entities to flip them
 - Sensors to Device Trackers: turn any sensor into a real `device_tracker`
@@ -12,4 +22,4 @@ Everyone's location, clickable switches, device trackers, a dashboard card gener
 - Per-place arrival notifications with an AI-written message, dwell time, days, time windows and cooldown
 - Preview or send a test from the UI, and an Activity log
 
-Requirements: an MQTT broker (Mosquitto add-on or external) for the location sensor's unique ID, an `ai_task` entity and a `notify.*` service for alerts. See DOCS.md.
+Requirements: an MQTT broker (Mosquitto add-on or external) for the location sensor's unique ID, an `ai_task` entity and a `notify.*` service for alerts. Open the **Documentation** tab for details.
