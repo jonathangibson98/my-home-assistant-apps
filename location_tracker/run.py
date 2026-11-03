@@ -331,7 +331,7 @@ async def resolve(s, eid, home_state):
     if not home_state and st.lower() == "home":
         return "Home", True
     if st.lower() == "not_home":
-        return "away", False
+        return "Away", False
     return st, False
 
 async def update(s):

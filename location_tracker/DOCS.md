@@ -72,7 +72,7 @@ To use it: click **Save Changes**, click **Copy Card YAML**, then in your dashbo
 | `Home` | At your home (see rules below). |
 | `City, State` | Away, with GPS. Looked up through OpenStreetMap Nominatim. |
 | A zone name | In one of your other named zones, shown as is. |
-| `away` | Reports not_home with no GPS. |
+| `Away` | Reports not_home with no GPS. |
 | `unknown` | The entity wasn't found. |
 
 ### How "Home" is decided

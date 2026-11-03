@@ -1,6 +1,11 @@
 # Changelog
 
-## Latest v0.9.0
+## Latest v0.9.1
+
+### Fixed
+- The `away` state (not_home with no GPS) now shows as `Away`, capitalized, to match `Home`.
+
+## Earlier v0.9.0
 
 ### Added
 - **Dashboard Card** section in the web UI. It builds a Mushroom card (with the Bubble separator on top) from your people list, ready to copy and paste into a dashboard.
