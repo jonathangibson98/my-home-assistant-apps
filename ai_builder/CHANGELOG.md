@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.1 - 2026-11-03
+
+- Fix: converting a photo to SVG could crash the whole add-on (the panel then showed 503 Bad Gateway). Tracing now runs in a separate process, so a crash only fails that one conversion and shows a clear error
+
 ## 2.1.0 - 2026-11-03
 
 The add-on is now **Creator & AI Builder** (same slug, so upgrading in place keeps everything).

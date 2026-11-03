@@ -4,7 +4,10 @@ import asyncio
 import io
 import logging
 import os
+import json
 import re
+import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -139,6 +142,26 @@ def enhance_image(img, mode, detail):
                         dither=Image.Dither.NONE).convert("RGB")
 
 
+TRACE_CODE = ("import sys, json, vtracer\n"
+              "a = json.loads(sys.argv[1])\n"
+              "vtracer.convert_image_to_svg_py(a.pop('src'), a.pop('dst'), **a)\n")
+
+
+def trace(src, dst, **kw):
+    """Run vtracer in its own process. A native crash (segfault, out of memory) then only fails this
+    one conversion with a clear message instead of killing the whole add-on (which shows as 503)."""
+    args = dict(kw, src=src, dst=dst)
+    try:
+        p = subprocess.run([sys.executable, "-c", TRACE_CODE, json.dumps(args)],
+                           capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("Tracing took over 5 minutes. Lower the detail or svg_output_size.")
+    if p.returncode != 0:
+        why = ("killed by signal %d (likely out of memory or a crash in vtracer)" % -p.returncode
+               if p.returncode < 0 else (p.stderr.strip()[-300:] or "exit code %d" % p.returncode))
+        raise RuntimeError("The tracer failed: " + why)
+
+
 class SvgMaker:
     def __init__(self, opts):
         self.opt = dict(DEFAULTS)
@@ -216,7 +239,7 @@ class SvgMaker:
                           color_precision=min(8, 3 + detail // 2),
                           layer_difference=max(8, 40 - detail * 3))
             img.save(src)
-            vtracer.convert_image_to_svg_py(
+            trace(
                 src, dst,
                 colormode="binary" if mode == "bw" else "color",
                 mode=opt["svg_path_style"], **kw)
