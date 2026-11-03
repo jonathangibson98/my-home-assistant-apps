@@ -25,7 +25,12 @@ If an entity ID is wrong, the page shows a banner listing the entity IDs that do
 
 ## Using it
 
-Open **Voice Chat** in the sidebar and tap the mic. Talk, pause, and the reply plays on your speaker. The mic is paused while the speaker talks, so it won't hear itself. Tap the orb to send early, cancel, or stop the speaker. **New chat** starts a fresh conversation with the agent.
+Open **Voice Chat** in the sidebar, pick a speaker from the **Speaker** menu if you don't want the default, and tap the mic. Talk, pause, and the reply plays on your speaker. The mic is paused while the speaker talks, so it won't hear itself. Tap the orb to send early, cancel, or stop the speaker. **New chat** starts a fresh conversation with the agent.
+
+## Which device listens, which device speaks
+
+- **Speaks:** the speaker chosen in the page's Speaker menu (default: `media_player` from Configuration). Any media player entity works, as long as `tts.speak` can play on it.
+- **Listens:** the microphone of the phone, tablet or PC that has the page open. Google and Alexa speakers don't share their microphones with Home Assistant, so they can only speak. To listen from a room, open the page on a wall tablet there.
 
 ## Microphone access
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.0
+
+- Speaker picker on the page: switch between any of your media players (Google, Sonos, Alexa and others) without touching the add-on configuration. Your choice is remembered per browser; the `media_player` option is the default.
+
 ## 1.0.0
 
 - First release.
