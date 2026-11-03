@@ -1,1 +1,340 @@
-h
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Voice Chat</title>
+<style>
+:root{
+  --bg:#eef2f5; --surface:#ffffff; --ink:#13202b; --muted:#5b6b78; --line:#d5dde3;
+  --idle:#5b6b78; --listen:#1f9d8f; --hear:#d9791a; --think:#6a5ae0; --speak:#2f7de1;
+  --warn-bg:#fff1e0; --warn-ink:#7a3d00;
+  --font:"Avenir Next","Segoe UI",system-ui,-apple-system,Roboto,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#0e161d; --surface:#16212a; --ink:#e6edf2; --muted:#93a4b1; --line:#263541;
+    --idle:#93a4b1; --listen:#3cc2b1; --hear:#ffab47; --think:#9d90ff; --speak:#6aaeff;
+    --warn-bg:#3a2a12; --warn-ink:#ffd9a3;
+  }
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  --c:var(--idle); --lvl:0;
+  display:flex;flex-direction:column;background:var(--bg);color:var(--ink);
+  font:16px/1.45 var(--font);
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+body[data-phase=listening]{--c:var(--listen)}
+body[data-phase=hearing]{--c:var(--hear)}
+body[data-phase=thinking]{--c:var(--think)}
+body[data-phase=speaking]{--c:var(--speak)}
+
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line)}
+h1{font-size:1.15rem;margin:0;font-weight:650;letter-spacing:.01em}
+#who{margin:2px 0 0;color:var(--muted);font-size:.85rem}
+button{font:inherit;color:inherit;cursor:pointer}
+.ghost{background:none;border:1px solid var(--line);border-radius:10px;padding:7px 12px;color:var(--muted)}
+.ghost:hover{color:var(--ink);border-color:var(--muted)}
+:focus-visible{outline:3px solid var(--c);outline-offset:3px}
+
+#banner{margin:12px 18px 0;padding:10px 14px;border-radius:10px;background:var(--warn-bg);color:var(--warn-ink);font-size:.9rem}
+#banner p{margin:0 0 6px}#banner p:last-child{margin:0}
+
+#log{flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:10px}
+.empty{margin:auto;max-width:28ch;text-align:center;color:var(--muted)}
+.msg{max-width:min(85%,60ch);padding:10px 14px;white-space:pre-wrap;overflow-wrap:anywhere}
+.msg.me{align-self:flex-end;background:var(--c);background:color-mix(in srgb,var(--listen) 22%,var(--surface));border-radius:18px 18px 4px 18px}
+.msg.ai{align-self:flex-start;background:var(--surface);border:1px solid var(--line);border-radius:18px 18px 18px 4px}
+
+footer{display:flex;flex-direction:column;align-items:center;gap:12px;padding:20px 18px 24px;border-top:1px solid var(--line)}
+.orb{
+  position:relative;width:104px;height:104px;border-radius:50%;border:0;background:var(--c);color:#fff;
+  display:grid;place-items:center;transition:background .25s;
+}
+.orb::before{
+  content:"";position:absolute;inset:-12px;border-radius:50%;border:3px solid var(--c);opacity:.4;
+  transform:scale(calc(1 + var(--lvl)));transition:transform .09s linear;
+}
+.orb svg{width:42px;height:42px;fill:currentColor}
+.ico-stop{display:none}
+body[data-phase=thinking] .ico-mic,body[data-phase=speaking] .ico-mic{display:none}
+body[data-phase=thinking] .ico-stop,body[data-phase=speaking] .ico-stop{display:block}
+body[data-phase=thinking] .orb::before{animation:breathe 1.6s ease-in-out infinite}
+@keyframes breathe{50%{transform:scale(1.18);opacity:.15}}
+@media (prefers-reduced-motion:reduce){body[data-phase=thinking] .orb::before{animation:none}.orb::before{transition:none}}
+#state{margin:0;min-height:1.4em;color:var(--muted);font-size:.95rem;text-align:center}
+</style>
+</head>
+<body data-phase="idle">
+<header>
+  <div><h1>Voice Chat</h1><p id="who">Connecting…</p></div>
+  <button id="new" class="ghost" type="button">New chat</button>
+</header>
+<div id="banner" hidden></div>
+<main id="log" aria-live="polite"><p class="empty">Tap the mic and talk. Replies are spoken on your speaker.</p></main>
+<footer>
+  <button id="orb" class="orb" type="button" aria-label="Voice control">
+    <svg class="ico-mic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+    <svg class="ico-stop" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+  </button>
+  <p id="state"></p>
+</footer>
+
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  let cfg = null, phase = 'idle', session = false, listening = false, hearing = false;
+  let convId = null, epoch = 0, ctx = null, stream = null, proc = null, rec = null;
+  let buf = [], pre = [], noise = 0.008, lastVoice = 0, startT = 0;
+
+  // ---------- helpers
+  async function api(path, opts = {}) {
+    const headers = { ...(opts.headers || {}) };
+    const tok = sessionStorage.getItem('voice-token');
+    if (tok) headers['X-Voice-Token'] = tok;
+    const r = await fetch('api/' + path, { ...opts, headers });
+    if (r.status === 401) {
+      const t = prompt('Password for Voice Chat');
+      if (!t) throw new Error('Password required');
+      sessionStorage.setItem('voice-token', t);
+      return api(path, opts);
+    }
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    return j;
+  }
+
+  function setPhase(p) {
+    phase = p;
+    document.body.dataset.phase = p;
+    if (p !== 'listening' && p !== 'hearing') document.body.style.setProperty('--lvl', 0);
+    const speaker = cfg ? cfg.names.media_player : 'the speaker';
+    $('#state').textContent = {
+      idle: 'Tap to talk',
+      listening: 'Listening. Tap to end',
+      hearing: 'Hearing you. Tap to send now',
+      thinking: 'Thinking. Tap to cancel',
+      speaking: `Speaking on ${speaker}. Tap to stop`,
+    }[p];
+  }
+
+  function banner(lines) {
+    const b = $('#banner');
+    b.replaceChildren(...lines.map(l => Object.assign(document.createElement('p'), { textContent: l })));
+    b.hidden = !lines.length;
+  }
+
+  function addMsg(who, text) {
+    const log = $('#log');
+    log.querySelector('.empty')?.remove();
+    const d = document.createElement('div');
+    d.className = 'msg ' + who;
+    d.textContent = text;
+    log.appendChild(d);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  // ---------- microphone + silence detection
+  async function openMic() {
+    if (stream) return;
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    await ctx.resume();
+    const src = ctx.createMediaStreamSource(stream);
+    proc = ctx.createScriptProcessor(4096, 1, 1);
+    proc.onaudioprocess = onAudio;
+    src.connect(proc);
+    proc.connect(ctx.destination); // output buffer stays silent
+  }
+
+  function closeMic() {
+    proc && (proc.onaudioprocess = null, proc.disconnect());
+    stream && stream.getTracks().forEach(t => t.stop());
+    ctx && ctx.close();
+    proc = stream = ctx = null;
+  }
+
+  function onAudio(e) {
+    if (!listening) return;
+    const d = e.inputBuffer.getChannelData(0);
+    const copy = new Float32Array(d);
+    let sum = 0;
+    for (let i = 0; i < copy.length; i++) sum += copy[i] * copy[i];
+    const rms = Math.sqrt(sum / copy.length);
+    const now = performance.now();
+    document.body.style.setProperty('--lvl', Math.min(rms * 8, 0.6).toFixed(2));
+
+    if (!hearing) {
+      noise = Math.min(0.04, noise * 0.97 + rms * 0.03);
+      pre.push(copy);
+      if (pre.length > 3) pre.shift();
+      if (rms > Math.max(0.02, noise * 3)) {
+        hearing = true; buf = pre; pre = [];
+        startT = lastVoice = now;
+        setPhase('hearing');
+      }
+    } else {
+      buf.push(copy);
+      if (rms > Math.max(0.015, noise * 2)) lastVoice = now;
+      if (now - lastVoice > cfg.silence_ms || now - startT > 30000) finishUtterance();
+    }
+  }
+
+  function toPCM16(chunks, inRate) {
+    const n = chunks.reduce((a, c) => a + c.length, 0);
+    const f = new Float32Array(n);
+    let o = 0;
+    for (const c of chunks) { f.set(c, o); o += c.length; }
+    const ratio = inRate / 16000;
+    const out = new Int16Array(Math.floor(n / ratio));
+    for (let i = 0; i < out.length; i++) {
+      const a = Math.floor(i * ratio), b = Math.min(n, Math.max(a + 1, Math.floor((i + 1) * ratio)));
+      let s = 0;
+      for (let j = a; j < b; j++) s += f[j];
+      s /= (b - a);
+      out[i] = Math.max(-1, Math.min(1, s)) * 0x7fff;
+    }
+    return out;
+  }
+
+  function finishUtterance() {
+    if (!hearing) return;
+    const chunks = buf, voiced = lastVoice - startT;
+    listening = false; hearing = false; buf = []; pre = [];
+    if (voiced < 350) return listen(); // a click or cough, not speech
+    turn(toPCM16(chunks, ctx.sampleRate));
+  }
+
+  // ---------- browser speech recognition (used when no stt_entity is set)
+  function listenBrowser() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      session = false; setPhase('idle');
+      return banner(['This browser has no built-in speech recognition. Set stt_entity in the add-on Configuration tab.']);
+    }
+    setPhase('listening');
+    rec = new SR();
+    rec.lang = cfg.language;
+    let got = false;
+    rec.onspeechstart = () => setPhase('hearing');
+    rec.onresult = ev => {
+      got = true;
+      const my = ++epoch;
+      respond(ev.results[0][0].transcript, my).catch(err => fail(err, my));
+    };
+    rec.onerror = ev => {
+      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+        session = false; setPhase('idle');
+        banner(['Microphone blocked. Allow it for this page, or open the HTTPS address (see the add-on Documentation tab).']);
+      }
+    };
+    rec.onend = () => { if (!got && session && phase !== 'thinking' && phase !== 'speaking') listenBrowser(); };
+    rec.start();
+  }
+
+  // ---------- conversation
+  function listen() {
+    if (!cfg.stt_entity) return listenBrowser();
+    buf = []; pre = []; hearing = false; listening = true;
+    setPhase('listening');
+  }
+
+  function fail(err, my) {
+    if (my !== epoch) return;
+    banner([err.message]);
+    afterTurn(my);
+  }
+
+  function afterTurn(my) {
+    if (my !== epoch) return;
+    if (session && cfg.hands_free) listen(); else end();
+  }
+
+  async function turn(pcm) {
+    const my = ++epoch;
+    try {
+      setPhase('thinking');
+      const { text } = await api('stt', {
+        method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: pcm.buffer,
+      });
+      if (my !== epoch) return;
+      if (!text.trim()) return afterTurn(my);
+      await respond(text, my);
+    } catch (err) { fail(err, my); }
+  }
+
+  async function respond(text, my) {
+    banner([]);
+    addMsg('me', text);
+    setPhase('thinking');
+    const r = await api('chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, conversation_id: convId }),
+    });
+    if (my !== epoch) return;
+    convId = r.conversation_id || convId;
+    addMsg('ai', r.text);
+    setPhase('speaking');
+    await api('wait', { method: 'POST' });
+    if (my !== epoch) return;
+    await sleep(800); // let the room go quiet before listening again
+    afterTurn(my);
+  }
+
+  async function start() {
+    if (cfg.problems.length) return banner(cfg.problems);
+    banner([]);
+    session = true; epoch++;
+    if (cfg.stt_entity) {
+      try { await openMic(); }
+      catch (e) {
+        session = false;
+        return banner(['Microphone unavailable: ' + e.message + '. In the Home Assistant app, open the direct HTTPS address instead (see the add-on Documentation tab).']);
+      }
+    }
+    listen();
+  }
+
+  function end() {
+    session = false; listening = false; hearing = false; epoch++;
+    rec && (rec.onend = null, rec.abort(), rec = null);
+    closeMic();
+    setPhase('idle');
+  }
+
+  function interrupt() {
+    epoch++;
+    api('stop', { method: 'POST' }).catch(() => {});
+    if (session && cfg.hands_free) listen(); else end();
+  }
+
+  $('#orb').onclick = () => {
+    if (!cfg) return;
+    if (phase === 'idle') return start();
+    if (phase === 'hearing' && cfg.stt_entity) return finishUtterance();
+    if (phase === 'thinking' || phase === 'speaking') return interrupt();
+    end();
+  };
+
+  $('#new').onclick = () => {
+    convId = null;
+    $('#log').replaceChildren(Object.assign(document.createElement('p'), { className: 'empty', textContent: 'New conversation. Tap the mic and talk.' }));
+  };
+
+  (async () => {
+    try { cfg = await api('status'); }
+    catch (e) { $('#who').textContent = 'Not connected'; return banner([e.message]); }
+    $('#who').textContent = `${cfg.names.conversation_agent} · speaking on ${cfg.names.media_player}`;
+    banner(cfg.problems);
+    setPhase('idle');
+  })();
+})();
+</script>
+</body>
+</html>
