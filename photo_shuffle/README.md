@@ -1,13 +1,11 @@
-# Photo Shuffle
+# Photo Hub
 
-Shuffle pictures from any number of folders. Each folder becomes an **image entity** that rotates to a random photo. All of them sit under one **Photo Shuffle** device.
+Turn photos into **image entities** in Home Assistant, from two sources, in one add-on and one web UI. Everything is published over **MQTT**, so there is no separate integration to install.
 
-- Manage shuffles from a web UI in the sidebar: add, edit, pause and delete
-- Live preview, picture counts, next-change countdown and an activity log
-- Folder browser limited to the paths you allow
-- Choose which picture formats to include (jpg, png, webp, gif, bmp, tiff)
-- Random order with no repeats until the folder is exhausted
-- Auto-resized JPEGs for fast dashboards
+- **Folders**: shuffle pictures from any number of folders. Each folder is an image entity that rotates to a random photo, on a timer, with no repeats until the folder is used up.
+- **Unsplash**: define collections (city, ocean, whatever) with search terms and get fresh random photos from Unsplash, as landscape, portrait or both.
+- One web UI in the sidebar: add, edit, pause, delete, live previews and an activity log
+- Photos are resized and sent as JPEG for fast dashboards
 - Works with the Mosquitto add-on out of the box
 
 See the **Documentation** tab for setup and options.

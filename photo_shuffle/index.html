@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Photo Shuffle</title>
+<title>Photo Hub</title>
 <style>
 :root{--bg:#f4f6fb;--card:#fff;--text:#1c2333;--muted:#6b7488;--line:#e2e6f0;--accent:#6366f1;--accent2:#0ea5e9;--good:#16a34a;--warn:#d97706;--bad:#dc2626;--input:#fff}
 @media (prefers-color-scheme:dark){:root{--bg:#111827;--card:#1b2436;--text:#e8ecf6;--muted:#93a0b8;--line:#2b3650;--input:#141c2c}}
@@ -53,19 +53,58 @@ input[type=text],input[type=number],select{width:100%;padding:8px 10px;border-ra
 .list{border:1px solid var(--line);border-radius:10px;max-height:300px;overflow:auto;margin-top:8px}
 .list button{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);border-radius:0;background:transparent}
 .list button:last-child{border-bottom:0}
+
+.tabs{display:flex;gap:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--card);margin-bottom:14px}
+.tabs button{flex:1;border:0;border-radius:0;padding:9px 6px;background:transparent}
+.tabs button.on{background:linear-gradient(90deg,var(--accent),var(--accent2));color:#fff;font-weight:600}
+.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.bar .grow{flex:1;min-width:160px;font-size:13px;color:var(--muted)}
+.banner{border-radius:10px;padding:10px 12px;margin:0 0 12px;font-size:14px}
+.banner.warn{background:rgba(217,119,6,.15);border:1px solid var(--warn)}
+.banner.bad{background:rgba(220,38,38,.12);border:1px solid var(--bad)}
+.thumbs{display:flex;gap:2px;background:var(--line)}
+.thumbs figure{margin:0;flex:1 1 0;min-width:0;position:relative}
+.thumbs img{width:100%;height:130px;object-fit:cover;display:block}
+.thumbs .ph{height:130px;display:flex;align-items:center;justify-content:center;text-align:center;padding:6px;color:var(--muted);font-size:12px;background:var(--line)}
+.thumbs .ph.e{color:var(--bad)}
+.thumbs figcaption{position:absolute;left:0;right:0;bottom:0;padding:3px 6px;font-size:11px;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.65));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.thumbs figcaption a{color:#fff}
+textarea{width:100%;font:inherit;padding:8px 10px;border-radius:9px;border:1px solid var(--line);background:var(--input);color:var(--text);min-height:90px;resize:vertical}
+.hint{font-size:12px;color:var(--muted);margin-top:6px;word-break:break-all}
+[hidden]{display:none!important}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1>Photo Shuffle</h1>
+    <h1>Photo Hub</h1>
     <span id="mq" class="pill">MQTT</span>
-    <span id="fm" class="pill"></span>
-    <button class="primary" id="add">+ Add shuffle</button>
   </header>
 
-  <div id="cards"></div>
-  <div class="note" id="roots"></div>
+  <div class="tabs">
+    <button data-tab="folders" class="on">Folders</button>
+    <button data-tab="unsplash">Unsplash</button>
+  </div>
+
+  <section id="pane-folders">
+    <div class="bar">
+      <div class="grow"><span id="fm" class="pill"></span></div>
+      <button class="primary" id="add">+ Add shuffle</button>
+    </div>
+    <div id="cards"></div>
+    <div class="note" id="roots"></div>
+  </section>
+
+  <section id="pane-unsplash" hidden>
+    <div id="ubanners"></div>
+    <div class="bar">
+      <div class="grow" id="ustatus"></div>
+      <button id="ufetchall">Fetch all now</button>
+      <button class="primary" id="uadd">+ Add collection</button>
+    </div>
+    <div id="ucards"></div>
+    <div class="note">Photos come from Unsplash and belong to their photographers. Each entity carries <span class="mono">photographer</span>, <span class="mono">photo_url</span> and <span class="mono">search_term</span> attributes, so you can credit them on your dashboard.</div>
+  </section>
 
   <details open>
     <summary>Activity</summary>
@@ -95,6 +134,21 @@ input[type=text],input[type=number],select{width:100%;padding:8px 10px;border-ra
   </div>
 </div>
 
+<div class="overlay" id="cformov">
+  <div class="modal">
+    <h2 id="ctitle">Add collection</h2>
+    <label for="cname">Name</label>
+    <input type="text" id="cname" maxlength="40" placeholder="Ocean">
+    <label for="cterms">Search terms (one per line, a random one each time)</label>
+    <textarea id="cterms" placeholder="ocean waves&#10;beach sunset&#10;coastline"></textarea>
+    <label for="corient">Orientation</label>
+    <select id="corient"><option value="landscape">Landscape</option><option value="portrait">Portrait</option><option value="both">Both (two entities)</option></select>
+    <div class="hint" id="chint"></div>
+    <div id="cerr" style="color:var(--bad);font-size:13px;margin-top:10px;min-height:1em"></div>
+    <div class="btns"><button id="ccancel" type="button">Cancel</button><button class="primary" id="csave" type="button">Save</button></div>
+  </div>
+</div>
+
 <div class="overlay" id="browseov">
   <div class="modal">
     <h2>Choose a folder</h2>
@@ -108,7 +162,9 @@ input[type=text],input[type=number],select{width:100%;padding:8px 10px;border-ra
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let S = null, skew = 0, sig = '', editId = null, browsePath = '';
+let S = null, skew = 0, sig = '', usig = '', editId = null, cEditId = null, browsePath = '';
+let tab = 'folders';
+try { tab = localStorage.getItem('ph_tab') === 'unsplash' ? 'unsplash' : 'folders'; } catch (e) {}
 
 async function api(path, method, body) {
   const r = await fetch(path, {method: method || 'GET', headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
@@ -151,6 +207,9 @@ function render() {
 
   const key = JSON.stringify([S.shuffles.map(x => ({...x, next_at: 0})), S.roots]);
   if (key !== sig) { sig = key; drawCards(); }
+  const ukey = JSON.stringify(S.unsplash.collections);
+  if (ukey !== usig) { usig = ukey; drawU(); }
+  renderUHead();
   tick();
 
   $('#log').innerHTML = S.log.slice().reverse().map(l => {
@@ -195,6 +254,7 @@ function tick() {
   });
 }
 setInterval(tick, 1000);
+setInterval(() => { if (S) renderUHead(); }, 1000);
 
 $('#cards').addEventListener('click', async ev => {
   const b = ev.target.closest('button[data-act]');
@@ -262,6 +322,117 @@ $('#browse').onclick = () => { $('#browseov').classList.add('show'); browse($('#
 $('#blist').addEventListener('click', ev => { const b = ev.target.closest('button[data-p]'); if (b) browse(b.dataset.p); });
 $('#bcancel').onclick = () => $('#browseov').classList.remove('show');
 $('#bselect').onclick = () => { $('#fpath').value = browsePath; $('#browseov').classList.remove('show'); };
+
+
+// ---------------------------------------------------------------- tabs
+function showTab(t) {
+  tab = t;
+  try { localStorage.setItem('ph_tab', t); } catch (e) {}
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+  $('#pane-folders').hidden = t !== 'folders';
+  $('#pane-unsplash').hidden = t !== 'unsplash';
+}
+document.querySelector('.tabs').addEventListener('click', ev => { const b = ev.target.closest('button[data-tab]'); if (b) showTab(b.dataset.tab); });
+showTab(tab);
+
+// ---------------------------------------------------------------- unsplash
+const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+const slugify = n => n.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+
+function renderUHead() {
+  const U = S.unsplash;
+  let b = '';
+  if (!U.has_key) b += '<div class="banner bad">No Unsplash Access Key yet. Add it on the add-on <b>Configuration</b> tab, Save, then Restart the add-on.</div>';
+  if (U.per_hour > 45) b += '<div class="banner warn">That is close to Unsplash\'s 50 requests/hour limit. Raise the interval in Configuration or trim collections.</div>';
+  if ($('#ubanners').innerHTML !== b) $('#ubanners').innerHTML = b;
+  const n = U.collections.reduce((a, c) => a + Object.keys(c.images).length, 0);
+  const left = Math.max(0, Math.round(U.next_cycle - nowSrv()));
+  $('#ustatus').textContent = n + ' image' + (n === 1 ? '' : 's') + ' every ' + U.interval_minutes + ' min · about ' + U.per_hour + ' requests/hour · ' +
+    (U.busy ? 'fetching now...' : 'next refresh in ' + human(left));
+}
+
+function drawU() {
+  const U = S.unsplash, box = $('#ucards');
+  if (!U.collections.length) {
+    box.innerHTML = '<div class="empty">No collections yet.<br>Tap <b>+ Add collection</b>, give it a few search terms and the photos start flowing.</div>';
+    return;
+  }
+  box.innerHTML = '<div class="grid">' + U.collections.map(c => {
+    const imgs = Object.entries(c.images);
+    const thumbs = imgs.map(([o, im]) => {
+      if (im.error) return '<figure><div class="ph e">' + esc(cap(o)) + ': ' + esc(im.error) + '</div></figure>';
+      if (!im.has_image) return '<figure><div class="ph">' + esc(cap(o)) + ': waiting for first photo</div></figure>';
+      const m = im.meta || {};
+      const who = m.photographer ? (m.photo_url ? '<a href="' + esc(m.photo_url) + '" target="_blank" rel="noopener">' + esc(m.photographer) + '</a>' : esc(m.photographer)) : '';
+      return '<figure><img loading="lazy" alt="" src="api/unsplash/thumb/' + esc(im.key) + '.jpg?v=' + Math.round(m.fetched_at || 0) + '">' +
+        '<figcaption>' + esc(cap(o)) + (who ? ' · ' + who : '') + '</figcaption></figure>';
+    }).join('');
+    const bad = imgs.some(([o, im]) => im.error);
+    const badge = bad ? '<span class="pill bad">Problem</span>' : '<span class="pill ok">Running</span>';
+    return '<div class="card" data-id="' + esc(c.id) + '">' +
+      '<div class="thumbs">' + thumbs + '</div>' +
+      '<div class="body">' +
+        '<div class="title"><span>' + esc(c.name) + '</span>' + badge + '</div>' +
+        '<div class="meta">' + esc(c.search_terms.join(' · ')) + '</div>' +
+        '<div class="mono">' + imgs.map(([o, im]) => esc(im.entity)).join('<br>') + '</div>' +
+      '</div>' +
+      '<div class="actions">' +
+        '<button data-act="ufetch">Fetch now</button>' +
+        '<button data-act="uedit">Edit</button>' +
+        '<button data-act="udel" class="danger">Delete</button>' +
+      '</div></div>';
+  }).join('') + '</div>';
+}
+
+function pollSoon() { [1500, 5000, 10000, 20000].forEach(ms => setTimeout(refresh, ms)); }
+
+$('#ucards').addEventListener('click', async ev => {
+  const b = ev.target.closest('button[data-act]');
+  if (!b) return;
+  const id = b.closest('.card').dataset.id;
+  const c = S.unsplash.collections.find(x => x.id === id);
+  try {
+    if (b.dataset.act === 'ufetch') { await api('api/unsplash/collections/' + id + '/fetch', 'POST', {}); pollSoon(); }
+    else if (b.dataset.act === 'uedit') openCForm(c);
+    else if (b.dataset.act === 'udel') {
+      if (confirm('Delete "' + c.name + '"? Its Home Assistant entities will be removed.')) { await api('api/unsplash/collections/' + id, 'DELETE'); refresh(); }
+    }
+  } catch (e) { alert(e.message); }
+});
+
+$('#ufetchall').onclick = async () => {
+  try { await api('api/unsplash/fetch', 'POST', {}); pollSoon(); } catch (e) { alert(e.message); }
+};
+
+function cHint() {
+  const id = cEditId || slugify($('#cname').value) || 'name';
+  const o = $('#corient').value;
+  $('#chint').textContent = 'Entities: ' + (o === 'both' ? ['landscape', 'portrait'] : [o]).map(x => 'image.' + id + '_photos_' + x).join('  ·  ');
+}
+function openCForm(c) {
+  cEditId = c ? c.id : null;
+  $('#ctitle').textContent = c ? 'Edit collection' : 'Add collection';
+  $('#cname').value = c ? c.name : '';
+  $('#cterms').value = c ? c.search_terms.join('\n') : '';
+  $('#corient').value = c ? c.orientation : 'landscape';
+  $('#cerr').textContent = '';
+  cHint();
+  $('#cformov').classList.add('show');
+}
+$('#uadd').onclick = () => openCForm(null);
+$('#cname').oninput = cHint;
+$('#corient').onchange = cHint;
+$('#ccancel').onclick = () => $('#cformov').classList.remove('show');
+$('#csave').onclick = async () => {
+  const body = { name: $('#cname').value, search_terms: $('#cterms').value.split('\n'), orientation: $('#corient').value };
+  $('#csave').disabled = true;
+  try {
+    if (cEditId) await api('api/unsplash/collections/' + cEditId, 'PUT', body); else await api('api/unsplash/collections', 'POST', body);
+    $('#cformov').classList.remove('show');
+    refresh(); pollSoon();
+  } catch (e) { $('#cerr').textContent = e.message; }
+  $('#csave').disabled = false;
+};
 
 refresh();
 setInterval(refresh, 5000);

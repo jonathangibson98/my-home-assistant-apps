@@ -11,6 +11,7 @@ import time
 import urllib.request
 
 import paho.mqtt.client as mqtt
+import requests
 from flask import Flask, Response, jsonify, request
 from PIL import Image, ImageOps
 
@@ -34,7 +35,8 @@ UI_LOG = UILog()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logging.getLogger().addHandler(UI_LOG)
 logging.getLogger("werkzeug").setLevel(logging.WARNING)
-log = logging.getLogger("photo_shuffle")
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+log = logging.getLogger("photo_hub")
 
 # ---------------------------------------------------------------- options
 OPTIONS = json.load(open(os.path.join(DATA_DIR, "options.json")))
@@ -61,19 +63,43 @@ for _p in OPTIONS.get("photo_paths") or []:
     if _p.startswith("/") and _p not in ROOTS:
         ROOTS.append(_p)
 
+UNSPLASH_KEY = str(OPTIONS.get("unsplash_access_key") or "").strip()
+try:
+    UNSPLASH_MIN = max(5, min(1440, int(OPTIONS.get("unsplash_interval_minutes") or 60)))
+except (TypeError, ValueError):
+    UNSPLASH_MIN = 60
+UNSPLASH_SIZE = OPTIONS.get("unsplash_image_size")
+if UNSPLASH_SIZE not in ("full", "regular", "small"):
+    UNSPLASH_SIZE = "regular"
+
 DISCOVERY = "homeassistant"
-BASE = "photo_shuffle"
+BASE = "photo_shuffle"  # kept from the old Photo Shuffle add-on so existing entities carry over
 STATUS_TOPIC = f"{BASE}/status"
 
-# One shared Home Assistant device that holds every shuffle's image entity
+# One shared Home Assistant device that holds every folder shuffle's image entity
 DEVICE = {
     "identifiers": [BASE],
     "name": "Photo Shuffle",
-    "manufacturer": "Photo Shuffle add-on",
+    "manufacturer": "Photo Hub add-on",
     "model": "Folder shuffle",
 }
 STORE = os.path.join(DATA_DIR, "shuffles.json")
 DEVICE_REV = 2  # 2 = every shuffle lives on the shared "Photo Shuffle" device
+
+# Unsplash collections get their own shared device and topic space
+UBASE = "photo_hub_unsplash"
+UDEVICE = {
+    "identifiers": [UBASE],
+    "name": "Unsplash Photos",
+    "manufacturer": "Photo Hub add-on",
+    "model": "Unsplash collection",
+}
+UNSPLASH_API = "https://api.unsplash.com"
+ORIENTATIONS = ("landscape", "portrait", "both")
+USTORE = os.path.join(DATA_DIR, "unsplash.json")  # collections + which entities were announced
+USTATE = os.path.join(DATA_DIR, "unsplash_state.json")  # last photo info + last full cycle time
+THUMB_DIR = os.path.join(DATA_DIR, "unsplash_thumbs")
+UKEY_RE = re.compile(r"^[a-z0-9_]+_(landscape|portrait)$")
 
 stop = threading.Event()
 CONNECTED = threading.Event()
@@ -97,9 +123,9 @@ def is_image(name):
     return not name.startswith(".") and os.path.splitext(name)[1].lower() in EXTS
 
 
-def render(path):
-    """Return (full-size jpeg bytes, small preview jpeg bytes)."""
-    with Image.open(path) as im:
+def render(src):
+    """src is a path or a file object. Return (full-size jpeg bytes, small preview jpeg bytes)."""
+    with Image.open(src) as im:
         if im.format == "JPEG":
             im.draft("RGB", (MAX_DIM, MAX_DIM))
         if getattr(im, "is_animated", False):
@@ -115,7 +141,14 @@ def render(path):
         return buf.getvalue(), tb.getvalue()
 
 
-# ---------------------------------------------------------------- shuffle
+def write_json(path, data):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, path)
+
+
+# ---------------------------------------------------------------- folder shuffle
 class Shuffle:
     def __init__(self, sid, cfg):
         self.id = sid
@@ -285,7 +318,7 @@ class Shuffle:
         client.publish(f"{DISCOVERY}/image/{BASE}_{self.id}/config", json.dumps(image_cfg), qos=1, retain=True)
 
 
-# ---------------------------------------------------------------- manager
+# ---------------------------------------------------------------- shuffle manager
 class Manager:
     def __init__(self):
         self.lock = threading.RLock()
@@ -331,11 +364,10 @@ class Manager:
 
     def save(self):
         with self.lock:
-            data = {"shuffles": [s.cfg() for s in self.shuffles.values()], "removed": self.removed, "device_rev": self.device_rev}
-            tmp = STORE + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(data, f, indent=2)
-            os.replace(tmp, STORE)
+            write_json(
+                STORE,
+                {"shuffles": [s.cfg() for s in self.shuffles.values()], "removed": self.removed, "device_rev": self.device_rev},
+            )
 
     def all(self):
         with self.lock:
@@ -345,10 +377,12 @@ class Manager:
         with self.lock:
             return self.shuffles.get(sid)
 
-    # mqtt helpers
+    # mqtt helpers (shared with the Unsplash side)
     def publish(self, topic, payload, retain=True):
         if self.client is not None and CONNECTED.is_set():
             self.client.publish(topic, payload, qos=1, retain=retain)
+            return True
+        return False
 
     def purge_removed(self):
         if self.client is None or not CONNECTED.is_set():
@@ -453,6 +487,359 @@ class Manager:
 mgr = Manager()
 
 
+# ---------------------------------------------------------------- unsplash collections
+class Unsplash:
+    """Random Unsplash photos per collection. Every photo is published straight to MQTT as an
+    image entity (no custom integration, no files in /share)."""
+
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.collections = []  # [{id, name, search_terms, orientation}]
+        self.published = []  # entity keys announced to Home Assistant (so stale ones can be removed)
+        self.meta = {}  # entity key -> info about the latest photo
+        self.errors = {}
+        self.last_full = 0.0
+        self.next_full = time.time() + 10
+        self.pending = set()
+        self.busy = False
+        self.wake = threading.Event()
+        self.warned_no_key = False
+
+    # persistence
+    def load(self):
+        os.makedirs(THUMB_DIR, exist_ok=True)
+        try:
+            with open(USTORE) as f:
+                data = json.load(f)
+            self.collections = [c for c in data.get("collections", []) if isinstance(c, dict) and c.get("id")]
+            self.published = list(data.get("published", []))
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            log.error("Could not read %s: %s", USTORE, e)
+        try:
+            with open(USTATE) as f:
+                data = json.load(f)
+            self.meta = dict(data.get("meta", {}))
+            self.last_full = float(data.get("last_full", 0))
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            log.error("Could not read %s: %s", USTATE, e)
+        # do not spend Unsplash requests on every restart: wait out the rest of the interval
+        self.next_full = max(time.time() + 10, self.last_full + UNSPLASH_MIN * 60)
+        # entities that never got a photo get one right away
+        self.pending = {j["key"] for j in self.jobs() if not os.path.exists(self.thumb_path(j["key"]))}
+        self.save()
+
+    def save(self):
+        with self.lock:
+            write_json(USTORE, {"collections": self.collections, "published": self.published})
+
+    def save_state(self):
+        with self.lock:
+            write_json(USTATE, {"meta": self.meta, "last_full": self.last_full})
+
+    # helpers
+    @staticmethod
+    def thumb_path(key):
+        return os.path.join(THUMB_DIR, key + ".jpg")
+
+    @staticmethod
+    def orients(c):
+        return ["landscape", "portrait"] if c["orientation"] == "both" else [c["orientation"]]
+
+    def jobs(self):
+        """One job per collection and orientation. 'both' becomes two jobs."""
+        with self.lock:
+            out = []
+            for c in self.collections:
+                for o in self.orients(c):
+                    out.append(
+                        {
+                            "key": f"{c['id']}_{o}",
+                            "id": c["id"],
+                            "name": c["name"],
+                            "orientation": o,
+                            "terms": list(c["search_terms"]),
+                            "label": f"{c['name']} ({o})",
+                        }
+                    )
+            return out
+
+    @staticmethod
+    def topics(key):
+        return f"{UBASE}/{key}/image", f"{UBASE}/{key}/attributes"
+
+    def get(self, cid):
+        with self.lock:
+            for c in self.collections:
+                if c["id"] == cid:
+                    return c
+        return None
+
+    # home assistant discovery
+    def announce_job(self, client, j):
+        image_topic, attr_topic = self.topics(j["key"])
+        cfg = {
+            "name": f"{j['name']} Photos {j['orientation'].title()}",
+            "unique_id": f"{UBASE}_{j['key']}_image",
+            "default_entity_id": f"image.{j['id']}_photos_{j['orientation']}",
+            "image_topic": image_topic,
+            "content_type": "image/jpeg",
+            "json_attributes_topic": attr_topic,
+            "availability_topic": STATUS_TOPIC,
+            "device": UDEVICE,
+        }
+        client.publish(f"{DISCOVERY}/image/{UBASE}_{j['key']}/config", json.dumps(cfg), qos=1, retain=True)
+
+    def sync_discovery(self, client):
+        """Announce every current entity and remove the ones that no longer exist."""
+        with self.lock:
+            jobs = self.jobs()
+            keys = [j["key"] for j in jobs]
+            for j in jobs:
+                self.announce_job(client, j)
+            for key in self.published:
+                if key in keys:
+                    continue
+                image_topic, attr_topic = self.topics(key)
+                client.publish(f"{DISCOVERY}/image/{UBASE}_{key}/config", "", qos=1, retain=True)
+                client.publish(image_topic, "", qos=1, retain=True)
+                client.publish(attr_topic, "", qos=1, retain=True)
+                log.info("Removed Home Assistant entity for '%s'", key)
+            if self.published != keys:
+                self.published = keys
+                self.save()
+
+    def sync_if_connected(self):
+        if mgr.client is not None and CONNECTED.is_set():
+            self.sync_discovery(mgr.client)
+
+    # fetching
+    def fetch(self, j):
+        """Get one random photo for a job and publish it. Returns None on success or an error message."""
+        headers = {"Authorization": f"Client-ID {UNSPLASH_KEY}"}
+        term = random.choice(j["terms"])
+        log.info("%s: fetching '%s' from Unsplash", j["label"], term)
+        resp = requests.get(
+            f"{UNSPLASH_API}/photos/random",
+            headers=headers,
+            params={"query": term, "orientation": j["orientation"]},
+            timeout=15,
+        )
+        if resp.status_code == 401:
+            return "Unsplash says the Access Key is bad (401). Check the add-on Configuration tab."
+        if resp.status_code == 403:
+            return "Unsplash rate limit hit (403). Raise the interval or cut collections."
+        if resp.status_code == 404:
+            return "Unsplash found no photos for '%s'" % term
+        if resp.status_code != 200:
+            return "Unsplash error %s" % resp.status_code
+        data = resp.json()
+        img = requests.get(data["urls"][UNSPLASH_SIZE], timeout=60)
+        if img.status_code != 200:
+            return "Download failed (%s)" % img.status_code
+        full, thumb = render(io.BytesIO(img.content))
+
+        meta = {
+            "search_term": term,
+            "photographer": (data.get("user") or {}).get("name"),
+            "photo_url": (data.get("links") or {}).get("html"),
+            "fetched_at": time.time(),
+        }
+        image_topic, attr_topic = self.topics(j["key"])
+        # attributes first so they are already in place when the new picture arrives
+        mgr.publish(attr_topic, json.dumps({k: meta[k] for k in ("photographer", "photo_url", "search_term")}))
+        if not mgr.publish(image_topic, full):
+            return "MQTT is not connected"
+        with open(self.thumb_path(j["key"]), "wb") as f:
+            f.write(thumb)
+        with self.lock:
+            self.meta[j["key"]] = meta
+        self.save_state()
+        try:  # Unsplash API rules ask for this ping when a photo is used
+            requests.get(data["links"]["download_location"], headers=headers, timeout=10)
+        except Exception:
+            pass
+        log.info("%s: new photo by %s (%d KB)", j["label"], meta["photographer"] or "unknown", len(full) // 1024)
+        return None
+
+    def request(self, keys):
+        with self.lock:
+            self.pending.update(keys)
+        self.wake.set()
+
+    def run(self):
+        while not stop.is_set():
+            if not CONNECTED.wait(3):
+                continue
+            with self.lock:
+                pending = set(self.pending)
+            full = time.time() >= self.next_full
+            if not full and not pending:
+                self.wake.wait(min(30, max(0.5, self.next_full - time.time())))
+                self.wake.clear()
+                continue
+            with self.lock:
+                self.pending -= pending
+            if full:
+                with self.lock:
+                    self.last_full = time.time()
+                    self.next_full = self.last_full + UNSPLASH_MIN * 60
+                self.save_state()
+            todo = [j for j in self.jobs() if full or j["key"] in pending]
+            if not todo:
+                continue
+            if not UNSPLASH_KEY:
+                for j in todo:
+                    self.errors[j["key"]] = "No Unsplash Access Key set (add-on Configuration tab)."
+                if not self.warned_no_key:
+                    log.warning("No Unsplash Access Key set. Add it in the add-on Configuration tab and restart")
+                    self.warned_no_key = True
+                continue
+            self.busy = True
+            try:
+                for n, j in enumerate(todo):
+                    if stop.is_set():
+                        break
+                    try:
+                        err = self.fetch(j)
+                    except Exception as e:
+                        log.warning("%s: %s", j["label"], e)
+                        err = "Error: %s" % e
+                    if err:
+                        log.warning("%s: %s", j["label"], err)
+                        self.errors[j["key"]] = err
+                        if "rate limit" in err:
+                            for rest in todo[n + 1 :]:
+                                self.errors[rest["key"]] = err
+                            break
+                    else:
+                        self.errors.pop(j["key"], None)
+                    stop.wait(2)
+            finally:
+                self.busy = False
+
+    # operations
+    def validate(self, data, current=None):
+        name = str(data.get("name", "")).strip()[:40]
+        if not re.sub(r"[^a-z0-9]+", "", name.lower()):
+            raise ValueError("Give the collection a name (letters or numbers)")
+        for c in self.collections:
+            if c["name"].lower() == name.lower() and (current is None or c["id"] != current["id"]):
+                raise ValueError("A collection called '%s' already exists" % name)
+        terms = data.get("search_terms") or []
+        if isinstance(terms, str):
+            terms = terms.splitlines()
+        terms = [str(t).strip()[:80] for t in terms if str(t).strip()][:20]
+        if not terms:
+            raise ValueError("Add at least one search term")
+        orientation = data.get("orientation")
+        if orientation not in ORIENTATIONS:
+            raise ValueError("Choose Landscape, Portrait or Both")
+        return {"name": name, "search_terms": terms, "orientation": orientation}
+
+    def add(self, data):
+        cfg = self.validate(data)
+        with self.lock:
+            if len(self.collections) >= 30:
+                raise ValueError("That's a lot of collections. 30 max.")
+            base = re.sub(r"[^a-z0-9]+", "_", cfg["name"].lower()).strip("_")
+            ids = {c["id"] for c in self.collections}
+            cid, n = base, 2
+            while cid in ids:
+                cid, n = f"{base}_{n}", n + 1
+            c = {"id": cid, **cfg}
+            self.collections.append(c)
+            self.save()
+            keys = [f"{cid}_{o}" for o in self.orients(c)]
+        self.sync_if_connected()
+        self.request(keys)
+        log.info("Added Unsplash collection '%s'", c["name"])
+        return c
+
+    def update(self, cid, data):
+        c = self.get(cid)
+        if c is None:
+            raise KeyError(cid)
+        cfg = self.validate({**c, **data}, current=c)
+        with self.lock:
+            old_terms, old_keys = c["search_terms"], {f"{cid}_{o}" for o in self.orients(c)}
+            c.update(cfg)
+            new_keys = {f"{cid}_{o}" for o in self.orients(c)}
+            for key in old_keys - new_keys:
+                self.meta.pop(key, None)
+                self.errors.pop(key, None)
+                try:
+                    os.remove(self.thumb_path(key))
+                except OSError:
+                    pass
+            self.save()
+            fetch_keys = new_keys if cfg["search_terms"] != old_terms else new_keys - old_keys
+        self.save_state()
+        self.sync_if_connected()  # also refreshes the entity name after a rename
+        if fetch_keys:
+            self.request(fetch_keys)
+        log.info("Updated Unsplash collection '%s'", c["name"])
+        return c
+
+    def delete(self, cid):
+        with self.lock:
+            c = self.get(cid)
+            if c is None:
+                raise KeyError(cid)
+            self.collections.remove(c)
+            for o in ("landscape", "portrait"):
+                key = f"{cid}_{o}"
+                self.meta.pop(key, None)
+                self.errors.pop(key, None)
+                self.pending.discard(key)
+                try:
+                    os.remove(self.thumb_path(key))
+                except OSError:
+                    pass
+            self.save()
+        self.save_state()
+        self.sync_if_connected()
+        log.info("Deleted Unsplash collection '%s'", c["name"])
+
+    def fetch_now(self, cid=None):
+        keys = [j["key"] for j in self.jobs() if cid is None or j["id"] == cid]
+        self.request(keys)
+        return len(keys)
+
+    def view(self):
+        with self.lock:
+            cols = []
+            njobs = 0
+            for c in self.collections:
+                images = {}
+                for o in self.orients(c):
+                    key = f"{c['id']}_{o}"
+                    njobs += 1
+                    images[o] = {
+                        "key": key,
+                        "entity": f"image.{c['id']}_photos_{o}",
+                        "has_image": os.path.exists(self.thumb_path(key)),
+                        "meta": self.meta.get(key, {}),
+                        "error": self.errors.get(key),
+                    }
+                cols.append({**c, "images": images})
+            return {
+                "has_key": bool(UNSPLASH_KEY),
+                "interval_minutes": UNSPLASH_MIN,
+                "image_size": UNSPLASH_SIZE,
+                "busy": self.busy,
+                "next_cycle": self.next_full,
+                "per_hour": round(njobs * 60 / UNSPLASH_MIN, 1),
+                "collections": cols,
+            }
+
+
+unsplash = Unsplash()
+
+
 # ---------------------------------------------------------------- mqtt
 def mqtt_settings():
     if OPTIONS.get("mqtt_host"):
@@ -535,6 +922,8 @@ def mqtt_worker():
             for s in mgr.all():
                 s.discovery(c)
         mgr.purge_removed()
+        unsplash.sync_discovery(c)
+        unsplash.wake.set()
 
     def on_disconnect(c, userdata, rc):
         CONNECTED.clear()
@@ -585,11 +974,13 @@ def api_state():
             "max_dimension": MAX_DIM,
             "roots": [{"path": r, "exists": os.path.isdir(r)} for r in ROOTS],
             "shuffles": [s.view() for s in mgr.all()],
+            "unsplash": unsplash.view(),
             "log": list(UI_LOG.buf)[-80:],
         }
     )
 
 
+# folder shuffles
 @app.post("/api/shuffles")
 def api_add():
     try:
@@ -636,6 +1027,60 @@ def api_thumb(sid):
     return Response(s.thumb, mimetype="image/jpeg", headers={"Cache-Control": "no-cache"})
 
 
+# unsplash collections
+@app.post("/api/unsplash/collections")
+def api_u_add():
+    try:
+        c = unsplash.add(request.get_json(silent=True) or {})
+    except ValueError as e:
+        return err(str(e))
+    return jsonify(c)
+
+
+@app.put("/api/unsplash/collections/<cid>")
+def api_u_update(cid):
+    try:
+        c = unsplash.update(cid, request.get_json(silent=True) or {})
+    except KeyError:
+        return err("Not found", 404)
+    except ValueError as e:
+        return err(str(e))
+    return jsonify(c)
+
+
+@app.delete("/api/unsplash/collections/<cid>")
+def api_u_delete(cid):
+    try:
+        unsplash.delete(cid)
+    except KeyError:
+        return err("Not found", 404)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/unsplash/collections/<cid>/fetch")
+def api_u_fetch(cid):
+    if unsplash.get(cid) is None:
+        return err("Not found", 404)
+    return jsonify({"ok": True, "fetching": unsplash.fetch_now(cid)})
+
+
+@app.post("/api/unsplash/fetch")
+def api_u_fetch_all():
+    return jsonify({"ok": True, "fetching": unsplash.fetch_now()})
+
+
+@app.get("/api/unsplash/thumb/<key>.jpg")
+def api_u_thumb(key):
+    if not UKEY_RE.match(key):
+        return Response(status=404)
+    try:
+        with open(unsplash.thumb_path(key), "rb") as f:
+            data = f.read()
+    except OSError:
+        return Response(status=404)
+    return Response(data, mimetype="image/jpeg", headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/api/browse")
 def api_browse():
     p = request.args.get("path", "")
@@ -667,9 +1112,18 @@ def main():
         log.warning("No photo paths configured. Add some under Configuration, then restart")
     log.info("Allowed paths: %s | formats: %s", ", ".join(ROOTS) or "none", ", ".join(FORMATS))
     mgr.load()
-    log.info("Loaded %d shuffle(s)", len(mgr.shuffles))
+    log.info("Loaded %d folder shuffle(s)", len(mgr.shuffles))
+    unsplash.load()
+    log.info(
+        "Loaded %d Unsplash collection(s) | key: %s | every %d min, size %s",
+        len(unsplash.collections),
+        "set" if UNSPLASH_KEY else "not set",
+        UNSPLASH_MIN,
+        UNSPLASH_SIZE,
+    )
     for s in mgr.all():
         s.start()
+    threading.Thread(target=unsplash.run, daemon=True).start()
     threading.Thread(target=mqtt_worker, daemon=True).start()
     threading.Thread(
         target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PS_PORT", 8099)), threaded=True, use_reloader=False),
