@@ -1,5 +1,5 @@
 name: Voice Chat
-version: "1.0.0"
+version: "1.0.1"
 slug: voice_chat
 description: Hands-free voice conversation with any Home Assistant AI agent, answered out loud on the speaker you choose
 arch:
