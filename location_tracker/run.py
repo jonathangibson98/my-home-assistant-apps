@@ -601,6 +601,51 @@ def build_card_yaml(card=None):
     out += ["  - type: vertical-stack", "    cards:"] + grids
     return "\n".join(out) + "\n"
 
+# ---------------- Clickable switches ----------------
+TOGGLE_DOMAINS = ("input_boolean", "switch")
+
+def switch_list():
+    """Entities the Switches section may show and toggle: dashboard card people whose tap
+    entity is an input_boolean/switch, plus device tracker rows with Toggle ticked."""
+    items, seen = [], set()
+
+    def add(label, eid):
+        eid = (eid or "").strip().lower()
+        if eid.split(".")[0] not in TOGGLE_DOMAINS or eid in seen:
+            return
+        seen.add(eid)
+        items.append({"label": label, "entity_id": eid})
+
+    for r in load_card()["rows"]:
+        if r["group"] != "hidden":
+            add(r["label"], r["entity"])
+    for r in load_trackers():
+        if r.get("toggle"):
+            add(r.get("label", ""), r.get("entity_id"))
+    return items
+
+async def handle_get_switches(request):
+    s = request.app["session"]
+    out = []
+    for it in switch_list():
+        d = await state(s, it["entity_id"])
+        out.append({**it, "state": d["state"] if d else "unavailable"})
+    return web.json_response(out)
+
+async def handle_toggle(request):
+    s = request.app["session"]
+    data = await request.json()
+    eid = (data.get("entity_id") or "").strip().lower()
+    if eid not in {i["entity_id"] for i in switch_list()}:
+        return web.json_response({"status": "not allowed"}, status=403)
+    domain = eid.split(".")[0]
+    async with s.post(f"{API}/services/{domain}/toggle", headers=H, json={"entity_id": eid}) as r:
+        if r.status >= 400:
+            logging.error(f"Toggle {eid} failed: HTTP {r.status}")
+            return web.json_response({"status": "failed"}, status=502)
+    logging.info(f"Toggled {eid} from Web UI")
+    return web.json_response({"status": "ok"})
+
 HTML_PAGE = """<!DOCTYPE html>
 <html>
 <head>
@@ -621,6 +666,16 @@ HTML_PAGE = """<!DOCTYPE html>
         button:hover { opacity: 0.9; }
         p.hint { color: #94a3b8; font-size: 13px; }
         input[type="number"], select { padding: 6px; background: #0f172a; color: #fff; border: 1px solid #334155; border-radius: 4px; }
+        .switches { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
+        button.sw { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-width: 180px; padding: 12px 14px; background: #1e293b; border: 1px solid #334155; border-radius: 10px; color: #e1e1e1; text-align: left; }
+        button.sw .name { font-weight: bold; display: block; }
+        button.sw .eid { font-size: 11px; color: #94a3b8; display: block; word-break: break-all; }
+        button.sw .pill { flex: none; width: 46px; height: 26px; border-radius: 13px; background: #475569; position: relative; transition: background .15s; }
+        button.sw .pill::after { content: ''; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: left .15s; }
+        button.sw.on { border-color: #16a34a; }
+        button.sw.on .pill { background: #16a34a; }
+        button.sw.on .pill::after { left: 23px; }
+        button.sw.unavailable { opacity: 0.5; }
         textarea { width: 100%; box-sizing: border-box; padding: 8px; background: #0f172a; color: #e1e1e1; border: 1px solid #334155; border-radius: 4px; font-family: monospace; font-size: 12px; white-space: pre; }
     </style>
 </head>
@@ -628,6 +683,10 @@ HTML_PAGE = """<!DOCTYPE html>
     <h2>Sensor</h2>
     <p>Sensor name: <input type="text" id="sensor-name" placeholder="e.g. Everybody's Locations" style="width:60%"></p>
     <p id="info" class="hint"></p>
+
+    <h2>Switches</h2>
+    <p class="hint">Tap a switch to flip it in Home Assistant. Shows dashboard card people whose tap entity is an <code>input_boolean.*</code> or <code>switch.*</code>, plus any device tracker row with <b>Toggle</b> ticked. Changes here apply instantly, no save needed.</p>
+    <div id="switches" class="switches"></div>
 
     <h2>Location Tracker Devices</h2>
     <div class="scroll">
@@ -646,7 +705,7 @@ HTML_PAGE = """<!DOCTYPE html>
     <button onclick="addDevice()">+ Add Device</button>
 
     <h2>Sensors to Device Trackers</h2>
-    <p class="hint">Each row turns a sensor into a device_tracker. When the sensor's state matches the home state, the tracker is Home at your house coordinates (zone.home). Any other state makes it Away. Unavailable or unknown is ignored. Separate several home states with commas.</p>
+    <p class="hint">Each row turns a sensor into a device_tracker. When the sensor's state matches the home state, the tracker is Home at your house coordinates (zone.home). Any other state makes it Away. Unavailable or unknown is ignored. Separate several home states with commas. Tick <b>Toggle</b> to show the source entity as a clickable switch in the Switches section (only works if the source is an <code>input_boolean.*</code> or <code>switch.*</code>).</p>
     <div class="scroll">
     <table>
         <thead>
@@ -654,6 +713,7 @@ HTML_PAGE = """<!DOCTYPE html>
                 <th>Name</th>
                 <th>Source sensor</th>
                 <th>Home state (default: home)</th>
+                <th>Toggle</th>
                 <th>Device tracker ID</th>
                 <th>Action</th>
             </tr>
@@ -698,6 +758,13 @@ HTML_PAGE = """<!DOCTYPE html>
             i.placeholder = placeholder || '';
             return i;
         }
+        function checkInput(checked) {
+            const i = document.createElement('input');
+            i.type = 'checkbox';
+            i.checked = !!checked;
+            i.style.transform = 'scale(1.4)';
+            return i;
+        }
         function cell(child, cls) {
             const td = document.createElement('td');
             if (cls) td.className = cls;
@@ -729,6 +796,7 @@ HTML_PAGE = """<!DOCTYPE html>
                 cell(textInput(item.label, 'e.g. MJ')),
                 cell(textInput(item.entity_id, 'e.g. sensor.mj_location')),
                 cell(textInput(item.home_state, 'home')),
+                cell(checkInput(item.toggle)),
                 cell(item.tracker_id || '(created on save)', 'ro'),
                 delCell());
             document.getElementById('trackers').appendChild(tr);
@@ -765,6 +833,58 @@ HTML_PAGE = """<!DOCTYPE html>
             }
         }
 
+        let toggling = false;
+        async function loadSwitches() {
+            if (toggling) return;
+            const box = document.getElementById('switches');
+            try {
+                const list = await (await fetch('api/switches')).json();
+                box.innerHTML = '';
+                if (!list.length) {
+                    const p = document.createElement('p');
+                    p.className = 'hint';
+                    p.textContent = 'No switches yet. Give a dashboard card person an input_boolean tap entity, or tick Toggle on a device tracker row, then save.';
+                    box.appendChild(p);
+                    return;
+                }
+                list.forEach(it => {
+                    const b = document.createElement('button');
+                    const on = it.state === 'on';
+                    const gone = it.state === 'unavailable' || it.state === 'unknown';
+                    b.className = 'sw' + (on ? ' on' : '') + (gone ? ' unavailable' : '');
+                    const txt = document.createElement('span');
+                    const n = document.createElement('span');
+                    n.className = 'name';
+                    n.textContent = it.label || it.entity_id;
+                    const e = document.createElement('span');
+                    e.className = 'eid';
+                    e.textContent = it.entity_id + ' (' + it.state + ')';
+                    txt.append(n, e);
+                    const pill = document.createElement('span');
+                    pill.className = 'pill';
+                    b.append(txt, pill);
+                    b.onclick = () => toggleSwitch(it, b);
+                    box.appendChild(b);
+                });
+            } catch (err) { /* leave the last view in place */ }
+        }
+        async function toggleSwitch(it, btn) {
+            toggling = true;
+            btn.classList.toggle('on');
+            try {
+                const r = await fetch('api/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ entity_id: it.entity_id })
+                });
+                if (!r.ok) alert('Could not toggle ' + it.entity_id);
+            } catch (err) {
+                alert('Could not toggle ' + it.entity_id);
+            }
+            toggling = false;
+            setTimeout(loadSwitches, 500);
+        }
+
         async function loadData() {
             const sdata = await (await fetch('api/settings')).json();
             document.getElementById('sensor-name').value = sdata.name;
@@ -787,6 +907,7 @@ HTML_PAGE = """<!DOCTYPE html>
             document.getElementById('cardrows').innerHTML = '';
             card.rows.forEach(item => addCardRow(item));
             document.getElementById('card-yaml').value = card.yaml;
+            loadSwitches();
         }
 
         async function saveData() {
@@ -809,7 +930,8 @@ HTML_PAGE = """<!DOCTYPE html>
                         id: tr.dataset.id || '',
                         label: inputs[0].value.trim(),
                         entity_id: inputs[1].value.trim(),
-                        home_state: inputs[2].value.trim()
+                        home_state: inputs[2].value.trim(),
+                        toggle: tr.querySelector('input[type=checkbox]').checked
                     });
                 }
             });
@@ -848,6 +970,7 @@ HTML_PAGE = """<!DOCTYPE html>
         }
 
         loadData();
+        setInterval(loadSwitches, 5000);
     </script>
 </body>
 </html>
@@ -900,6 +1023,7 @@ async def handle_post_trackers(request):
             "label": label,
             "entity_id": src,
             "home_state": (r.get("home_state") or "").strip(),
+            "toggle": bool(r.get("toggle")),
             "tracker_id": tid,
         })
 
@@ -976,6 +1100,8 @@ async def start_web_server(s):
     app.router.add_post('/api/trackers', handle_post_trackers)
     app.router.add_get('/api/card', handle_get_card)
     app.router.add_post('/api/card', handle_post_card)
+    app.router.add_get('/api/switches', handle_get_switches)
+    app.router.add_post('/api/toggle', handle_toggle)
     app.router.add_get('/api/settings', handle_get_settings)
     app.router.add_post('/api/settings', handle_post_settings)
 

@@ -123,3 +123,14 @@ Saved inside the app's private storage and included in Home Assistant backups of
 
 - Nominatim asks for about one request per second at most. Results are cached by location, so this is rarely a problem.
 - Renaming never creates a duplicate, because the unique ID never changes.
+
+## Switches
+
+The **Switches** section at the top of the web UI lists entities you can flip with a click. It shows a live on/off state and applies instantly, no save needed.
+
+A switch appears when either:
+
+- A Dashboard Card person has an `input_boolean.*` or `switch.*` tap entity.
+- A Sensors to Device Trackers row has **Toggle** ticked and its source sensor is an `input_boolean.*` or `switch.*`.
+
+Only `input_boolean` and `switch` entities can be toggled, and only ones listed this way. Hidden card people are skipped.

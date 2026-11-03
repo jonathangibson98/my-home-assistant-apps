@@ -1,6 +1,14 @@
 # Changelog
 
-## Latest v0.9.1
+## Latest v0.10.0
+
+### Added
+- **Switches** section at the top of the web UI. Click a switch to toggle that entity in Home Assistant. It shows live state and refreshes every few seconds. No save needed.
+  - Includes any Dashboard Card person whose tap entity is an `input_boolean.*` or `switch.*`.
+  - Includes any Sensors to Device Trackers row with the new **Toggle** checkbox ticked (toggles that row's source sensor).
+  - Only entities in those lists can be toggled, and only `input_boolean` and `switch` domains.
+
+## Earlier v0.9.1
 
 ### Fixed
 - The `away` state (not_home with no GPS) now shows as `Away`, capitalized, to match `Home`.
