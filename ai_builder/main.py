@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""AI Builder - plain-English Home Assistant config builder, plus an AI voice-announcement maker, in one add-on."""
+"""Creator & AI Builder - plain-English Home Assistant config builder, AI voice announcements, SVG maker and backups, in one add-on."""
 import ast
 import asyncio
 import json
@@ -8,6 +8,7 @@ import os
 import platform
 import re
 import shutil
+import tempfile
 import time
 from collections import Counter
 from pathlib import Path
@@ -16,8 +17,11 @@ import aiohttp
 import yaml
 from aiohttp import web
 
+import svg_tool
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("ai_builder")
+svg = None  # SvgMaker, created in main()
 
 # Paths can be overridden with env vars so the add-on can be tested off-device.
 DATA = Path(os.environ.get("DATA_DIR", "/data"))
@@ -28,6 +32,7 @@ try:
     OPTS = json.load(open(DATA / "options.json"))
 except Exception:
     OPTS = {}
+logging.getLogger().setLevel(getattr(logging, str(OPTS.get("log_level") or "info").upper(), logging.INFO))
 
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 API = "http://supervisor/core/api"
@@ -78,6 +83,10 @@ PKG_DIR = PKG_FILE.parent
 STORE = DATA / "templates.json"
 HIST = DATA / "history.json"
 ANN_SETTINGS = DATA / "announcement_settings.json"
+BACKUP_DEFAULT = "/share/ai_builder_backups"
+BACKUP_PATH = svg_tool.clean_path(OPTS.get("backup_path") or BACKUP_DEFAULT, BACKUP_DEFAULT, "backup_path")
+BACKUP_KEEP = max(1, int(OPTS.get("backup_keep") or 20))
+BACKUP_PREFIX = "ai_builder_backup"
 
 HELPER_FIELDS = {
     "input_boolean": ["name", "icon", "initial"],
@@ -737,6 +746,13 @@ def page(name):
     return handler
 
 
+def asset(name, ctype):
+    async def handler(request):
+        return web.Response(text=(WWW / name).read_text(encoding="utf-8"), content_type=ctype,
+                            headers={"Cache-Control": "no-store"})
+    return handler
+
+
 INGRESS_IP = "172.30.32.2"  # only the Home Assistant ingress gateway may talk to us
 
 
@@ -1301,10 +1317,159 @@ async def ann_run(request):
     return web.json_response({"ok": code == 200, "detail": str(text)[:300]})
 
 
+# ---------------------------------------------------------------- backup / import
+# Saves this add-on's own data (template sensors it manages, "Made so far" history, announcement settings)
+# to the folder (or single .json file) given in the backup_path option, and imports it back.
+def backup_is_file():
+    return BACKUP_PATH.lower().endswith(".json")
+
+
+def backup_folder():
+    return Path(BACKUP_PATH).parent if backup_is_file() else Path(BACKUP_PATH)
+
+
+def collect_backup():
+    return {"kind": "ai_builder_backup", "format": 1, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "data": {"templates": load_json(STORE, {}), "history": load_json(HIST, []),
+                     "announcement_settings": load_json(ANN_SETTINGS, {})}}
+
+
+def parse_backup(text):
+    """Validate a backup file and return (templates, history, announcement_settings). Raises ValueError."""
+    try:
+        d = json.loads(text)
+    except ValueError:
+        raise ValueError("That file is not valid JSON.")
+    if not isinstance(d, dict) or d.get("kind") != "ai_builder_backup" or not isinstance(d.get("data"), dict):
+        raise ValueError("That file is not a Creator & AI Builder backup.")
+    data = d["data"]
+    templates = data.get("templates", {})
+    if not isinstance(templates, dict):
+        raise ValueError("The backup's template list is damaged.")
+    for k, e in templates.items():
+        if not (isinstance(e, dict) and all(isinstance(e.get(f), str) and e.get(f) for f in ("name", "unique_id", "state"))
+                and e.get("platform") in ("sensor", "binary_sensor")
+                and isinstance(e.get("attributes", {}) or {}, dict)):
+            raise ValueError("The backup has a damaged template entry (%s)." % str(k)[:60])
+    history = data.get("history", [])
+    if not isinstance(history, list):
+        raise ValueError("The backup's history is damaged.")
+    history = [h for h in history if isinstance(h, dict)][:40]
+    ann = data.get("announcement_settings", {})
+    if not isinstance(ann, dict):
+        raise ValueError("The backup's announcement settings are damaged.")
+    ann = {k: v for k, v in ann.items() if k in ANN_DEFAULTS and k != "helper_ai_task_entity"}
+    return templates, history, ann
+
+
+def backup_candidates():
+    folder = backup_folder()
+    if not folder.is_dir():
+        return []
+    if backup_is_file():
+        files = list(folder.glob(BACKUP_PREFIX + "_*.json"))
+        if Path(BACKUP_PATH).is_file():
+            files.append(Path(BACKUP_PATH))
+    else:
+        files = list(folder.glob("*.json"))
+    return sorted({f for f in files if f.is_file()}, key=lambda f: f.stat().st_mtime, reverse=True)
+
+
+def peek_backup(p):
+    try:
+        st = p.stat()
+        if st.st_size > 32 * 1024 * 1024:
+            return None
+        templates, history, ann = parse_backup(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return {"file": p.name, "size": st.st_size, "modified": time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime)),
+            "templates": len(templates), "history": len(history), "announcements": bool(ann)}
+
+
+def write_backup(tag=""):
+    """Write a backup and return its path. tag="_pre-import" is the safety copy made before an import."""
+    folder = backup_folder()
+    folder.mkdir(parents=True, exist_ok=True)
+    fixed = Path(BACKUP_PATH) if backup_is_file() else None
+    if fixed and not tag:
+        dest = fixed
+    else:
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        dest = folder / f"{BACKUP_PREFIX}{tag}_{stamp}.json"
+        n = 1
+        while dest.exists():
+            dest = folder / f"{BACKUP_PREFIX}{tag}_{stamp}-{n}.json"
+            n += 1
+    tmp = dest.with_name(dest.name + ".tmp")
+    tmp.write_text(json.dumps(collect_backup(), indent=2), encoding="utf-8")
+    os.replace(tmp, dest)  # a half-written backup never replaces a good one
+    olds = sorted((f for f in folder.glob(BACKUP_PREFIX + "_*.json") if f != fixed),
+                  key=lambda f: f.stat().st_mtime, reverse=True)
+    for f in olds[BACKUP_KEEP:]:
+        try:
+            f.unlink()
+        except OSError:
+            pass
+    return dest
+
+
+async def backup_info(request):
+    files = [p for p in (peek_backup(f) for f in backup_candidates()) if p]
+    return web.json_response({
+        "path": BACKUP_PATH, "mode": "file" if backup_is_file() else "folder", "keep": BACKUP_KEEP,
+        "files": files,
+        "current": {"templates": len(load_json(STORE, {})), "history": len(load_json(HIST, []))},
+    })
+
+
+async def backup_save(request):
+    try:
+        dest = write_backup()
+    except OSError as e:
+        log.error("Backup failed: %s", e)
+        return web.json_response({"ok": False, "error": "Could not write to %s (%s). Check the backup_path option." % (BACKUP_PATH, e)})
+    log.info("Backup saved to %s", dest)
+    return web.json_response({"ok": True, "file": dest.name, "path": str(dest)})
+
+
+async def backup_import(request):
+    app = request.app
+    body = await ann_body(request)
+    name = str(body.get("file") or "")
+    if not name or name != os.path.basename(name) or not name.lower().endswith(".json"):
+        return web.json_response({"ok": False, "error": "Pick a backup file from the list."})
+    path = backup_folder() / name
+    if not path.is_file():
+        return web.json_response({"ok": False, "error": "%s was not found in %s." % (name, backup_folder())})
+    try:
+        templates, history, ann = parse_backup(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return web.json_response({"ok": False, "error": str(e)})
+    try:
+        safety = write_backup("_pre-import")  # so an import can always be undone
+    except OSError as e:
+        return web.json_response({"ok": False, "error": "Could not save a safety copy first, so nothing was changed (%s)." % e})
+    save_json(STORE, templates)
+    save_json(HIST, history)
+    save_json(ANN_SETTINGS, ann)
+    note = ""
+    try:
+        render_package(templates)
+        await ha(app, "POST", "/services/template/reload", {})
+    except Exception as e:
+        log.warning("Import: could not rewrite the template file: %s", e)
+        note = "Data restored, but the template file could not be rewritten (%s)." % e
+    log.info("Imported backup %s (safety copy %s)", path, safety)
+    return web.json_response({"ok": True, "file": name, "safety": safety.name, "note": note,
+                              "templates": len(templates), "history": len(history), "announcements": bool(ann)})
+
+
 async def on_startup(app):
     app["http"] = aiohttp.ClientSession()
     render_package(load_json(STORE, {}))
-    log.info("AI Builder + Announcements ready - using %s, template file /config/%s, AppDaemon dir %s", ENTITY, TEMPLATE_REL, AD_DIR)
+    svg.start()
+    log.info("Creator & AI Builder ready - using %s, template file /config/%s, AppDaemon dir %s, backups %s", ENTITY, TEMPLATE_REL, AD_DIR, BACKUP_PATH)
 
 
 async def on_cleanup(app):
@@ -1312,13 +1477,18 @@ async def on_cleanup(app):
 
 
 def main():
-    app = web.Application(client_max_size=4 * 1024 * 1024, middlewares=[ingress_only])
+    global svg
+    svg = svg_tool.SvgMaker(OPTS)
+    app = web.Application(client_max_size=max(4 * 1024 * 1024, svg.max_upload_bytes + 1024 * 1024), middlewares=[ingress_only])
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
     app.add_routes([
         web.get("/", page("index.html")),
         web.get("/builder", page("builder.html")),
         web.get("/announcements", page("announcements.html")),
+        web.get("/svg", page("svg.html")),
+        web.get("/backup", page("backup.html")),
+        web.get("/svg-crop.js", asset("svg-crop.js", "application/javascript")),
         web.get("/api/status", status),
         web.get("/api/targets", targets),
         web.get("/api/mine", mine),
@@ -1334,6 +1504,14 @@ def main():
         web.post("/api/ann/helper", ann_helper),
         web.post("/api/ann/push", ann_push),
         web.post("/api/ann/run", ann_run),
+        # svg maker
+        web.get("/api/svg/settings", svg.settings),
+        web.post("/api/svg/convert", svg.convert),
+        web.post("/api/svg/save", svg.save),
+        # backup / import
+        web.get("/api/backup", backup_info),
+        web.post("/api/backup/save", backup_save),
+        web.post("/api/backup/import", backup_import),
     ])
     web.run_app(app, host="0.0.0.0", port=8099, access_log=None)
 

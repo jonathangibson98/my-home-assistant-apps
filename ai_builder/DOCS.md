@@ -1,12 +1,12 @@
-# AI Builder
+# Creator & AI Builder
 
-Builds Home Assistant things from plain English (automations, scenes, scripts, template sensors, helpers, AppDaemon apps, pyscripts, blueprints, whole add-ons) and makes AI voice announcements. Use the **Build / Announcements** switch at the top of the panel.
+Builds Home Assistant things from plain English (automations, scenes, scripts, template sensors, helpers, AppDaemon apps, pyscripts, blueprints, whole add-ons), makes AI voice announcements, turns photos into SVG icons, and backs up its own data. Use the tab bar at the top of the panel: **Build / Announcements / SVG Maker / Backup**.
 
 # Build
 
 ## How to use it
 
-1. Open **AI Builder** from the sidebar.
+1. Open **Creator & AI Builder** from the sidebar.
 2. Type what you want. Be specific about devices, times, and conditions.
 3. Pick a type, or leave it on **Let AI decide**.
 4. Tap **Build it**. Gemini-style backends can take a minute or two.
@@ -82,6 +82,11 @@ Scripts, scenes and automations written directly in YAML can't be loaded this wa
 | `ha_url` | `http://homeassistant:8123` | Only used when `ha_token` is set |
 | `helper_ai_task_entity` | blank | Optional separate AI task entity for the Announcements helpers. Blank uses the Announcements AI Task |
 | `template_file` | `ai_builder/package.yaml` | Where template sensors are written, relative to your Home Assistant config folder. Must end in `.yaml` |
+| `log_level` | `info` | `debug`, `info`, `warning` or `error`. Applies to the whole add-on |
+| `backup_path` | `/share/ai_builder_backups` | Where Backup saves and imports. A folder, or a single `.json` file. See Backup below |
+| `backup_keep` | `20` | Folder mode: keep the newest this many backups, delete older ones |
+
+SVG Maker options are listed in the SVG Maker section below.
 
 Restart the add-on after changing options.
 
@@ -142,7 +147,7 @@ None of this guarantees the automation does what you meant. Read the config befo
 
 **Long code gets cut off or isn't valid JSON**: add-ons are big outputs. Raise `request_timeout`, and consider asking for one add-on at a time.
 
-**Add-on log**: Settings -> Add-ons -> AI Builder -> Log.
+**Add-on log**: Settings -> Add-ons -> Creator & AI Builder -> Log.
 
 ## Privacy
 
@@ -182,3 +187,81 @@ Saved setups (the **Save setup** button) are stored in your browser, not in the 
 ## Security
 
 Only the Home Assistant ingress gateway can reach this add-on's web server, so other add-ons and devices on your network can't call it directly.
+
+---
+
+# SVG Maker
+
+Turn photos into scalable SVG vector files from the **SVG Maker** tab.
+
+## How to use
+1. Pick a photo. A crop window appears with the suggested crop already in place.
+2. Drag the photo to move it, pinch or use the Zoom slider to resize. Choose **Circle**, **Rounded**, **Square** or **Full** (whole photo). **Auto-fit** re-runs the suggestion and **Reset** starts over.
+3. Choose **Color** or **Black & white**, set the detail, and tap **Convert to SVG**.
+4. Preview the result, type the file name you want, then tap **Save locally** (to your save folder), **Download** (to your device) or **Both**.
+
+**Auto-crop** finds whatever stands out most and centers the crop on it. It is not face detection, so check it and nudge if needed. **Auto-enhance** boosts contrast, smooths texture and simplifies colors so photos trace into clean shapes and smaller files. The crop is made in your browser, so phone photos in formats like HEIC also work if your browser can open them.
+
+Every conversion is also auto-saved to the temp folder (`svg_temp_path`). Save locally or Both moves that copy into your save folder, so only unsaved results stay in temp. Files under `/homeassistant/www` are available in Home Assistant at `/local/...`, for example `/local/svg_maker/temp_icons/name.svg`. If `www` did not exist before, restart Home Assistant once so it starts serving `/local`.
+
+## File access
+The add-on can see `/homeassistant`, `/share`, `/media`, `/backup`, `/ssl`, `/addons`, `/config` (its own config) and `/addon_configs`. SVG Maker only writes to the save and temp folders you set. Protected system paths are refused.
+
+## SVG options
+
+| Option | Default | What it does |
+|---|---|---|
+| `svg_output_path` | `/homeassistant/custom_icons` | Where Save locally and Both put files. The default is the folder the Custom Icons integration reads. Created automatically |
+| `svg_temp_path` | `/homeassistant/www/svg_maker/temp_icons` | Auto-save location for results you did not save |
+| `svg_auto_delete_temp` | `false` | Delete old files the tool made from the temp folder. Never touches the save folder |
+| `svg_auto_delete_after_days` | `7` | Age limit when auto-delete is on |
+| `svg_filename_style` | `original_timestamp` | Naming for temp files (`original`, `timestamp`, `original_timestamp`) |
+| `svg_on_name_conflict` | `rename` | `rename` adds -1, -2. `overwrite` replaces |
+| `svg_default_mode` | `color` | Starting color mode on the page |
+| `svg_default_detail` | `5` | Starting detail (1 to 10) |
+| `svg_path_style` | `spline` | `spline`, `polygon` or `none` |
+| `svg_max_image_dimension` | `1600` | Longest side in pixels before tracing |
+| `svg_max_upload_mb` | `25` | Largest upload allowed |
+| `svg_icon_names` | `true` | Saves names as lowercase-with-hyphens so they work as icon names |
+| `svg_bw_follow_theme` | `true` | Black and white results use currentColor so Home Assistant can recolor them |
+| `svg_crop_editor` | `true` | Show the drag and zoom crop window after you pick a photo |
+| `svg_auto_crop` | `true` | Auto-suggest the crop. With the editor off, the auto crop is applied without asking |
+| `svg_crop_shape` | `circle` | `circle`, `rounded`, `square` or `none` (whole photo). Changeable on the page |
+| `svg_crop_padding` | `15` | Extra space around the detected subject, in percent |
+| `svg_output_size` | `512` | Cropped photo is shrunk to this many pixels before tracing |
+| `svg_auto_enhance` | `true` | Contrast, noise smoothing and color simplifying before tracing. Changeable on the page |
+
+Restart the add-on after changing options.
+
+## SVG tips
+- Works best on logos, drawings, signatures and images with clear shapes.
+- iPhone photo failing? Settings, Camera, Formats, **Most Compatible** (HEIC is not supported).
+- Slow on a Raspberry Pi? Lower `svg_max_image_dimension` or the detail slider. Conversions run one at a time.
+
+## Using your icons in Home Assistant
+Install the **Custom Icons** integration (HACS), enable the **Local** collection in its configuration, and press **RELOAD** after saving new icons. Icons are then available as `local:<file-name>`. Full-color icons keep their colors. Black and white icons follow the entity color when `svg_bw_follow_theme` is on.
+
+---
+
+# Backup
+
+The **Backup** tab saves and restores this add-on's own data:
+
+- the template sensors it manages (and so the template file it writes)
+- the "Made so far" history
+- your Announcements settings
+
+It does not back up your Home Assistant automations, scripts or helpers (use Home Assistant's own backups for those), saved SVG files, or the `/data/backups` copies of files the Builder overwrote.
+
+## Choosing where backups go
+Set `backup_path` in the Configuration tab and restart the add-on.
+
+- **A folder** (default `/share/ai_builder_backups`): each **Save backup now** creates `ai_builder_backup_YYYYMMDD-HHMMSS.json`. The newest `backup_keep` of those are kept. The Import list shows every valid backup file in the folder, so you can also copy a backup in from elsewhere.
+- **A single file** ending in `.json`, for example `/share/creator_backup.json`: each save overwrites that file, and Import reads it.
+
+Use a path under `/share`, `/media`, `/backup` or `/homeassistant`. Anything stored only inside the add-on is deleted if you uninstall it. Protected system paths are refused and the default is used instead.
+
+## Importing
+Tap **Import** next to a backup, then tap again to confirm. Import **replaces** the current template sensors, history and announcement settings with the backup's. Before it changes anything it saves a safety copy named `ai_builder_backup_pre-import_...json` in the same place, so you can import that one to undo. Damaged or non-backup files are rejected without changing anything. Template sensors are rewritten to the template file and reloaded straight away.
+
+Moving to a new Home Assistant: install the add-on, set the same `backup_path` (or copy the file there), and import. Announcement Maker settings from the old standalone add-on are a different format; use its Export and the Announcements Import for those.

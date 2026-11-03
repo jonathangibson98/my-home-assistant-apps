@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.1.0 - 2026-11-03
+
+The add-on is now **Creator & AI Builder** (same slug, so upgrading in place keeps everything).
+
+- New **SVG Maker** tab with everything from SVG Maker 1.4.0: crop editor (drag, pinch, zoom; circle, rounded, square, full), auto-crop suggestion, auto-enhance, color or black and white tracing, detail slider, Save locally / Download / Both, icon-friendly names, black and white icons that follow Home Assistant colors, unique clip ids, temp-folder auto-save with optional auto-delete, name-conflict handling and HA `/local/` URLs
+- SVG Maker options are now `svg_*` options (`svg_output_path`, `svg_temp_path`, `svg_auto_delete_temp`, `svg_auto_delete_after_days`, `svg_filename_style`, `svg_on_name_conflict`, `svg_default_mode`, `svg_default_detail`, `svg_path_style`, `svg_max_image_dimension`, `svg_max_upload_mb`, `svg_icon_names`, `svg_bw_follow_theme`, `svg_crop_editor`, `svg_auto_crop`, `svg_crop_shape`, `svg_crop_padding`, `svg_output_size`, `svg_auto_enhance`) with the same defaults. Copy over any you changed in the old add-on
+- New **Backup** tab: save a backup to, and import a backup from, the new `backup_path` option (a folder or a single `.json` file). Imports save a safety copy first. New `backup_keep` option
+- New `log_level` option (from SVG Maker) now applies to the whole add-on
+- The add-on now maps `/share`, `/media`, `/backup`, `/ssl` and its own config folder as well, so SVG and backup paths can point there
+- Option names and descriptions now show in the Configuration tab (new `translations/en.yaml`)
+- Tab bar scrolls sideways on narrow screens
+
 ## 2.0.0 - 2026-11-03
 
 AI Builder and Announcement Maker are now one add-on.
