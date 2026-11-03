@@ -1,1 +1,27 @@
-y
+configuration:
+  sensor_name:
+    name: Location sensor name
+    description: Starting name for the "who is home" sensor (first run only; rename it later on the Location page).
+  unique_id:
+    name: Location sensor unique ID
+    description: Optional. Paste the Unique ID from an old Location Tracker or Location Hub to keep the same sensor. First run only.
+  log_level:
+    name: Log level
+    description: How much detail to write to the log.
+  log_location_updates:
+    name: Log location updates
+    description: Write a log line each time the location sensor changes.
+  mqtt_host:
+    name: MQTT host
+    description: Leave blank to use the Mosquitto add-on.
+  mqtt_port:
+    name: MQTT port
+    description: Only used with an MQTT host.
+  mqtt_username:
+    name: MQTT username
+    description: Only used with an MQTT host.
+  mqtt_password:
+    name: MQTT password
+    description: Only used with an MQTT host.
+network:
+  8100/tcp: Read-only map (and optional ingest API). Used for dashboard embeds and other tracking apps.
