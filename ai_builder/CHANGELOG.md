@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.0.0 - 2026-11-03
+
+AI Builder and Announcement Maker are now one add-on.
+
+- New **Announcements** section with everything from Announcement Maker 0.4.0: info sources, personalities, TTS / Alexa / phone output, test before saving, helper tab, settings with entity pickers, export/import
+- New Build / Announcements switch at the top of the panel; each page stays loaded while you switch
+- One shared AI task entity, one Home Assistant connection, one sidebar entry
+- Pushed announcements show in "Made so far"
+- New options `ha_token`, `ha_url` and `helper_ai_task_entity` (all optional, from Announcement Maker)
+- Only the Home Assistant ingress gateway can reach the web server (Builder previously accepted any caller on the add-on network)
+- Same slug (`ai_builder`), so upgrading in place keeps your template entities and history. Announcement Maker settings do not carry over; use Export in the old add-on and Import here
+
 ## 1.1.1 - 2026-11-01
 
 - Fix: generated add-ons failed to build on aarch64 ("no match for platform in manifest") because the AI used an amd64 base image

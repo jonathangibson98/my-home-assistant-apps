@@ -1,7 +1,7 @@
 name: "AI Builder"
-version: "1.1.1"
+version: "2.0.0"
 slug: ai_builder
-description: "Type what you want in plain English; your ai_task entity builds automations, scenes, scripts, templates, helpers, AppDaemon apps, pyscripts, blueprints and add-ons."
+description: "Type what you want in plain English and your ai_task entity builds it: automations, scenes, scripts, templates, helpers, AppDaemon apps, pyscripts, blueprints, add-ons, plus AI voice announcements."
 url: "https://github.com/jonathangibson98/ha-ai-builder"
 arch:
   - aarch64
@@ -23,8 +23,14 @@ options:
   request_timeout: 180
   template_file: ai_builder/package.yaml
   appdaemon_apps_dir: /addon_configs/a0d7b954_appdaemon/apps
+  ha_token: ""
+  ha_url: "http://homeassistant:8123"
+  helper_ai_task_entity: ""
 schema:
   ai_task_entity: str
   request_timeout: int(30,600)
   template_file: str
   appdaemon_apps_dir: str
+  ha_token: password?
+  ha_url: str?
+  helper_ai_task_entity: str?

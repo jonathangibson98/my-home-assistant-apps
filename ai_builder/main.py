@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""AI Builder - turns plain-English requests into Home Assistant config using an ai_task entity."""
+"""AI Builder - plain-English Home Assistant config builder, plus an AI voice-announcement maker, in one add-on."""
 import ast
 import asyncio
 import json
@@ -19,19 +19,29 @@ from aiohttp import web
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("ai_builder")
 
+# Paths can be overridden with env vars so the add-on can be tested off-device.
+DATA = Path(os.environ.get("DATA_DIR", "/data"))
+WWW = Path(os.environ.get("WWW_DIR", "/app/www"))
+CONF = Path(os.environ.get("HA_CONFIG_DIR", "/homeassistant"))
+
+try:
+    OPTS = json.load(open(DATA / "options.json"))
+except Exception:
+    OPTS = {}
+
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 API = "http://supervisor/core/api"
 WS_URL = "ws://supervisor/core/websocket"
+USER_TOKEN = (OPTS.get("ha_token") or "").strip()
+if USER_TOKEN:  # optional long-lived token: talk to Home Assistant directly instead of through the Supervisor
+    _base = (OPTS.get("ha_url") or "http://homeassistant:8123").strip().rstrip("/")
+    TOKEN = USER_TOKEN
+    API = _base + "/api"
+    WS_URL = re.sub(r"^http", "ws", _base) + "/api/websocket"
 HDR = {"Authorization": f"Bearer {TOKEN}"}
 
-try:
-    OPTS = json.load(open("/data/options.json"))
-except Exception:
-    OPTS = {}
 ENTITY = OPTS.get("ai_task_entity") or "ai_task.gemini_pro_ai_task"
 TIMEOUT = int(OPTS.get("request_timeout") or 180)
-
-CONF = Path("/homeassistant")
 
 
 def resolve_template_file(value):
@@ -65,9 +75,9 @@ AD_DIR = resolve_dir(OPTS.get("appdaemon_apps_dir"), AD_DEFAULT)
 PY_DIR = CONF / "pyscript"
 PKG_FILE = CONF / TEMPLATE_REL
 PKG_DIR = PKG_FILE.parent
-STORE = Path("/data/templates.json")
-HIST = Path("/data/history.json")
-INDEX = Path("/app/index.html")
+STORE = DATA / "templates.json"
+HIST = DATA / "history.json"
+ANN_SETTINGS = DATA / "announcement_settings.json"
 
 HELPER_FIELDS = {
     "input_boolean": ["name", "icon", "initial"],
@@ -82,13 +92,13 @@ PRIORITY = {"helper": 0, "template": 1, "scene": 2, "script": 2, "pyscript": 3,
             "appdaemon": 3, "automation": 4, "blueprint": 5, "addon": 5}
 EDIT_ID_KINDS = ("automation", "scene", "appdaemon", "pyscript", "addon")
 TEXT_EXT = (".yaml", ".yml", ".json", ".py", ".sh", ".md", ".txt", ".html", ".js", ".css", ".cfg", ".toml", ".ini")
-BACKUPS = Path("/data/backups")
+BACKUPS = DATA / "backups"
 HOST_ARCH = {"aarch64": "aarch64", "arm64": "aarch64", "x86_64": "amd64", "amd64": "amd64"}.get(
     platform.machine().lower(), platform.machine())
 GOOD_BASE = "ghcr.io/home-assistant/base:latest"
 SCHEMA_RE = re.compile(r"^(str|password|email|url|bool|int|float|port|match|list|device|ssl)(\(.*\))?\??$")
 MAP_RE = re.compile(r"^(homeassistant_config|addon_config|all_addon_configs|ssl|addons|backup|share|media)(:(rw|ro))?$")
-ADDONS_DIR = Path("/addons")
+ADDONS_DIR = Path(os.environ.get("ADDONS_DIR", "/addons"))
 
 STOP = set(
     "the and for with that this when then from have has are was will into your you our out any all "
@@ -720,8 +730,21 @@ async def load_target(app, kind, tid):
 
 
 # ---------------------------------------------------------------- routes
-async def index(request):
-    return web.Response(text=INDEX.read_text(), content_type="text/html")
+def page(name):
+    async def handler(request):
+        return web.Response(text=(WWW / name).read_text(), content_type="text/html",
+                            headers={"Cache-Control": "no-store"})
+    return handler
+
+
+INGRESS_IP = "172.30.32.2"  # only the Home Assistant ingress gateway may talk to us
+
+
+@web.middleware
+async def ingress_only(request, handler):
+    if not os.environ.get("DEV") and request.remote != INGRESS_IP:
+        return web.json_response({"error": "ingress only"}, status=403)
+    return await handler(request)
 
 
 async def status(request):
@@ -1031,10 +1054,257 @@ async def delete_template(request):
     return web.json_response({"ok": True})
 
 
+# ---------------------------------------------------------------- announcement maker
+# Ported from the standalone Announcement Maker add-on. Everything lives under /api/ann/.
+ANN_DEFAULTS = {
+    "ai_task_entity": "", "helper_ai_task_entity": "", "tts_entity": "", "speaker": "", "alexa_targets": [],
+    "notify_targets": [], "music_players": [], "talking_flag": "", "personality_select": "", "household_context": "",
+    "combined_info_entity": "", "combined_info_attribute": "", "locations_entity": "", "weather_entity": "",
+    "inside_temp_entity": "", "news_entity": "", "calendar_entities": [], "todo_entity": "", "trash_entity": "",
+    "custom_sources": [], "sources": None, "default_volume": 70, "default_length": 1000,
+    "hype_style": "Be funny and hype us up. Boost our confidence. PG-13 language, no insults.",
+    "roast_style": "Roast us super aggressively. Rated-R, heavy profanity, funny not hurtful.",
+    "sweet_style": "Be super sweet and warm to everyone. Playful teasing only, never mean.",
+}
+ANN_ID_RE = re.compile(r"^[a-z0-9_]{1,60}$")
+ANN_ENT_RE = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
+ANN_TEST_ID = "announcement_maker_test"
+ANN_TEST = {"status": "idle"}
+ANN_TASKS = set()
+
+
+def ann_settings():
+    s = dict(ANN_DEFAULTS)
+    s.update({k: v for k, v in OPTS.items() if k in ANN_DEFAULTS})
+    s.update({k: v for k, v in load_json(ANN_SETTINGS, {}).items() if k in ANN_DEFAULTS})
+    if OPTS.get("helper_ai_task_entity"):  # set in the add-on Configuration tab
+        s["helper_ai_task_entity"] = OPTS["helper_ai_task_entity"]
+    if not s.get("ai_task_entity"):  # share the Builder's AI task entity unless one was picked in Settings
+        s["ai_task_entity"] = ENTITY
+    return s
+
+
+async def ann_body(request):
+    try:
+        b = await request.json()
+    except ValueError:
+        raise web.HTTPBadRequest(text=json.dumps({"error": "bad json"}), content_type="application/json")
+    return b if isinstance(b, dict) else {}
+
+
+async def ha_text(app, method, path, body=None, params=None, timeout=20):
+    return await ha(app, method, path, body, params, timeout, raw=True)
+
+
+async def ann_run_test(app, cfg, mode):
+    """Run the script once under a temporary id, record what the AI saw/said, then delete it."""
+    global ANN_TEST
+    try:
+        if not isinstance(cfg, dict):
+            ANN_TEST = {"status": "error", "error": "The script YAML is empty or not valid."}
+            return
+        seq = cfg.get("sequence") or []
+        keys, last = [], -1
+        for i, st in enumerate(seq):
+            if isinstance(st, dict) and isinstance(st.get("variables"), dict):
+                ks = [k for k in st["variables"] if k.startswith("src_")]
+                if ks:
+                    keys, last = ks, i
+        if not keys:
+            ANN_TEST = {"status": "error", "error": "Tick at least one data source first."}
+            return
+        if mode == "data":
+            seq = seq[: last + 1]
+        res = {"sources": {k: "{{ %s }}" % k for k in keys}}
+        if mode != "data":
+            res.update({"speech": "{{ speech }}", "raw": "{{ announcement.data }}"})
+        cfg["sequence"] = seq + [{"variables": {"test_result": res}},
+                                 {"stop": "Test finished", "response_variable": "test_result"}]
+        cfg["alias"] = "[TEST] " + str(cfg.get("alias", "announcement"))
+        code, text = await ha_text(app, "POST", f"/config/script/config/{ANN_TEST_ID}", cfg)
+        if code != 200:
+            ANN_TEST = {"status": "error", "error": "HA refused the test script (%s): %s" % (code, str(text)[:400])}
+            return
+        await ha_text(app, "POST", "/services/script/reload", {})
+        await asyncio.sleep(1.5)
+        code, text = await ha_text(app, "POST", f"/services/script/{ANN_TEST_ID}", {},
+                                   params={"return_response": "true"}, timeout=420)
+        if code != 200:
+            ANN_TEST = {"status": "error", "error": str(text)[:1500]}
+            return
+        r = json.loads(text).get("service_response") or {}
+        if "sources" not in r and len(r) == 1 and isinstance(list(r.values())[0], dict):
+            r = list(r.values())[0]
+        ANN_TEST = dict(r, status="done")
+    except Exception as e:
+        log.exception("announcement test failed")
+        ANN_TEST = {"status": "error", "error": str(e)}
+    finally:
+        await ha_text(app, "DELETE", f"/config/script/config/{ANN_TEST_ID}")
+        await ha_text(app, "POST", "/services/script/reload", {})
+
+
+def ann_parse_ai(data):
+    """AI Task data may be a dict already or text that contains a JSON object."""
+    if isinstance(data, dict):
+        return data
+    return json.loads(re.search(r"\{.*\}", str(data), re.S).group(0))
+
+
+async def ann_ai_json(app, ai, task_name, prompt):
+    """Ask the AI Task entity and return (parsed_json, error_message)."""
+    code, data = await ha(app, "POST", "/services/ai_task/generate_data",
+                          {"entity_id": ai, "task_name": task_name, "instructions": prompt},
+                          params={"return_response": "true"}, timeout=90)
+    if code != 200:
+        return None, "AI Task failed (%s): %s" % (code, errmsg(data)[:200])
+    try:
+        return ann_parse_ai(data["service_response"]["data"]), None
+    except Exception:
+        return None, "The AI answer was not usable JSON. Try rewording."
+
+
+async def ann_helper_instructions(app, body):
+    idea, ai = str(body.get("idea", ""))[:1000], body.get("ai", "")
+    srcs = [x for x in body.get("sources", []) if isinstance(x, dict) and re.match(r"^\w+$", str(x.get("id", "")))]
+    if not (idea and ANN_ENT_RE.match(str(ai)) and str(ai).startswith("ai_task.")):
+        return {"ok": False, "error": "Describe what you want and set an AI Task entity."}
+    prompt = ("You help write voice announcement scripts for Home Assistant. Later, an AI will receive live data plus the "
+              "instructions you write, and will write a spoken announcement.\nData sources available (id: label): %s\n"
+              "Notes: calendar events are grouped under each calendar entity id (calendars: %s). Weather has current conditions "
+              "plus a daily forecast for up to 7 days.\nUser's idea: %s\n"
+              "Reply with ONLY JSON, no code fences: {\"name\": \"short script name\", \"sources\": [\"ids of sources needed\"], "
+              "\"task\": \"clear instructions for the announcement writer, 1-5 sentences, including any conditions\"}"
+              % ("; ".join("%s: %s" % (x["id"], x.get("label", "")) for x in srcs),
+                 ", ".join(body.get("calendars", [])) or "none", idea))
+    j, err = await ann_ai_json(app, ai, "Instruction helper", prompt)
+    if err:
+        return {"ok": False, "error": err}
+    ids = {x["id"] for x in srcs}
+    return {"ok": True, "name": str(j.get("name") or "")[:60], "task": str(j.get("task") or "")[:1500],
+            "sources": [i for i in (j.get("sources") or []) if i in ids]}
+
+
+async def ann_helper_source(app, body):
+    ent, goal, ai = body.get("entity", ""), str(body.get("goal", ""))[:500], body.get("ai", "")
+    if not (ANN_ENT_RE.match(str(ent)) and ANN_ENT_RE.match(str(ai)) and str(ai).startswith("ai_task.") and goal):
+        return {"ok": False, "error": "Pick an entity, say what you want, and set an AI Task entity."}
+    code, st = await ha(app, "GET", "/states/" + ent)
+    if code != 200 or not isinstance(st, dict):
+        return {"ok": False, "error": "Could not read %s (HA said %s)." % (ent, code)}
+    attrs = st.get("attributes", {})
+    prompt = ("You are helping set up a Home Assistant voice announcement. The user wants to pull info from one entity into it.\n"
+              "Entity: %s\nState: %s\nAttributes (JSON, may be cut off): %s\nThe user wants: %s\n"
+              "If one attribute holds what they want, give its exact name. If they need several or it is unclear, "
+              "use an empty string, which includes the state and all attributes.\n"
+              "Reply with ONLY JSON, no code fences: {\"label\": \"short name under 30 chars\", "
+              "\"attribute\": \"exact attribute name or empty string\", \"note\": \"one sentence on what this will read\"}"
+              % (ent, st.get("state"), json.dumps(attrs)[:3000], goal))
+    j, err = await ann_ai_json(app, ai, "Source helper", prompt)
+    if err:
+        return {"ok": False, "error": err.replace("Try rewording.", "Try rewording what you want.")}
+    attr = j.get("attribute") or ""
+    if attr not in attrs or not re.match(r"^[\w .\-]+$", attr):
+        attr = ""
+    tmpl = ("{{ state_attr('%s', '%s') }}" % (ent, attr)) if attr else (
+        "{{ states('%s') }} {{ states.%s.attributes | default('', true) }}" % (ent, ent))
+    code, prev = await ha_text(app, "POST", "/template", {"template": tmpl})
+    return {"ok": True, "label": str(j.get("label") or ent)[:40], "attribute": attr,
+            "note": str(j.get("note") or "")[:200], "preview": str(prev)[:300] if code == 200 else "(could not render preview)"}
+
+
+async def ann_options(request):
+    return web.json_response(ann_settings())
+
+
+async def ann_entities(request):
+    app = request.app
+    st, states = await ha(app, "GET", "/states")
+    ents = []
+    if st == 200 and isinstance(states, list):
+        ents = [{"id": e["entity_id"], "name": (e.get("attributes") or {}).get("friendly_name") or e["entity_id"]}
+                for e in states]
+    st, svc = await ha(app, "GET", "/services")  # notify.mobile_app_* are services, not entities
+    if st == 200 and isinstance(svc, list):
+        for d in svc:
+            if d.get("domain") == "notify":
+                ents += [{"id": "notify." + n, "name": n.replace("_", " ") + " (service)", "svc": True}
+                         for n in (d.get("services") or {}) if n not in ("send_message", "persistent_notification")]
+    return web.json_response(sorted(ents, key=lambda e: e["id"]))
+
+
+async def ann_save_settings(request):
+    body = await ann_body(request)
+    clean = {k: v for k, v in body.items() if k in ANN_DEFAULTS and k != "helper_ai_task_entity"}
+    save_json(ANN_SETTINGS, clean)
+    return web.json_response(ann_settings())
+
+
+async def ann_test_status(request):
+    return web.json_response(ANN_TEST)
+
+
+async def ann_test_start(request):
+    global ANN_TEST
+    body = await ann_body(request)
+    if ANN_TEST.get("status") == "running":
+        return web.json_response({"ok": False, "error": "A test is already running."})
+    try:
+        cfg = yaml.safe_load(body.get("yaml", ""))
+    except yaml.YAMLError as e:
+        return web.json_response({"error": "YAML problem: %s" % e}, status=400)
+    mode = body.get("mode") if body.get("mode") in ("data", "text", "full") else "text"
+    ANN_TEST = {"status": "running", "mode": mode}
+    t = asyncio.create_task(ann_run_test(request.app, cfg, mode))
+    ANN_TASKS.add(t)  # keep a reference so the task is not garbage collected mid-run
+    t.add_done_callback(ANN_TASKS.discard)
+    return web.json_response({"ok": True})
+
+
+async def ann_helper(request):
+    body = await ann_body(request)
+    if body.get("mode") == "instructions":
+        return web.json_response(await ann_helper_instructions(request.app, body))
+    return web.json_response(await ann_helper_source(request.app, body))
+
+
+async def ann_script_id(body):
+    sid = str(body.get("id", ""))
+    if not ANN_ID_RE.match(sid):
+        raise web.HTTPBadRequest(text=json.dumps({"error": "script id must be lowercase letters, numbers, underscores"}),
+                                 content_type="application/json")
+    return sid
+
+
+async def ann_push(request):
+    app = request.app
+    body = await ann_body(request)
+    sid = await ann_script_id(body)
+    try:
+        cfg = yaml.safe_load(body.get("yaml", ""))
+    except yaml.YAMLError as e:
+        return web.json_response({"error": "YAML problem: %s" % e}, status=400)
+    if not isinstance(cfg, dict):
+        return web.json_response({"ok": False, "detail": "The script YAML is empty or not valid."})
+    code, text = await ha_text(app, "POST", f"/config/script/config/{sid}", cfg)
+    if code != 200:
+        return web.json_response({"ok": False, "detail": "HA said %s: %s" % (code, str(text)[:300])})
+    await ha_text(app, "POST", "/services/script/reload", {})
+    add_history({"kind": "announcement", "name": str(cfg.get("alias") or sid), "entity": f"script.{sid}"})
+    return web.json_response({"ok": True, "entity": f"script.{sid}"})
+
+
+async def ann_run(request):
+    body = await ann_body(request)
+    sid = await ann_script_id(body)
+    code, text = await ha_text(request.app, "POST", "/services/script/turn_on", {"entity_id": f"script.{sid}"})
+    return web.json_response({"ok": code == 200, "detail": str(text)[:300]})
+
+
 async def on_startup(app):
     app["http"] = aiohttp.ClientSession()
     render_package(load_json(STORE, {}))
-    log.info("AI Builder ready - using %s, template file /config/%s, AppDaemon dir %s", ENTITY, TEMPLATE_REL, AD_DIR)
+    log.info("AI Builder + Announcements ready - using %s, template file /config/%s, AppDaemon dir %s", ENTITY, TEMPLATE_REL, AD_DIR)
 
 
 async def on_cleanup(app):
@@ -1042,17 +1312,28 @@ async def on_cleanup(app):
 
 
 def main():
-    app = web.Application(client_max_size=4 * 1024 * 1024)
+    app = web.Application(client_max_size=4 * 1024 * 1024, middlewares=[ingress_only])
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
     app.add_routes([
-        web.get("/", index),
+        web.get("/", page("index.html")),
+        web.get("/builder", page("builder.html")),
+        web.get("/announcements", page("announcements.html")),
         web.get("/api/status", status),
         web.get("/api/targets", targets),
         web.get("/api/mine", mine),
         web.post("/api/generate", generate),
         web.post("/api/create", create),
         web.post("/api/delete_template", delete_template),
+        # announcement maker
+        web.get("/api/ann/options", ann_options),
+        web.get("/api/ann/entities", ann_entities),
+        web.get("/api/ann/test", ann_test_status),
+        web.post("/api/ann/settings", ann_save_settings),
+        web.post("/api/ann/test", ann_test_start),
+        web.post("/api/ann/helper", ann_helper),
+        web.post("/api/ann/push", ann_push),
+        web.post("/api/ann/run", ann_run),
     ])
     web.run_app(app, host="0.0.0.0", port=8099, access_log=None)
 

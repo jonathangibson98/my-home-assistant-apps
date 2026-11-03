@@ -1,6 +1,8 @@
 # AI Builder
 
-Builds Home Assistant things from plain English: automations, scenes, scripts, template sensors, helpers, AppDaemon apps, pyscripts, blueprints, and whole add-ons.
+Builds Home Assistant things from plain English (automations, scenes, scripts, template sensors, helpers, AppDaemon apps, pyscripts, blueprints, whole add-ons) and makes AI voice announcements. Use the **Build / Announcements** switch at the top of the panel.
+
+# Build
 
 ## How to use it
 
@@ -69,13 +71,16 @@ Use the **Change something that already exists** dropdown. It lists your UI-crea
 
 Scripts, scenes and automations written directly in YAML can't be loaded this way. For AppDaemon and pyscript, only the code is changed. For add-ons, it only rewrites the files the AI changed and asks it to bump the version.
 
-## Configuration
+## Configuration (applies to the whole add-on)
 
 | Option | Default | Description |
 |---|---|---|
 | `ai_task_entity` | `ai_task.gemini_pro_ai_task` | The AI task entity used to write configs |
 | `request_timeout` | `180` | Seconds to wait for the AI before giving up (30 to 600) |
 | `appdaemon_apps_dir` | `/addon_configs/a0d7b954_appdaemon/apps` | Your AppDaemon apps folder. Must be under `/addon_configs` or your HA config folder |
+| `ha_token` | blank | Optional long-lived token. Leave blank unless the default Supervisor access fails (Profile -> Security in Home Assistant) |
+| `ha_url` | `http://homeassistant:8123` | Only used when `ha_token` is set |
+| `helper_ai_task_entity` | blank | Optional separate AI task entity for the Announcements helpers. Blank uses the Announcements AI Task |
 | `template_file` | `ai_builder/package.yaml` | Where template sensors are written, relative to your Home Assistant config folder. Must end in `.yaml` |
 
 Restart the add-on after changing options.
@@ -142,3 +147,38 @@ None of this guarantees the automation does what you meant. Read the config befo
 ## Privacy
 
 Your request, plus a trimmed list of entity IDs, names, and states relevant to it, is sent to your configured `ai_task` entity. If that entity uses a cloud model, that data goes to that provider. The add-on itself sends nothing anywhere else.
+
+---
+
+# Announcements
+
+All announcement setup happens inside the app, on the **Settings** tab of Announcements, not in this Configuration tab.
+
+- Each field is a search box limited to the right entity type. Tap one, pick an entity, it becomes a chip. Tap the chip to remove it.
+- **Auto-fill empty** fills single-choice fields that only have one match.
+- **Info sources** cover anything else: label, entity, optional attribute (concerts, sports, PS5...), or a custom template.
+- **Export / Import** moves your settings as JSON. `examples/announcement-settings.json` is a filled-in example.
+- Required to generate: AI Task, text-to-speech engine, main speaker. The AI Task defaults to this add-on's `ai_task_entity`.
+- The personality dropdown (optional) needs an `input_select` with options `Hype`, `Roast`, `Sweetie Pie`.
+
+## Announcement tabs
+
+- **Create:** pick data, personality, then type **What should it do?** in plain words. Every data source is loaded into a variable (`src_<name>`) in the script, and the AI Task reads those variables.
+- **Test before saving:** runs a temporary copy of the script and deletes it afterward, so nothing lands in your Scripts list. *Preview data only* skips the AI and speaking, and shows what each source rendered. *Test (text only)* also runs the AI and shows what it would say. *Test with sound* speaks it too. If a step fails, the error from Home Assistant is shown.
+- **Push to Home Assistant** writes the script (it then appears in Settings -> Scripts and in Build's history).
+- **Helper:** (1) describe what you want and the AI writes the instructions and ticks the data it needs; (2) test an entity and add it as an info source.
+- **Settings:** your entities and notify targets, plus info sources. Each source has a template you can edit to fix it, and a reset button to go back to the auto-generated one.
+
+Phone notifications: entities (`notify.jon`) and services (`notify.mobile_app_*`, shown as "service") both work, and you can type an id that isn't listed.
+
+Saved setups (the **Save setup** button) are stored in your browser, not in the add-on.
+
+## Announcement troubleshooting
+
+**Push to Home Assistant fails**: check the Log tab. If Home Assistant refuses the default Supervisor access, set `ha_token`.
+
+**No entities in the pickers**: you can still type an entity id into any field.
+
+## Security
+
+Only the Home Assistant ingress gateway can reach this add-on's web server, so other add-ons and devices on your network can't call it directly.
