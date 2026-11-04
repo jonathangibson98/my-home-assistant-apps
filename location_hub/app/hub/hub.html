@@ -67,8 +67,11 @@ const SECS={loc:["Location",[["switches","Switches"],["devices","Devices"],["tra
  alerts:["Alerts",[["places","Places"],["people","People & sensors"],["notify","Notifications"],["log","Activity"]]]};
 const SUBS={loc:"Where everyone is, what is switched on, and your dashboard card.",alerts:"Pick the places, pick who triggers them, pick how the message sounds."};
 let cfg,loc={settings:{},devices:[],trackers:[],card:{rows:[]}},ent={zones:[],trackable:[],ai:[],notify:[],toggles:[],location_sensor:""};
-let sec=(location.hash==="#alerts"?"alerts":"loc"),tab=(location.hash==="#alerts"?"places":"switches"),open=new Set(),dirty=new Set(),busy=false;
+const hp=location.hash.slice(1).split("/");
+let sec=SECS[hp[0]]?hp[0]:"loc",tab=(SECS[sec][1].some(t=>t[0]===hp[1])?hp[1]:null)||"switches",open=new Set(),dirty=new Set(),busy=false;
 const mem={loc:"switches",alerts:"places"};
+if(!SECS[sec][1].some(t=>t[0]===tab))tab=mem[sec];
+mem[sec]=tab;
 const uid=()=>Math.random().toString(36).slice(2,9);
 const stat=()=>{$("#stat").textContent=dirty.size?"Unsaved changes":"All saved"};
 const mark=g=>{dirty.add(g);stat()};
@@ -95,7 +98,7 @@ async function init(){
 }
 function render(){
   $("#sub").textContent=SUBS[sec];
-  $("#seg").innerHTML=`<button data-map="1">Map</button>`+Object.entries(SECS).map(([k,v])=>`<button data-sec="${k}" class="${k===sec?"on":""}">${v[0]}</button>`).join("");
+  $("#seg").innerHTML=`<button data-nav="">Home</button><button data-nav="map">Map</button>`+Object.entries(SECS).map(([k,v])=>`<button data-sec="${k}" class="${k===sec?"on":""}">${v[0]}</button>`).join("");
   $("#nav").innerHTML=SECS[sec][1].map(([k,l])=>`<button data-tab="${k}" class="${k===tab?"on":""}">${l}</button>`).join("");
   $("#view").innerHTML=VIEWS[tab]();
   if(tab==="log")loadLog();
@@ -255,9 +258,9 @@ document.addEventListener("change",e=>{
   }
 });
 document.addEventListener("click",async e=>{
-  const t=e.target.closest("[data-map],[data-sec],[data-tab],[data-tog],[data-act]");if(!t||e.target.closest(".sw:not(.vis)"))return;
+  const t=e.target.closest("[data-nav],[data-sec],[data-tab],[data-tog],[data-act]");if(!t||e.target.closest(".sw:not(.vis)"))return;
   const d=t.dataset;
-  if(d.map){if(dirty.size&&!confirm("You have unsaved changes. Leave without saving?"))return;location.href=BASE||"./";return}
+  if(d.nav!==undefined){if(dirty.size&&!confirm("You have unsaved changes. Leave without saving?"))return;location.href=BASE+d.nav;return}
   if(d.sec){sec=d.sec;tab=mem[sec];render();return}
   if(d.tab){tab=d.tab;mem[sec]=tab;render();return}
   if(d.tog){open.has(d.tog)?open.delete(d.tog):open.add(d.tog);render();return}

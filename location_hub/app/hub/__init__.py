@@ -17,6 +17,7 @@ log = logging.getLogger("hub")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PAGE = os.path.join(HERE, "hub.html")
+HOME = os.path.join(HERE, "home.html")
 
 # Files an old stand-alone Location Hub (or Location Tracker / Arrival Alerts) kept in /data.
 LEGACY_FILES = ("devices.json", "trackers.json", "card.json", "config.json")
@@ -70,6 +71,10 @@ async def page(request: web.Request) -> web.StreamResponse:
     return web.FileResponse(PAGE, headers={"Cache-Control": "no-store"})
 
 
+async def home(request: web.Request) -> web.StreamResponse:
+    return web.FileResponse(HOME, headers={"Cache-Control": "no-store"})
+
+
 def setup(app: web.Application, session):
     """Register the hub's pages and API on the admin app. Returns the background jobs to run.
 
@@ -84,6 +89,7 @@ def setup(app: web.Application, session):
     alerts_app.http = session
     app["hub_alerts"] = alerts_app
     tracker.add_routes(app)
+    app.router.add_get("/", home)
     app.router.add_get("/hub", page)
     app.router.add_get("/hub/", page)
     app.router.add_routes(alerts_app.routes())
