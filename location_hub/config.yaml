@@ -1,5 +1,5 @@
 name: "Location Hub"
-version: "2.0.0"
+version: "2.3.0"
 slug: location_hub
 description: "Location history map with trails, playback and stops, plus everyone's location sensor, switches, device trackers, a dashboard card and AI arrival alerts. One add-on, one sidebar entry."
 arch:
