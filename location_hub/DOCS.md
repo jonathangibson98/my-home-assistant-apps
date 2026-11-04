@@ -10,7 +10,7 @@ heatmap. Everything is stored on your own Pi, and everything on the map is set u
 ## Quick start
 
 1. Install and **Start** the app (see the repo README for how to add it).
-2. Turn on **Show in sidebar**. A **Location Hub** entry appears in your sidebar.
+2. Turn on **Show in sidebar**. A **Location Hub** entry appears in your sidebar and opens the home page.
 3. Open it. On the first start, every Home Assistant **person** that has GPS is tracked
    automatically. Your devices show up on the map within seconds.
 4. Open **Settings > Tracked devices** to add or remove people and device trackers, set names,
@@ -59,7 +59,7 @@ Home Assistant zones. **Time at places** totals how long a device spent at each 
 
 ## Location and Alerts pages
 
-The map's tab bar ends with **Location ↗** and **Alerts ↗**. They open the Location Hub pages; the **Map** button at the top of those pages brings you back. **Save changes** at the bottom of a Hub page saves everything you edited there. Switches apply instantly and need no save.
+The add-on opens on a **home page** with a tile for every section: the map's Live, History, Timeline, Places and Settings, the Location pages (Switches, Devices, Sensor trackers, Dashboard card) and the Alerts pages (Arrival places, People & sensors, Notifications, Activity). Click a tile to open that part. Under the title it shows who is where right now. Inside the map, the **⌂ Home** tab returns to the home page; on the Location and Alerts pages use the **Home** and **Map** buttons at the top. **Save changes** at the bottom of a Hub page saves everything you edited there. Switches apply instantly and need no save.
 
 ### Location
 

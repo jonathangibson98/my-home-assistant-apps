@@ -3,7 +3,7 @@
 ## 2.0.0
 
 - Combined **Mini Tracker** (1.1.1) and **Location Hub** (1.0.0) into one add-on. Every feature from both is kept.
-- One process, one ingress port, one sidebar entry. The map is the home page; **Location** and **Alerts** open from its tab bar, and the **Map** button returns.
+- One process, one ingress port, one sidebar entry. New **home page** with a tile for every section (map tabs, Location pages, Alerts pages); click one to open it. The map is at `/map`, with a **Home** tab to return.
 - The Hub's API moved to `/api/hub/*` and its files to `/data/hub`, so nothing clashes with the map's `/api/settings` and `/data/settings.json`.
 - An existing Location Hub 1.x install is migrated automatically on first start (files moved to `/data/hub`, same sensor and trackers).
 - Options are the Location Hub's (sensor name, unique ID, log level, MQTT broker). Log level is upper case (`INFO`).
