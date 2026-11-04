@@ -245,8 +245,8 @@ async function loadViewTrails() {
 // ------------------------------------------------------------------ panel / tabs (admin)
 let TAB = 'live';
 const TABS = [['live', 'Live'], ['history', 'History'], ['timeline', 'Timeline'], ['places', 'Places'], ['settings', 'Settings']];
-// These two open the Location Hub pages (switches, device trackers, dashboard card / arrival alerts).
-const HUB_LINKS = [['hub', 'Location', 'hub'], ['alerts', 'Alerts', 'hub#alerts']];
+// Opens the Location Hub home page (the launcher for every section).
+const HUB_LINKS = [['home', 'Home', './']];
 const panel = () => $('#panel');
 
 function setupSheet() {
@@ -259,7 +259,8 @@ function setupSheet() {
     $('#sheet').classList.remove('min'); showTab(b.dataset.t);
   }));
   $('#grab').addEventListener('click', () => $('#sheet').classList.toggle('min'));
-  showTab('live');
+  const want = location.hash.slice(1);
+  showTab(TABS.some(([k]) => k === want) ? want : 'live');
 }
 
 function showTab(t) {
