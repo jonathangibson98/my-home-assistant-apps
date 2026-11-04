@@ -98,6 +98,11 @@ async def index(request: web.Request) -> web.Response:
                         headers={"Cache-Control": "no-cache"})
 
 
+async def map_slash(request: web.Request) -> web.Response:
+    """/map/ would break the map's relative URLs, so send it to /map."""
+    raise web.HTTPFound("../map")
+
+
 async def health(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
@@ -525,8 +530,9 @@ async def api_ingest(request: web.Request) -> web.Response:
 # ------------------------------------------------------------------ app factories
 
 
-def _static(app: web.Application) -> None:
-    app.router.add_get("/", index)
+def _static(app: web.Application, root: bool = True) -> None:
+    if root:
+        app.router.add_get("/", index)
     app.router.add_get("/health", health)
     app.router.add_static("/static/", STATIC_DIR, follow_symlinks=False, show_index=False)
 
@@ -551,7 +557,11 @@ def make_admin_app(ctx: Ctx, public_server: "PublicServer", extra=None) -> web.A
     app["ctx"] = ctx
     app["mode"] = "admin"
     app["public_server"] = public_server
-    _static(app)
+    # The admin app's home page is the Location Hub launcher (added by hub.setup, falling back to
+    # the map when no hub is attached). The map itself lives at /map.
+    _static(app, root=False)
+    app.router.add_get("/map", index)
+    app.router.add_get("/map/", map_slash)
     _shared_routes(app)
     r = app.router
     r.add_get("/api/settings", api_get_settings)
@@ -572,6 +582,8 @@ def make_admin_app(ctx: Ctx, public_server: "PublicServer", extra=None) -> web.A
     r.add_get("/api/export", api_export)
     if extra:
         extra(app)
+    else:
+        app.router.add_get("/", index)
     return app
 
 
