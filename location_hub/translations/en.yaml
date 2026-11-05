@@ -1,7 +1,7 @@
 configuration:
   sensor_name:
     name: Location sensor name
-    description: Starting name for the "who is home" sensor (first run only; rename it later on the Location page).
+    description: The name of the "who is home" sensor in Home Assistant, for example Household Locations. Change it and restart the add-on and the sensor is renamed (same entity ID, no duplicate). Renaming on the Location page works too; the last change wins.
   unique_id:
     name: Location sensor unique ID
     description: Optional. Paste the Unique ID from an old Location Tracker or Location Hub to keep the same sensor. First run only.
