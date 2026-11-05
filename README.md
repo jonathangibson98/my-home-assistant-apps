@@ -8,18 +8,16 @@ A collection of custom Home Assistant add-ons (apps). Add this repository once a
 
 | | App | What it does | Needs |
 |---|---|---|---|
-| 🤖 | [**AI Builder**](ai_builder) | Describe what you want in plain English and your `ai_task` entity builds automations, scenes, scripts, template sensors, helpers, AppDaemon apps, pyscripts, blueprints and even add-ons. Review the result, then tap **Create**. | An `ai_task` entity |
-| 📣 | [**Announcement Maker**](ha-announcement-maker/announcement_maker) | Build AI-written voice announcements (weather, news, welcome home...) by ticking checkboxes. It writes the Home Assistant script and pushes it straight into HA. | An `ai_task` entity and a TTS engine |
-| 🚪 | [**Arrival Alerts**](location_notifier) | AI "hype-man" arrival notifications, managed from a web UI. | Home Assistant API |
+| 🤖 | [**Creator & AI Builder**](ai_builder) | Describe what you want in plain English and your `ai_task` entity builds automations, scenes, scripts, template sensors, helpers, AppDaemon apps, pyscripts, blueprints and even add-ons. Also makes AI voice announcements, turns photos into SVG icons, and backs up its own data. | An `ai_task` entity (a TTS engine and speaker for announcements) |
 | 📄 | [**File Reader**](file_reader) | Web UI and MQTT file manager. Every text file in your folder becomes a Home Assistant sensor (last line as the state), plus an optional REST API for automations and logging. | MQTT |
 | ☁️ | [**iCloud Lite**](ha-icloud-lite) | Track Apple devices from multiple iCloud accounts. Each device becomes a `device_tracker` with a battery sensor. | MQTT |
-| 📍 | [**Location Tracker**](location_tracker) | Everyone's location as one sensor: a readable **City, State** for anyone who is away, a count of who is home, custom places, and a dashboard card generator. | MQTT (falls back to REST) |
-| 📁 | [**Mobile File Manager & Samba**](mobile_ide) | Mobile-friendly file manager with folder uploads and a native Samba share. *(aarch64 only)* | none |
+| 📍 | [**Location Hub**](location_hub) | A location history map (trails, playback, stops, places, heatmap) plus everyone's location sensor (**you choose its name**), switches, device trackers, a dashboard card generator and AI arrival alerts. One add-on, one sidebar entry. | MQTT; an `ai_task` entity and a `notify.*` service for alerts |
 | 👤 | [**Personalized Info**](personalized_info) | Edit everyone's info and music preferences from a phone-friendly UI. Saved to one readable YAML file with automatic backups. | none (MQTT optional) |
-| 🖼️ | [**Photo Shuffle**](photo_shuffle) | Add as many photo folders as you like from a web UI. Each one becomes an image entity that shuffles on a timer, with a "Next photo" button. Choose which formats (jpg, png, webp...) to include. | MQTT |
+| 🖼️ | [**Photo Hub**](photo_shuffle) | Folder shuffles and random Unsplash photos, all published as image entities. Manage everything from one web UI. | MQTT (Unsplash key for Unsplash collections) |
 | 🎬 | [**Release Tracker**](release-tracker) | Pick the TV shows and movies you care about and get sensors for what is coming out and when. | Free TMDB API key |
 | 🏈 | [**Team Tracker Lite**](team_tracker_lite) | One lightweight live sports sensor. Pick any team from a menu, with a calendar of every game for your saved teams. | MQTT |
-| ⏱️ | [**Work Hours Tracker**](work_hours) | Logs how long each person spends in the work zones you pick for them, saved as one CSV per person. | Home Assistant zones |
+| 🎙️ | [**Voice Chat**](voice_chat) | Hands-free voice conversation with any Home Assistant AI agent, answered out loud on the speaker you choose. | A conversation agent, a TTS engine and a media player |
+| ⏱️ | [**Work Hours Tracker**](work_hours) | Logs how long each person spends in the work zones you pick for them, saved as one file per person, with MQTT sensors. | Home Assistant zones (MQTT optional) |
 
 Each app has its own **Documentation** tab in Home Assistant, and a `DOCS.md` / `README.md` in its folder with setup details.
 
@@ -45,21 +43,34 @@ Install the **Mosquitto broker** add-on and set up the **MQTT** integration firs
 
 ---
 
+## 📦 Prebuilt images (GitHub packages)
+
+An add-on whose `config.yaml` has an `image:` line (Location Hub does) is downloaded by Home Assistant as a finished image from GitHub's container registry instead of being built on your Pi. Add-ons without that line are still built locally on install.
+
+Publishing an image:
+
+1. Bump `version` in the add-on's `config.yaml` and commit.
+2. Push a tag that matches it, for example `git tag v2.4.0 && git push origin v2.4.0`. The **Publish prebuilt images to GHCR** action (`.github/workflows/create.yml`) builds every add-on for `aarch64` and `amd64` and pushes them to `ghcr.io/jonathangibson98/<arch>-addon-<slug>`, tagged with the version and `latest`. You can also start it by hand from the **Actions** tab.
+3. On GitHub open your profile, **Packages**, the new package, **Package settings**, and set it to **Public**. Home Assistant cannot pull a private package.
+
+The tag must match the add-on version, or Home Assistant will look for an image tag that was never built.
+
+---
+
 ## 📂 Repository layout
 
 ```text
 my-home-assistant-apps/
+├── .github/workflows/create.yml
 ├── ai_builder/
 ├── file_reader/
-├── ha-announcement-maker/announcement_maker/
 ├── ha-icloud-lite/
-├── location_notifier/
-├── location_tracker/
-├── mobile_ide/
+├── location_hub/
 ├── personalized_info/
-├── photo_shuffle/
+├── photo_shuffle/        (Photo Hub)
 ├── release-tracker/
 ├── team_tracker_lite/
+├── voice_chat/
 ├── work_hours/
 └── repository.yaml
 ```
