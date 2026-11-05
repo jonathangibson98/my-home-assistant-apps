@@ -25,7 +25,7 @@ from store import Store
 log = logging.getLogger("mini_tracker.ctx")
 
 # The Dockerfile passes the add-on version in as MT_VERSION (from config.yaml), so this never drifts.
-VERSION = os.environ.get("MT_VERSION") or "2.4.2"
+VERSION = os.environ.get("MT_VERSION") or "2.4.3"
 MAX_RANGE_DAYS = 400
 
 
