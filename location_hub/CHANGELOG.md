@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.4.3
+
+- **Entity ID rename no longer fails silently.** *Location > Devices* now checks Home Assistant itself and shows
+  either "Home Assistant is using sensor.x" in green or the exact reason it was refused in red.
+- Saving the page now always asks Home Assistant to apply the entity ID, even when the add-on thought it already
+  had it. (This was why it could look changed on the page while Home Assistant still had the old one.)
+- Big entity lists no longer trip a message size limit.
+
 ## 2.4.2
 
 - **The entity ID now follows the sensor name.** Before, it was stuck on whatever it was when first created.

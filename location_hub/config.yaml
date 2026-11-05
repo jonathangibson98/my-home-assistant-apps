@@ -1,5 +1,5 @@
 name: "Location Hub"
-version: "2.4.2"
+version: "2.4.3"
 slug: location_hub
 # Prebuilt images from your GitHub package (built by .github/workflows/create.yml when you push a new version to main).
 # Home Assistant fills in {arch}, then downloads this instead of building on the Pi.
