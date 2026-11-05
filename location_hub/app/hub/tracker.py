@@ -112,7 +112,75 @@ SETTINGS = load_settings()
 def entity_id():
     return SETTINGS["entity_id"]
 
+ENTITY_RE = re.compile(r"^sensor\.[a-z0-9_]+$")
+SYNC_ENTITY_ID = opts.get("sync_entity_id", True) is not False
+_sync = {"next": 0.0, "warned": ""}
+
 cache = {}
+
+# ---------------- Entity ID (renamed through Home Assistant's entity registry) ----------------
+async def _ws_call(ws, mid, payload):
+    await ws.send_json({"id": mid, **payload})
+    while True:
+        msg = await ws.receive_json()
+        if msg.get("id") == mid and msg.get("type") == "result":
+            return msg
+
+async def registry_sync(s, want=None):
+    """Make Home Assistant's entity ID for the location sensor match `want`.
+
+    Returns (ok, message). Also adopts the real entity ID when it was changed in Home Assistant itself,
+    so the dashboard card and alerts keep pointing at the right sensor. Needs MQTT mode: the sensor
+    must exist in the entity registry (the REST fallback sensor has no registry entry).
+    """
+    if mq is None or not mq_ready:
+        return False, "MQTT is not connected yet"
+    async with s.ws_connect(WS) as ws:
+        await ws.receive_json()
+        await ws.send_json({"type": "auth", "access_token": TOKEN})
+        if (await ws.receive_json()).get("type") != "auth_ok":
+            return False, "Home Assistant refused the connection"
+        r = await _ws_call(ws, 1, {"type": "config/entity_registry/list"})
+        entries = r.get("result") or []
+        mine = next((e for e in entries if e.get("unique_id") == UID and e.get("platform") == "mqtt"), None)
+        if not mine:
+            return False, "The sensor is not in Home Assistant's entity registry yet"
+        current = mine["entity_id"]
+        if current != entity_id():
+            logging.info(f"Entity ID is {current} in Home Assistant, using that")
+            SETTINGS["entity_id"] = current
+            save_settings(SETTINGS)
+        if not want or want == current:
+            return True, ""
+        r = await _ws_call(ws, 2, {"type": "config/entity_registry/update",
+                                   "entity_id": current, "new_entity_id": want})
+        if not r.get("success"):
+            return False, (r.get("error") or {}).get("message") or "Home Assistant refused the rename"
+    old = entity_id()
+    SETTINGS["entity_id"] = want
+    save_settings(SETTINGS)
+    logging.info(f"Entity ID renamed: {old} -> {want}. Update dashboards and automations that used {old}.")
+    mq_publish_discovery()
+    return True, ""
+
+async def maybe_sync_entity(s):
+    """After a name change (Configuration tab or the page) rename the entity ID to match, once."""
+    if not SYNC_ENTITY_ID or SETTINGS.get("entity_synced_name") == SETTINGS["name"] or time.time() < _sync["next"]:
+        return
+    want = "sensor." + slugify(SETTINGS["name"])
+    try:
+        ok, msg = await registry_sync(s, want)
+    except Exception as e:  # noqa: BLE001
+        ok, msg = False, str(e)
+    if ok:
+        SETTINGS["entity_synced_name"] = SETTINGS["name"]
+        save_settings(SETTINGS)
+        return
+    _sync["next"] = time.time() + (60 if "not in" in msg or "not connected" in msg else 900)
+    if msg != _sync["warned"]:
+        _sync["warned"] = msg
+        logging.warning(f"Could not rename the entity ID to {want}: {msg}. "
+                        "If it says the ID is already used, delete the old unavailable entity in Settings > Entities.")
 
 # ---------------- Sensors -> device_tracker converters ----------------
 def save_trackers(rows):
@@ -450,6 +518,7 @@ async def safe_update_trackers(s):
 async def safe_update_all(s):
     await safe_update(s)
     await safe_update_trackers(s)
+    await maybe_sync_entity(s)
 
 async def backstop(s):
     while True:
@@ -765,14 +834,31 @@ async def handle_get_settings(request):
 
 async def handle_post_settings(request):
     data = await request.json()
+    s = request.app["session"]
     name = (data.get("name") or "").strip()
     if name and name != SETTINGS["name"]:
         SETTINGS["name"] = name
+        SETTINGS.pop("entity_synced_name", None)   # let the entity ID follow the new name (if enabled)
         save_settings(SETTINGS)
         logging.info(f"Sensor renamed to: {name}")
         if mq is not None and mq_ready:
             mq_publish_discovery()  # same unique ID, so HA just updates the name
-    await safe_update(request.app["session"])
+        _sync["next"] = 0
+    new_id = (data.get("entity_id") or "").strip().lower()
+    if new_id and new_id != entity_id():
+        if not ENTITY_RE.match(new_id):
+            return web.json_response({"error": "Entity ID must look like sensor.household_locations"}, status=400)
+        try:
+            ok, msg = await registry_sync(s, new_id)
+        except Exception as e:  # noqa: BLE001
+            ok, msg = False, str(e)
+        if not ok:
+            return web.json_response({"error": f"Could not change the entity ID: {msg}"}, status=400)
+        SETTINGS["entity_synced_name"] = SETTINGS["name"]   # your chosen ID stays; no automatic change back
+        save_settings(SETTINGS)
+    else:
+        await maybe_sync_entity(s)
+    await safe_update(s)
     return web.json_response({"status": "ok"})
 
 def add_routes(app):

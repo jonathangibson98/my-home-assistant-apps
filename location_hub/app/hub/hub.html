@@ -187,8 +187,9 @@ async function loadSwitches(){
 function devicesV(){
   const s=loc.settings;
   return `<div class="card"><div class="bd" style="border:0">
-    ${fld("Sensor name",inp("loc.settings.name",s.name,"text",'placeholder="e.g. Household Locations"'),"Display name of the main location sensor in Home Assistant. You can also set it in the add-on's Configuration tab (after a restart). Whichever you changed last wins. Renaming never creates a duplicate or changes the entity ID.")}
-    <div class="hint">Entity ID: ${esc(s.entity_id)} · Unique ID: ${esc(s.unique_id)} · Mode: ${esc(s.mode)}</div></div></div>
+    ${fld("Sensor name",inp("loc.settings.name",s.name,"text",'placeholder="e.g. Household Locations"'),"Display name of the main location sensor in Home Assistant. You can also set it in the add-on's Configuration tab (after a restart). Whichever you changed last wins. Renaming never creates a duplicate.")}
+    ${fld("Entity ID",inp("loc.settings.entity_id",s.entity_id,"text",'autocapitalize="none" placeholder="sensor.household_locations"'),"Changing the name also renames this to match (turn that off with the <b>sync_entity_id</b> option). Or type your own and save. Home Assistant does not update dashboards or automations that use the old ID.")}
+    <div class="hint">Unique ID: ${esc(s.unique_id)} · Mode: ${esc(s.mode)}</div></div></div>
   <p class="hint" style="margin:0 0 10px">One row per person. The sensor's state is how many are home; anyone away shows as City, State.</p>`+
   loc.devices.map((d,i)=>`<div class="card"><div class="bd" style="border:0">
     <div class="row">${fld("Label",inp(`loc.devices.${i}.label`,d.label,"text",'placeholder="Jon"'))}${fld("Entity",inp(`loc.devices.${i}.entity_id`,d.entity_id,"text",'list="trk" autocapitalize="none" placeholder="device_tracker.jon_phone"'))}</div>
@@ -238,7 +239,7 @@ async function save(quiet){
   try{
     if(had.has("alerts"))await api("api/hub/config",cfg);
     if(had.has("devices"))await api("api/hub/devices",{entities:loc.devices.filter(d=>(d.label||"").trim()&&(d.entity_id||"").trim()).map(d=>({label:d.label.trim(),entity_id:d.entity_id.trim(),home_state:(d.home_state||"").trim()}))});
-    if(had.has("settings"))await api("api/hub/settings",{name:(loc.settings.name||"").trim()});
+    if(had.has("settings"))await api("api/hub/settings",{name:(loc.settings.name||"").trim(),entity_id:(loc.settings.entity_id||"").trim()});
     if(had.has("trackers"))await api("api/hub/trackers",{trackers:loc.trackers});
     if(had.has("card"))await api("api/hub/card",loc.card);
     dirty.clear();stat();
