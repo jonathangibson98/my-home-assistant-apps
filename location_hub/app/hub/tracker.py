@@ -57,6 +57,17 @@ WS = HA_BASE.replace("https://", "wss://", 1).replace("http://", "ws://", 1) + "
 def slugify(text):
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_") or "location_tracker"
 
+def option_name():
+    """The sensor name typed in the add-on's Configuration tab, as a display name.
+
+    Accepts a plain name ("Household Locations") or the old entity-id style
+    ("sensor.location_tracker", shown as "Location Tracker").
+    """
+    raw = str(opts.get("sensor_name") or "").strip()
+    if raw.lower().startswith("sensor."):
+        raw = raw.split(".", 1)[1].replace("_", " ").title()
+    return raw
+
 def load_settings():
     data = {}
     if os.path.exists(SETTINGS_PATH):
@@ -66,14 +77,23 @@ def load_settings():
         except Exception:
             data = {}
     changed = False
+    want = option_name()
     if not data.get("uid"):
         # Generated once and never changes, so renaming never creates a duplicate sensor
         data["uid"] = (opts.get("unique_id") or "").strip() or "location_tracker_" + uuid.uuid4().hex[:8]
         changed = True
     if not data.get("name"):
-        default = opts.get("sensor_name", "sensor.location_tracker").strip()
-        default = default.split(".", 1)[-1]
-        data["name"] = default.replace("_", " ").title()
+        data["name"] = want or "Location Tracker"
+        data["option_name"] = want
+        changed = True
+    elif want and data.get("option_name") != want:
+        # The Configuration tab value is new or changed. On the very first start after updating
+        # from an older version there is nothing to compare with, so just remember it and keep
+        # whatever name is already set. After that, a changed option renames the sensor.
+        if "option_name" in data and data["name"] != want:
+            logging.info(f"Sensor name changed in Configuration: {data['name']!r} -> {want!r}")
+            data["name"] = want
+        data["option_name"] = want
         changed = True
     if not data.get("entity_id"):
         # Fixed when the sensor is first created. Renaming later only changes the display name.
