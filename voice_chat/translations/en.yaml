@@ -3,8 +3,8 @@ configuration:
     name: Conversation agent
     description: The AI entity to talk to, for example conversation.home_assistant or conversation.ollama.
   media_player:
-    name: Speaker
-    description: The media player entity that speaks the replies, for example media_player.kitchen_speaker.
+    name: Default speaker
+    description: The media player that speaks replies by default, for example media_player.kitchen_speaker. Leave empty to default to this device (browser). You can pick several speakers on the page.
   tts_entity:
     name: Text-to-speech engine
     description: The TTS entity that turns replies into audio, for example tts.piper.
@@ -32,5 +32,29 @@ configuration:
   keyfile:
     name: Private key file
     description: Private key name inside /ssl.
+  wake_word:
+    name: Wake word
+    description: Optional. When set, hands-free mode only reacts to sentences that start with this phrase, for example "hey jarvis". After a reply you can keep talking for 20 seconds without repeating it. Needs an stt_entity for reliable results.
+  stop_words:
+    name: Stop phrases
+    description: Comma-separated phrases that end the hands-free session when you say them on their own.
+  sensitivity:
+    name: Microphone sensitivity
+    description: High picks up quiet voices but also noise. Low suits noisy rooms.
+  chimes:
+    name: Sound cues
+    description: Short beeps when listening starts, a message is sent, or something fails.
+  idle_timeout_s:
+    name: Stop listening after (seconds)
+    description: Ends the hands-free session when nobody has spoken for this long. 0 keeps it listening forever.
+  browser_playback:
+    name: Allow playing replies in the browser
+    description: Adds "This device" to the speaker list so replies play on the phone or PC that has the page open, no media player needed.
+  save_history:
+    name: Save chat history
+    description: Keeps past chats so you can reopen, export or delete them from the History button.
+  history_limit:
+    name: Chats to keep
+    description: Oldest chats are deleted beyond this number.
 network:
   8443/tcp: Direct HTTPS page (only starts when a password is set)
