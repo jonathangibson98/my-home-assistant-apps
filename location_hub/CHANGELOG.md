@@ -14,7 +14,7 @@
 
 - **Prebuilt image.** `config.yaml` now has an `image:` line pointing at your GitHub package
   (`ghcr.io/jonathangibson98/{arch}-addon-location_hub`), so Home Assistant downloads the finished
-  image instead of building it on the Pi. Push a `v2.4.0` tag to build it (see the repo README).
+  image instead of building it on the Pi. The repo's action builds it on every push to `main` with a new version, no tags needed (see the repo README).
 - **You pick the sensor name in the Configuration tab.** `sensor_name` is now a plain name such as
   `Household Locations`. Change it, restart the add-on, and the sensor is renamed in Home Assistant.
   The entity ID and unique ID stay the same, so dashboards and automations keep working. Renaming on

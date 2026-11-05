@@ -100,7 +100,7 @@ Type the name you want in the `sensor_name` option, for example `Household Locat
 
 ### Prebuilt image
 
-`config.yaml` has `image: "ghcr.io/jonathangibson98/{arch}-addon-location_hub"`. Home Assistant replaces `{arch}` with `aarch64` or `amd64` and downloads that image, tagged with the add-on's version, instead of building on your Pi. The repo's GitHub Action builds and publishes it when you push a tag that matches the version (for example `v2.4.0`). The package must be **public** or Home Assistant cannot pull it. If an install says the image was not found, the tag has not finished building or does not match the version.
+`config.yaml` has `image: "ghcr.io/jonathangibson98/{arch}-addon-location_hub"`. Home Assistant replaces `{arch}` with `aarch64` or `amd64` and downloads that image, tagged with the add-on's version, instead of building on your Pi. The repo's GitHub Action builds and publishes it whenever you push to `main` with a new `version` (no tags or releases needed). The package must be **public** or Home Assistant cannot pull it. If an install says the image was not found, the build has not finished yet (check the Actions tab) or the version in `config.yaml` was never pushed.
 
 ### Data stored
 
