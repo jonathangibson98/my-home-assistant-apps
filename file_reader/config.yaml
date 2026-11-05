@@ -2,6 +2,7 @@ name: "File Reader"
 description: "Web UI and MQTT file manager for Home Assistant sensors, automations, and text logging."
 version: "1.2.3"
 slug: "file_reader"
+image: "ghcr.io/jonathangibson98/{arch}-addon-file_reader"
 init: false
 arch:
   - aarch64
