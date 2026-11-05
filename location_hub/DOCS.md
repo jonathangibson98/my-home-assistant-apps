@@ -20,7 +20,7 @@ heatmap. Everything is stored on your own Pi, and everything on the map is set u
 
 ## Where the locations come from
 
-Mini Tracker listens to Home Assistant over the Supervisor connection the app already has, so
+Location Hub listens to Home Assistant over the Supervisor connection the app already has, so
 there is **no token to create** and nothing to configure. Any `person.*` or `device_tracker.*`
 entity that has latitude and longitude can be tracked. That includes the Companion app,
 iCloud-style integrations, and your own device trackers.
@@ -81,12 +81,26 @@ Requirements for these pages: an MQTT broker (Mosquitto add-on or external) for 
 
 | Option | What it does |
 | --- | --- |
-| `sensor_name` | Starting name for the location sensor (first run only). |
+| `sensor_name` | The name of the location sensor in Home Assistant, for example `Household Locations`. Change it and restart the add-on to rename the sensor (see *Naming the location sensor* below). |
 | `unique_id` | Optional. Paste the Unique ID from an old Location Tracker / Location Hub to keep the same sensor. First run only. |
 | `log_level`, `log_location_updates` | Logging. |
 | `mqtt_host`, `mqtt_port`, `mqtt_username`, `mqtt_password` | For the location sensor and device trackers. Leave blank to use the Mosquitto add-on. (The map's own MQTT sensors are set in the map's Settings.) |
 
 Option changes need a restart.
+
+### Naming the location sensor
+
+Type the name you want in the `sensor_name` option, for example `Household Locations`, and restart the add-on. Home Assistant shows that name right away.
+
+- The **entity ID** is fixed when the sensor is first created (for example `sensor.household_locations`) and **never changes**, so your dashboards and automations keep working after a rename. Only the display name changes.
+- The sensor keeps its permanent unique ID, so renaming never makes a duplicate.
+- You can also rename it on the **Location > Devices** page without a restart. Whichever you changed last wins: if you rename on the page and later change the option, the option wins; restarting without touching the option keeps the page's name.
+- Old-style values such as `sensor.location_tracker` still work and are shown as `Location Tracker`.
+- Want a different entity ID too? In Home Assistant, open the sensor, click the gear, and change **Entity ID** (then update anything that used the old one).
+
+### Prebuilt image
+
+`config.yaml` has `image: "ghcr.io/jonathangibson98/{arch}-addon-location_hub"`. Home Assistant replaces `{arch}` with `aarch64` or `amd64` and downloads that image, tagged with the add-on's version, instead of building on your Pi. The repo's GitHub Action builds and publishes it when you push a tag that matches the version (for example `v2.4.0`). The package must be **public** or Home Assistant cannot pull it. If an install says the image was not found, the tag has not finished building or does not match the version.
 
 ### Data stored
 
@@ -101,7 +115,7 @@ The Hub pages keep `devices.json`, `trackers.json`, `settings.json`, `card.json`
 
 ## Icons and pictures
 
-**By default Mini Tracker uses whatever Home Assistant uses**, so it looks right without setup:
+**By default the map uses whatever Home Assistant uses**, so it looks right without setup:
 
 | For | It shows |
 | --- | --- |
@@ -134,9 +148,10 @@ Good to know:
   one falls back to initials until the app is updated.
 - Icon sets that need their own files to work (for example Font Awesome Pro or the `phu:` Hue icons) are not
   available here, and fall back to initials.
-- Pictures are cropped to fit the circle. By default the crop keeps the **top** of the photo so heads
-  are not cut off. If a picture still looks wrong, change *Settings > Display > Pictures in the circles*
-  to **Show the whole picture**.
+- Pictures are cropped to fit the circle. By default the crop sits a little **above center**, where faces
+  usually are. If your face is cut off or you only see a forehead, open *Settings > Tracked devices >
+  Appearance*, find the person, and drag **Picture position** until your face is centered (**Auto** resets
+  it). You can also change *Settings > Display > Pictures in the circles* to **Show the whole picture**.
 - SVG files keep their own colors. An SVG that is plain black will look black on the white badge.
   `mdi:` icons are drawn white on the device's color.
 - To find your Auto Custom Icons folders, the app reads Home Assistant's integration list
@@ -262,7 +277,7 @@ may be missed while a backup runs.
 **The map is empty.** Open *Settings > Tracked devices* and make sure at least one device is
 ticked. If the page says it is not connected to Home Assistant, check the app log.
 
-**A device never updates.** Mini Tracker only sees what Home Assistant sees. Check that the
+**A device never updates.** The map only sees what Home Assistant sees. Check that the
 entity itself updates in *Developer tools > States* and has `latitude` and `longitude`.
 
 **An icon is blank or shows initials.** Open *Settings > Display*: it says how many SVGs were found in

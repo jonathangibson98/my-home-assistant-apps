@@ -6,6 +6,9 @@ FROM $BUILD_FROM
 RUN apk add --no-cache python3 py3-aiohttp py3-pip tzdata \
  && pip3 install --no-cache-dir --break-system-packages "paho-mqtt>=2,<3"
 
+ARG BUILD_VERSION=
+ENV MT_VERSION=$BUILD_VERSION
+
 WORKDIR /data
 
 COPY app /app

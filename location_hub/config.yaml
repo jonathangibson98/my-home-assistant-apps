@@ -1,6 +1,9 @@
 name: "Location Hub"
-version: "2.3.0"
+version: "2.4.1"
 slug: location_hub
+# Prebuilt images from your GitHub package (built by .github/workflows/create.yml when you push a v* tag).
+# Home Assistant fills in {arch}, then downloads this instead of building on the Pi.
+image: "ghcr.io/jonathangibson98/{arch}-addon-location_hub"
 description: "Location history map with trails, playback and stops, plus everyone's location sensor, switches, device trackers, a dashboard card and AI arrival alerts. One add-on, one sidebar entry."
 arch:
   - aarch64
@@ -43,7 +46,7 @@ backup: cold
 watchdog: "http://[HOST]:[PORT:8099]/health"
 
 options:
-  sensor_name: sensor.location_tracker
+  sensor_name: "Location Tracker"
   unique_id: ""
   log_level: INFO
   log_location_updates: true

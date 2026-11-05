@@ -1,5 +1,31 @@
 # Changelog
 
+## 2.4.1
+
+- **Fixed person pictures showing only the forehead.** The old "keep the top" crop pinned the photo to
+  the very top, which cut off faces in tall or low-framed photos. The automatic position is now a bit
+  above center, where faces usually are.
+- **New per-person picture position slider** (*Settings > Tracked devices > Appearance*, for people using
+  a picture). Slide until your face is centered in the circle, with a live preview. **Auto** puts it back.
+  It applies on the map, the chips and the settings list.
+- *Settings > Display > Pictures in the circles* still has Center crop and Show the whole picture.
+
+## 2.4.0
+
+- **Prebuilt image.** `config.yaml` now has an `image:` line pointing at your GitHub package
+  (`ghcr.io/jonathangibson98/{arch}-addon-location_hub`), so Home Assistant downloads the finished
+  image instead of building it on the Pi. Push a `v2.4.0` tag to build it (see the repo README).
+- **You pick the sensor name in the Configuration tab.** `sensor_name` is now a plain name such as
+  `Household Locations`. Change it, restart the add-on, and the sensor is renamed in Home Assistant.
+  The entity ID and unique ID stay the same, so dashboards and automations keep working. Renaming on
+  the Location page still works; whichever you changed last wins. The first start after updating keeps
+  the name you already have.
+- The version shown in the app and log now comes from `config.yaml`, so it can no longer fall out of date.
+- Removed the leftover top-level `main.py` (an old stand-alone Location Hub entry point that was never used).
+- Branding cleanup: the MQTT device is now called **Location Hub** (was "Mini Tracker") and GPX exports say
+  Location Hub. Internal MQTT IDs are unchanged, so no sensors are duplicated.
+- README and Documentation tab brought up to date.
+
 ## 2.0.0
 
 - Combined **Mini Tracker** (1.1.1) and **Location Hub** (1.0.0) into one add-on. Every feature from both is kept.
