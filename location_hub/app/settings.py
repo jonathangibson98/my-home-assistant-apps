@@ -18,9 +18,9 @@ DEFAULTS: dict = {
     "tiles": "osm",           # osm | carto | custom
     "tile_url": "",
     "icons_folder": "custom_icons",
-    "photo_fit": "auto",      # auto (keep the top / faces) | center | whole
+    "photo_fit": "auto",      # auto (a little above center, where faces usually are) | center | whole
     "use_ha_zones": True,
-    "devices": {},            # id -> {name, color, icon, enabled}
+    "devices": {},            # id -> {name, color, icon, photo_y?, enabled}
     "places": [],             # [{id, name, lat, lon, radius, icon, color}]
     "record": {"min_distance_m": 15, "heartbeat_min": 10, "max_accuracy_m": 200, "retention_days": 0},
     "visits": {"min_stay_min": 10, "radius_m": 75},
@@ -159,6 +159,13 @@ class Settings:
                         cur["color"] = vals["color"]
                     if "icon" in vals:
                         cur["icon"] = str(vals["icon"]).strip()[:120]
+                    if "photo_y" in vals:
+                        # Where the picture sits in the circle, 0 (top) to 100 (bottom). Blank = automatic.
+                        v = vals["photo_y"]
+                        if v is None or str(v).strip() == "":
+                            cur.pop("photo_y", None)
+                        else:
+                            cur["photo_y"] = int(_num(v, 0, 100, 30))
                     if "enabled" in vals:
                         cur["enabled"] = bool(vals["enabled"])
             self.save()

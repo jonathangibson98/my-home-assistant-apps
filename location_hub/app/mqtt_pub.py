@@ -93,8 +93,8 @@ class MqttPublisher:
         s = slug(dev)
         if s in self._announced or self.client is None:
             return
-        device = {"identifiers": ["mini_tracker"], "name": "Mini Tracker", "manufacturer": "jonathangibson98",
-                  "model": "Mini Tracker app"}
+        device = {"identifiers": ["mini_tracker"], "name": "Location Hub", "manufacturer": "jonathangibson98",
+                  "model": "Location Hub add-on"}
         avail = {"topic": f"{self.prefix}/status"}
         base = f"{self.prefix}/{s}"
 

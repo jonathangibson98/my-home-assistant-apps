@@ -441,7 +441,7 @@ async def api_export(request: web.Request) -> web.StreamResponse:
         body, ctype, ext = "\n".join(lines), "text/csv", "csv"
     else:
         trk = "".join(f'<trkpt lat="{p[1]}" lon="{p[2]}"><time>{iso(p[0])}</time></trkpt>\n' for p in pts)
-        body = ('<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Mini Tracker" '
+        body = ('<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Location Hub" '
                 'xmlns="http://www.topografix.com/GPX/1/1"><trk><name>' + escape(name) + "</name><trkseg>\n"
                 + trk + "</trkseg></trk></gpx>")
         ctype, ext = "application/gpx+xml", "gpx"

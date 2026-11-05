@@ -24,7 +24,8 @@ from store import Store
 
 log = logging.getLogger("mini_tracker.ctx")
 
-VERSION = "2.0.0"
+# The Dockerfile passes the add-on version in as MT_VERSION (from config.yaml), so this never drifts.
+VERSION = os.environ.get("MT_VERSION") or "2.4.1"
 MAX_RANGE_DAYS = 400
 
 
@@ -103,7 +104,7 @@ class Ctx:
             fix = self.recorder.live.get(dev)
             icon, src = self.resolve_icon(dev, cfg)
             item = {"id": dev, "name": cfg["name"], "color": cfg["color"], "icon": icon, "icon_source": src,
-                    "external": dev.startswith("ext.")}
+                    "external": dev.startswith("ext."), "photo_y": cfg.get("photo_y")}
             if fix:
                 pl = geo.match_place(fix["lat"], fix["lon"], places, slack_m=25)
                 item.update(lat=fix["lat"], lon=fix["lon"], acc=fix["acc"], batt=fix["batt"], ts=fix["ts"],

@@ -1,4 +1,4 @@
-"""Mini Tracker entry point."""
+"""Location Hub entry point."""
 from __future__ import annotations
 
 import asyncio
