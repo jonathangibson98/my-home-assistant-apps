@@ -88,7 +88,9 @@ function avatarHTML(o, cls = '') {
   const c = esc(o.color || '#03a9f4');
   const init = (o.name || '?').trim().split(/\s+/).map((w) => Array.from(w)[0]).join('').slice(0, 2).toUpperCase();
   const src = spec && iconSrc(spec);
-  if (src) return `<div class="av ${src[0]} ${cls}" style="--c:${c}"><img src="${esc(src[1])}" data-fb="${esc(init)}" alt=""></div>`;
+  const py = o.photo_y !== undefined && o.photo_y !== null && o.photo_y !== '' && !isNaN(+o.photo_y) ? Math.max(0, Math.min(100, +o.photo_y)) : null;
+  const pos = src && src[0] === 'photo' && py !== null ? ` style="object-position:50% ${py}%"` : '';
+  if (src) return `<div class="av ${src[0]} ${cls}" style="--c:${c}"><img src="${esc(src[1])}" data-fb="${esc(init)}" alt=""${pos}></div>`;
   if (spec && !/^[a-z0-9_-]+:/i.test(spec)) return `<div class="av emo ${cls}" style="--c:${c}">${esc(Array.from(spec).slice(0, 2).join(''))}</div>`;
   return `<div class="av ${cls}" style="--c:${c}">${esc(init)}</div>`;
 }
@@ -587,6 +589,8 @@ async function renderSettings() {
         <button class="b sm sec" data-pick="${esc(id)}">Pick</button>
         <span class="b sec sm" style="text-align:center;position:relative">Upload picture<input type="file" accept="image/*" data-pic="${esc(id)}" style="position:absolute;inset:0;opacity:0"></span></div>
       <div class="muted">Showing: ${esc(iconSourceText(lv))}</div>
+      ${/^(ha|pic):/.test((lv.icon != null ? lv.icon : d.icon) || '') ? `<div class="row"><label>Picture position (slide until your face shows)<input type="range" min="0" max="100" step="1" data-f="photo_y" data-py="1" value="${d.photo_y != null ? +d.photo_y : 30}"></label>
+        <button class="b sm sec" data-pyreset="${esc(id)}">Auto</button></div>` : ''}
       <div class="row inline"><label><input type="checkbox" data-f="enabled" ${d.enabled ? 'checked' : ''}> Recording</label></div></div>`; }).join('')}
     <div class="row"><label>Add external device (for imports / other apps)<input type="text" id="newext" placeholder="e.g. Old Pixel"></label><button class="b sec" id="addext">Add</button></div>
   </div></details>
@@ -594,7 +598,7 @@ async function renderSettings() {
   <details><summary>Display</summary><div>
     <div class="row"><label>Units<select id="s_units">${opt('mi', st.units, 'Miles')}${opt('km', st.units, 'Kilometers')}</select></label>
       <label>Theme<select id="s_theme">${opt('auto', st.theme, 'Dark after sunset')}${opt('system', st.theme, 'Follow device')}${opt('light', st.theme, 'Always light')}${opt('dark', st.theme, 'Always dark')}</select></label></div>
-    <div class="row"><label>Pictures in the circles<select id="s_photo">${opt('auto', st.photo_fit, 'Keep the top (heads)')}${opt('center', st.photo_fit, 'Center crop')}${opt('whole', st.photo_fit, 'Show the whole picture')}</select></label></div>
+    <div class="row"><label>Pictures in the circles<select id="s_photo">${opt('auto', st.photo_fit, 'Auto (a bit above center, for faces)')}${opt('center', st.photo_fit, 'Center crop')}${opt('whole', st.photo_fit, 'Show the whole picture')}</select></label></div>
     <div class="row"><label>Map tiles<select id="s_tiles">${opt('osm', st.tiles, 'OpenStreetMap (inverted at night)')}${opt('carto', st.tiles, 'CARTO (light / dark)')}${opt('custom', st.tiles, 'Custom URL')}</select></label></div>
     <div class="row" id="s_turl_row" ${st.tiles === 'custom' ? '' : 'hidden'}><label>Tile URL<input type="text" id="s_turl" value="${esc(st.tile_url)}" placeholder="https://…/{z}/{x}/{y}.png"></label></div>
     <div class="row"><label>Custom icons folder (inside your HA config)<input type="text" id="s_icons" value="${esc(st.icons_folder)}"></label></div>
@@ -667,6 +671,12 @@ function bindSettings(st, stats) {
   }));
   $$('[data-dev]', panel()).forEach((card) => {
     const id = card.dataset.dev;
+    $$('[data-py]', card).forEach((inp) => inp.addEventListener('input', () => {
+      const im = $('.av img', card); if (im) im.style.objectPosition = `50% ${inp.value}%`;   // live preview while sliding
+    }));
+    $$('[data-pyreset]', card).forEach((b) => b.addEventListener('click', () => {
+      patchDev(id, { photo_y: null }).then(() => { toast('Picture position set to auto'); renderSettings(); });
+    }));
     $$('[data-f]', card).forEach((inp) => inp.addEventListener('change', () => {
       const f = inp.dataset.f; const v = inp.type === 'checkbox' ? inp.checked : inp.value;
       patchDev(id, { [f]: v }).then(() => toast('Saved'));

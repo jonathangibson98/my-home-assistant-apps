@@ -23,9 +23,9 @@ body.dark #map{background:#222}
 .av{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;overflow:hidden;
   background:var(--c,#03a9f4);color:#fff;font-weight:700;font-size:15px;border:2px solid var(--c,#03a9f4);flex:0 0 auto}
 .av img{width:100%;height:100%;object-fit:cover;background:#fff}
-.av.photo img{object-position:50% 12%}                 /* auto: keep the top so heads are not cut off */
+.av.photo img{object-position:50% 30%}                 /* auto: a bit above center, where faces usually are. Per-person slider overrides. */
 body.pf-center .av.photo img{object-position:50% 50%}
-body.pf-whole .av.photo img{object-fit:contain;object-position:50% 50%}
+body.pf-whole .av.photo img{object-fit:contain;object-position:50% 50% !important}
 .av.emo{background:var(--card);font-size:18px}
 .av.svg{background:#fff}
 .av.svg img{object-fit:contain;padding:4px}
