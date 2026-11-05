@@ -1,6 +1,7 @@
 name: Voice Chat
 version: "1.2.0"
 slug: voice_chat
+image: "ghcr.io/jonathangibson98/{arch}-addon-voice_chat"
 description: Hands-free voice conversation with any Home Assistant AI agent, answered out loud on the speaker you choose
 arch:
   - aarch64
