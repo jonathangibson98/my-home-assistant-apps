@@ -2,6 +2,9 @@ configuration:
   sensor_name:
     name: Location sensor name
     description: The name of the "who is home" sensor in Home Assistant, for example Household Locations. Change it and restart the add-on and the sensor is renamed (same entity ID, no duplicate). Renaming on the Location page works too; the last change wins.
+  sync_entity_id:
+    name: Rename the entity ID with the name
+    description: When the sensor name changes, also change its entity ID to match (Household Locations becomes sensor.household_locations). Home Assistant does not update dashboards or automations that use the old ID. Turn off to keep the entity ID you have.
   unique_id:
     name: Location sensor unique ID
     description: Optional. Paste the Unique ID from an old Location Tracker or Location Hub to keep the same sensor. First run only.
