@@ -82,6 +82,7 @@ Requirements for these pages: an MQTT broker (Mosquitto add-on or external) for 
 | Option | What it does |
 | --- | --- |
 | `sensor_name` | The name of the location sensor in Home Assistant, for example `Household Locations`. Change it and restart the add-on to rename the sensor (see *Naming the location sensor* below). |
+| `sync_entity_id` | On by default. When the name changes, the entity ID is renamed to match. Turn off to keep your current entity ID. |
 | `unique_id` | Optional. Paste the Unique ID from an old Location Tracker / Location Hub to keep the same sensor. First run only. |
 | `log_level`, `log_location_updates` | Logging. |
 | `mqtt_host`, `mqtt_port`, `mqtt_username`, `mqtt_password` | For the location sensor and device trackers. Leave blank to use the Mosquitto add-on. (The map's own MQTT sensors are set in the map's Settings.) |
@@ -92,11 +93,11 @@ Option changes need a restart.
 
 Type the name you want in the `sensor_name` option, for example `Household Locations`, and restart the add-on. Home Assistant shows that name right away.
 
-- The **entity ID** is fixed when the sensor is first created (for example `sensor.household_locations`) and **never changes**, so your dashboards and automations keep working after a rename. Only the display name changes.
-- The sensor keeps its permanent unique ID, so renaming never makes a duplicate.
+- The **entity ID** follows the name by default: `Household Locations` becomes `sensor.household_locations`. The add-on renames it in Home Assistant's entity registry for you (needs MQTT). The sensor keeps its permanent unique ID, so renaming never makes a duplicate. **Home Assistant does not update dashboards, cards or automations that use the old entity ID**, so change those yourself. Turn this off with the `sync_entity_id` option to keep the entity ID you have.
+- If the rename says the ID is already used, an old unavailable entity is holding it. Delete that one in *Settings > Devices & services > Entities*, then restart the add-on.
 - You can also rename it on the **Location > Devices** page without a restart. Whichever you changed last wins: if you rename on the page and later change the option, the option wins; restarting without touching the option keeps the page's name.
 - Old-style values such as `sensor.location_tracker` still work and are shown as `Location Tracker`.
-- Want a different entity ID too? In Home Assistant, open the sensor, click the gear, and change **Entity ID** (then update anything that used the old one).
+- Want an entity ID that is different from the name? On **Location > Devices**, type it in the **Entity ID** box (it must look like `sensor.something`) and save. Your choice is kept; it is not changed back later. Changing it in Home Assistant itself (the sensor's gear) also works, and the add-on picks it up.
 
 ### Prebuilt image
 

@@ -1,5 +1,5 @@
 name: "Location Hub"
-version: "2.4.1"
+version: "2.4.2"
 slug: location_hub
 # Prebuilt images from your GitHub package (built by .github/workflows/create.yml when you push a new version to main).
 # Home Assistant fills in {arch}, then downloads this instead of building on the Pi.
@@ -47,6 +47,7 @@ watchdog: "http://[HOST]:[PORT:8099]/health"
 
 options:
   sensor_name: "Location Tracker"
+  sync_entity_id: true
   unique_id: ""
   log_level: INFO
   log_location_updates: true
@@ -56,6 +57,7 @@ options:
   mqtt_password: ""
 schema:
   sensor_name: str
+  sync_entity_id: bool
   unique_id: str?
   log_level: list(DEBUG|INFO|WARNING|ERROR)
   log_location_updates: bool

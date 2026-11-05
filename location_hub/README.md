@@ -13,7 +13,7 @@ A location history map for Home Assistant, plus everyone's location sensor, clic
 - Optional MQTT sensors (current place, distance today)
 
 **Location**
-- One sensor with everyone's `Home` / `City, State` / zone name, and a count of who is home. **You choose its name** in the Configuration tab (or on the Location page) and Home Assistant follows when you change it
+- One sensor with everyone's `Home` / `City, State` / zone name, and a count of who is home. **You choose its name and entity ID** in the Configuration tab (or on the Location page) and Home Assistant follows when you change it
 - Switches: tap `input_boolean` / `switch` entities to flip them
 - Sensors to Device Trackers: turn any sensor into a real `device_tracker`
 - Dashboard card: generates a Mushroom card (with Bubble separator) to paste into a dashboard

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.4.2
+
+- **The entity ID now follows the sensor name.** Before, it was stuck on whatever it was when first created.
+  Set `sensor_name` (or rename on the Location page) and the add-on renames the entity ID in Home Assistant
+  (`Household Locations` becomes `sensor.household_locations`). Existing installs get this on the first start
+  after updating. Home Assistant does not update dashboards or automations that use the old ID.
+- New **Entity ID** box on *Location > Devices* to pick your own ID. It is kept, not changed back.
+- New option `sync_entity_id` (on by default). Turn it off to keep the entity ID you have.
+- If you change the entity ID in Home Assistant itself, the add-on notices and follows it.
+- If the new ID is taken by an old unavailable entity, the log says so and the rename is retried every 15 minutes.
+
 ## 2.4.1
 
 - **Fixed person pictures showing only the forehead.** The old "keep the top" crop pinned the photo to
