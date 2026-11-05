@@ -96,6 +96,9 @@ jobs:
               fi
 
               bf="$(jq -r --arg a "$arch" '.build_from[$a] // empty' <<<"$bj")"
+              # Old per-arch bases (aarch64-base, amd64-base...) no longer exist as multi-platform
+              # images and fail with "no match for platform". Use the combined base image instead.
+              bf="$(sed -E 's#^ghcr\.io/home-assistant/(amd64|aarch64|armv7|armhf|i386)-base#ghcr.io/home-assistant/base#' <<<"$bf")"
               entries="$(jq -c \
                 --arg image "$image" --arg dockerfile "$df" --arg context "$dir" \
                 --arg platforms "$plat" --arg arch "$arch" --arg version "$version" \
