@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.0.0
+
+- **Standalone Docker version.** `docker-compose.yml` + `Dockerfile.standalone` run Voice Chat anywhere, against any Home Assistant, using a long-lived access token. Settings come from `VC_*` environment variables. A password is always required (one is generated if you don't set it).
+- **"This device" playback.** Replies can play in the phone or PC browser itself, no media player needed.
+- **Several speakers at once.** Tick as many media players as you like (plus this device); they all speak together.
+- **Pick the AI on the page.** A menu lists every conversation agent in Home Assistant; your choice is remembered.
+- **Wake word.** Optional phrase (for example "hey jarvis") so hands-free mode ignores room chatter. After a reply you can keep talking for 20 seconds without repeating it.
+- **Stop phrases.** Say "stop listening", "goodbye", "never mind" or "cancel" to end the hands-free session.
+- **Chat history.** Past chats are saved; reopen, export as Markdown, or delete them from the History button. Opening one continues the same conversation.
+- **Sound cues** for listening, sent, wake word, and errors.
+- **Quiet-spell timeout** ends a forgotten hands-free session by itself.
+- **Microphone sensitivity** low / normal / high.
+- Space bar toggles the mic on desktop, Escape ends the session.
+- `media_player` is now optional when browser playback is on.
+
 ## 1.2.0
 
 - Type to the AI as well as talk: a message box under the chat. Replies to typed messages are spoken on the chosen speaker by default; untick "Speak replies to typed messages" to read them silently. Typing and talking share the same conversation.

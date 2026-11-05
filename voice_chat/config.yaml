@@ -1,5 +1,5 @@
 name: Voice Chat
-version: "1.2.0"
+version: "2.0.0"
 slug: voice_chat
 image: "ghcr.io/jonathangibson98/{arch}-addon-voice_chat"
 description: Hands-free voice conversation with any Home Assistant AI agent, answered out loud on the speaker you choose
@@ -32,9 +32,17 @@ options:
   password: ""
   certfile: fullchain.pem
   keyfile: privkey.pem
+  wake_word: ""
+  stop_words: "stop listening,goodbye,never mind,cancel"
+  sensitivity: normal
+  chimes: true
+  idle_timeout_s: 120
+  browser_playback: true
+  save_history: true
+  history_limit: 100
 schema:
   conversation_agent: str
-  media_player: str
+  media_player: str?
   tts_entity: str
   stt_entity: str?
   language: str?
@@ -44,3 +52,11 @@ schema:
   password: password?
   certfile: str
   keyfile: str
+  wake_word: str?
+  stop_words: str?
+  sensitivity: list(low|normal|high)
+  chimes: bool
+  idle_timeout_s: int(0,3600)
+  browser_playback: bool
+  save_history: bool
+  history_limit: int(10,1000)
