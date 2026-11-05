@@ -1,6 +1,7 @@
 name: Release Tracker
 version: "1.1.0"
 slug: release_tracker
+image: "ghcr.io/jonathangibson98/{arch}-addon-release_tracker"
 description: Track the TV shows and movies you pick and see exactly when they drop
 arch:
   - aarch64
