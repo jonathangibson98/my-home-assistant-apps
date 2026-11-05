@@ -189,6 +189,7 @@ function devicesV(){
   return `<div class="card"><div class="bd" style="border:0">
     ${fld("Sensor name",inp("loc.settings.name",s.name,"text",'placeholder="e.g. Household Locations"'),"Display name of the main location sensor in Home Assistant. You can also set it in the add-on's Configuration tab (after a restart). Whichever you changed last wins. Renaming never creates a duplicate.")}
     ${fld("Entity ID",inp("loc.settings.entity_id",s.entity_id,"text",'autocapitalize="none" placeholder="sensor.household_locations"'),"Changing the name also renames this to match (turn that off with the <b>sync_entity_id</b> option). Or type your own and save. Home Assistant does not update dashboards or automations that use the old ID.")}
+    ${s.sync_error?`<div class="hint" style="color:#ff8a80">Home Assistant did not accept the entity ID: ${esc(s.sync_error)}</div>`:(s.ha_entity_id_checked?`<div class="hint" style="color:#5be3a4">Home Assistant is using ${esc(s.entity_id)}</div>`:"")}
     <div class="hint">Unique ID: ${esc(s.unique_id)} · Mode: ${esc(s.mode)}</div></div></div>
   <p class="hint" style="margin:0 0 10px">One row per person. The sensor's state is how many are home; anyone away shows as City, State.</p>`+
   loc.devices.map((d,i)=>`<div class="card"><div class="bd" style="border:0">

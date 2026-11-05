@@ -114,7 +114,7 @@ def entity_id():
 
 ENTITY_RE = re.compile(r"^sensor\.[a-z0-9_]+$")
 SYNC_ENTITY_ID = opts.get("sync_entity_id", True) is not False
-_sync = {"next": 0.0, "warned": ""}
+_sync = {"next": 0.0, "warned": "", "error": ""}
 
 cache = {}
 
@@ -135,12 +135,14 @@ async def registry_sync(s, want=None):
     """
     if mq is None or not mq_ready:
         return False, "MQTT is not connected yet"
-    async with s.ws_connect(WS) as ws:
+    async with s.ws_connect(WS, max_msg_size=0) as ws:
         await ws.receive_json()
         await ws.send_json({"type": "auth", "access_token": TOKEN})
         if (await ws.receive_json()).get("type") != "auth_ok":
             return False, "Home Assistant refused the connection"
         r = await _ws_call(ws, 1, {"type": "config/entity_registry/list"})
+        if not r.get("success"):
+            return False, "Home Assistant would not list entities: " + ((r.get("error") or {}).get("message") or "no reason given")
         entries = r.get("result") or []
         mine = next((e for e in entries if e.get("unique_id") == UID and e.get("platform") == "mqtt"), None)
         if not mine:
@@ -163,15 +165,21 @@ async def registry_sync(s, want=None):
     mq_publish_discovery()
     return True, ""
 
+async def registry_sync_safe(s, want=None):
+    """registry_sync that never raises and remembers the last problem so the page can show it."""
+    try:
+        ok, msg = await registry_sync(s, want)
+    except Exception as e:  # noqa: BLE001
+        ok, msg = False, f"{type(e).__name__}: {e}"
+    _sync["error"] = "" if ok else msg
+    return ok, msg
+
 async def maybe_sync_entity(s):
     """After a name change (Configuration tab or the page) rename the entity ID to match, once."""
     if not SYNC_ENTITY_ID or SETTINGS.get("entity_synced_name") == SETTINGS["name"] or time.time() < _sync["next"]:
         return
     want = "sensor." + slugify(SETTINGS["name"])
-    try:
-        ok, msg = await registry_sync(s, want)
-    except Exception as e:  # noqa: BLE001
-        ok, msg = False, str(e)
+    ok, msg = await registry_sync_safe(s, want)
     if ok:
         SETTINGS["entity_synced_name"] = SETTINGS["name"]
         save_settings(SETTINGS)
@@ -825,9 +833,20 @@ async def handle_post_card(request):
     return web.json_response({"status": "ok"})
 
 async def handle_get_settings(request):
+    ha_id = ""
+    if mq is not None and mq_ready:
+        s = request.app["session"]
+        if SYNC_ENTITY_ID and SETTINGS.get("entity_synced_name") != SETTINGS["name"]:
+            _sync["next"] = 0
+            await maybe_sync_entity(s)              # try the pending rename now; records the error if refused
+        else:
+            await registry_sync_safe(s, None)       # just check Home Assistant, and adopt its real ID
+        ha_id = entity_id() if not _sync["error"] else ""
     return web.json_response({
         "name": SETTINGS["name"],
         "entity_id": entity_id(),
+        "ha_entity_id_checked": bool(ha_id),
+        "sync_error": _sync["error"],
         "unique_id": UID,
         "mode": "MQTT (has unique ID)" if mq is not None else "REST (no unique ID)",
     })
@@ -845,13 +864,10 @@ async def handle_post_settings(request):
             mq_publish_discovery()  # same unique ID, so HA just updates the name
         _sync["next"] = 0
     new_id = (data.get("entity_id") or "").strip().lower()
-    if new_id and new_id != entity_id():
+    if new_id:
         if not ENTITY_RE.match(new_id):
             return web.json_response({"error": "Entity ID must look like sensor.household_locations"}, status=400)
-        try:
-            ok, msg = await registry_sync(s, new_id)
-        except Exception as e:  # noqa: BLE001
-            ok, msg = False, str(e)
+        ok, msg = await registry_sync_safe(s, new_id)   # no-op when Home Assistant already has it
         if not ok:
             return web.json_response({"error": f"Could not change the entity ID: {msg}"}, status=400)
         SETTINGS["entity_synced_name"] = SETTINGS["name"]   # your chosen ID stays; no automatic change back
