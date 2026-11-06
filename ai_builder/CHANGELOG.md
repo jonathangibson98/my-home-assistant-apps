@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.4.0 - 2026-11-06
+
+- **Announcements are now a library.** Every announcement you make is saved inside the add-on (not in the Configuration tab, which is for options like paths and entities) and listed under **My announcements** with status, Edit, Run now, Duplicate and Delete
+- Edit any announcement and push it again. The script id stays the same, so automations that call it keep working. **Save** keeps changes here only, **Save and push** updates Home Assistant
+- Scripts this tool made before this version show under **Made earlier, in Home Assistant**. Open one and the form is rebuilt from the script
+- **Update all in Home Assistant** re-pushes every announcement with your current Settings (for example after you change the speaker)
+- Setups saved in your browser can be moved into the library with one tap
+- Saved announcements are included in Backup and Restore
+- Web UI redesigned: one look across Build, Announcements and Backup (light and dark), an editor with four clear steps and a test panel beside it, Settings grouped into cards with a save bar, and consistent buttons, status pills and messages
+- Delete buttons now need a second tap, and a delete from Announcements can also remove the script in Home Assistant (only scripts made by this add-on)
+
 ## 2.2.1 - 2026-11-06
 
 - Fix: updating from 2.1.1 failed with "unauthorized" because Home Assistant tried to download a prebuilt image that is not available. The add-on now builds on your Home Assistant instead, like SVG Maker

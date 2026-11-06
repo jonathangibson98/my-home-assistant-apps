@@ -11,7 +11,7 @@ Builds Home Assistant things from plain English (automations, scenes, scripts, t
 3. Pick a type, or leave it on **Let AI decide**.
 4. Tap **Build it**. Gemini-style backends can take a minute or two.
 5. Read the result. Tap **See the config** to view it.
-6. Tap **Create**. Use **Create everything** if there are several items.
+6. Tap **Create**. Use **Create all** if there are several items.
 
 Not right? Type a change in the box under the results and tap **Revise**.
 
@@ -164,9 +164,18 @@ All announcement setup happens inside the app, on the **Settings** tab of Announ
 - Required to generate: AI Task, text-to-speech engine, main speaker. The AI Task defaults to this add-on's `ai_task_entity`.
 - The personality dropdown (optional) needs an `input_select` with options `Hype`, `Roast`, `Sweetie Pie`.
 
+## My announcements
+
+The **My announcements** tab lists every announcement you have made. It is stored in the add-on's own data (so it is included in Backup), not in the Configuration tab.
+
+- **Edit** opens the editor. **Save** keeps your changes here; **Save and push** also updates the script in Home Assistant. The script id never changes after the first push.
+- **Run now**, **Duplicate** and **Delete** (a second tap is needed; deleting one that is in Home Assistant also removes its script).
+- **Update all in Home Assistant** pushes every announcement again using your current Settings.
+- **Made earlier, in Home Assistant** lists scripts this add-on pushed before saving existed. Open one to rebuild the form from the script. Pushing rebuilds the script from the form, so hand edits made in Home Assistant are replaced.
+
 ## Announcement tabs
 
-- **Create:** pick data, personality, then type **What should it do?** in plain words. Every data source is loaded into a variable (`src_<name>`) in the script, and the AI Task reads those variables.
+- **Editor:** pick data, personality, then type **What should it do?** in plain words. Every data source is loaded into a variable (`src_<name>`) in the script, and the AI Task reads those variables.
 - **Test before saving:** runs a temporary copy of the script and deletes it afterward, so nothing lands in your Scripts list. *Preview data only* skips the AI and speaking, and shows what each source rendered. *Test (text only)* also runs the AI and shows what it would say. *Test with sound* speaks it too. If a step fails, the error from Home Assistant is shown.
 - **Push to Home Assistant** writes the script (it then appears in Settings -> Scripts and in Build's history).
 - **Helper:** (1) describe what you want and the AI writes the instructions and ticks the data it needs; (2) test an entity and add it as an info source.
@@ -174,7 +183,7 @@ All announcement setup happens inside the app, on the **Settings** tab of Announ
 
 Phone notifications: entities (`notify.jon`) and services (`notify.mobile_app_*`, shown as "service") both work, and you can type an id that isn't listed.
 
-Saved setups (the **Save setup** button) are stored in your browser, not in the add-on.
+Setups you saved in your browser with an older version can be moved into My announcements from that tab.
 
 ## Announcement troubleshooting
 

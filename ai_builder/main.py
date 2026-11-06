@@ -101,6 +101,7 @@ PKG_DIR = PKG_FILE.parent
 STORE = DATA / "templates.json"
 HIST = DATA / "history.json"
 ANN_SETTINGS = DATA / "announcement_settings.json"
+ANN_LIB = DATA / "announcements.json"  # saved announcements: the form state behind every script, so each one can be edited later
 BACKUP_DEFAULT = "/share/ai_builder_backups"
 BACKUP_PATH = clean_path(OPTS.get("backup_path") or BACKUP_DEFAULT, BACKUP_DEFAULT, "backup_path")
 BACKUP_KEEP = max(1, int(OPTS.get("backup_keep") or 20))
@@ -1310,6 +1311,32 @@ async def ann_script_id(body):
     return sid
 
 
+ANN_MARK = "Made with Announcement Maker"
+
+
+def ann_library():
+    lib = load_json(ANN_LIB, {})
+    return lib if isinstance(lib, dict) else {}
+
+
+def clean_ann_state(state):
+    """Keep only a plain JSON object of sensible size; the browser rebuilds the script from it."""
+    if not isinstance(state, dict) or len(json.dumps(state)) > 200_000:
+        return None
+    return state
+
+
+def ann_store(sid, name, state, pushed=False):
+    lib = ann_library()
+    now = time.strftime("%Y-%m-%d %H:%M")
+    old = lib.get(sid, {})
+    lib[sid] = {"id": sid, "name": str(name or old.get("name") or sid)[:80],
+                "state": state if state is not None else old.get("state") or {},
+                "updated": now, "pushed_at": now if pushed else old.get("pushed_at")}
+    save_json(ANN_LIB, lib)
+    return lib[sid]
+
+
 async def ann_push(request):
     app = request.app
     body = await ann_body(request)
@@ -1324,8 +1351,84 @@ async def ann_push(request):
     if code != 200:
         return web.json_response({"ok": False, "detail": "HA said %s: %s" % (code, str(text)[:300])})
     await ha_text(app, "POST", "/services/script/reload", {})
-    add_history({"kind": "announcement", "name": str(cfg.get("alias") or sid), "entity": f"script.{sid}"})
+    name = str(cfg.get("alias") or sid)
+    if body.get("new"):  # the editor says so the first time a script is created
+        add_history({"kind": "announcement", "name": name, "entity": f"script.{sid}"})
+    state = clean_ann_state(body.get("state"))
+    if state is not None or sid in ann_library():
+        ann_store(sid, name, state, pushed=True)
     return web.json_response({"ok": True, "entity": f"script.{sid}"})
+
+
+async def ann_found(app, skip):
+    """Scripts in Home Assistant that this tool wrote earlier but that have no saved form yet."""
+    st, states = await ha(app, "GET", "/states")
+    ids = [s["entity_id"].split(".", 1)[1] for s in states if st == 200 and isinstance(states, list)
+           and s["entity_id"].startswith("script.") and s["entity_id"].split(".", 1)[1] not in skip
+           and ANN_ID_RE.match(s["entity_id"].split(".", 1)[1])][:200]
+    sem = asyncio.Semaphore(8)
+
+    async def one(i):
+        async with sem:
+            code, cfg = await ha(app, "GET", f"/config/script/config/{i}", timeout=10)
+        if code == 200 and isinstance(cfg, dict) and cfg.get("description") == ANN_MARK:
+            return {"id": i, "name": str(cfg.get("alias") or i)}
+    return [x for x in await asyncio.gather(*(one(i) for i in ids)) if x]
+
+
+async def ann_library_list(request):
+    app = request.app
+    lib = ann_library()
+    st, states = await ha(app, "GET", "/states")
+    live = {s["entity_id"].split(".", 1)[1]: s for s in states if st == 200 and isinstance(states, list)
+            and s["entity_id"].startswith("script.")}
+    items = []
+    for i, v in lib.items():
+        items.append({**v, "in_ha": i in live, "last_run": ((live.get(i) or {}).get("attributes") or {}).get("last_triggered")})
+    items.sort(key=lambda x: str(x.get("updated") or ""), reverse=True)
+    found = await ann_found(app, set(lib)) if st == 200 else []
+    return web.json_response({"items": items, "found": found, "ha_ok": st == 200})
+
+
+async def ann_library_save(request):
+    body = await ann_body(request)
+    sid = await ann_script_id(body)
+    state = clean_ann_state(body.get("state"))
+    if state is None:
+        return web.json_response({"ok": False, "error": "Nothing to save."})
+    return web.json_response({"ok": True, "item": ann_store(sid, body.get("name"), state)})
+
+
+async def ann_library_delete(request):
+    app = request.app
+    body = await ann_body(request)
+    sid = await ann_script_id(body)
+    lib = ann_library()
+    removed_script = False
+    if body.get("delete_script"):
+        code, cfg = await ha(app, "GET", f"/config/script/config/{sid}", timeout=10)
+        if sid not in lib and not (code == 200 and isinstance(cfg, dict) and cfg.get("description") == ANN_MARK):
+            return web.json_response({"ok": False, "error": "That script wasn't made here, so it won't be deleted."})
+        if code == 200:
+            code, text = await ha_text(app, "DELETE", f"/config/script/config/{sid}")
+            if code != 200:
+                return web.json_response({"ok": False, "error": "HA said %s: %s" % (code, str(text)[:300])})
+            await ha_text(app, "POST", "/services/script/reload", {})
+            removed_script = True
+    lib.pop(sid, None)
+    save_json(ANN_LIB, lib)
+    return web.json_response({"ok": True, "script_deleted": removed_script})
+
+
+async def ann_script_get(request):
+    """The saved script config for one id, so a script made before the library existed can be opened for editing."""
+    sid = str(request.query.get("id", ""))
+    if not ANN_ID_RE.match(sid):
+        return web.json_response({"ok": False, "error": "Bad script id."})
+    code, cfg = await ha(request.app, "GET", f"/config/script/config/{sid}", timeout=10)
+    if code != 200 or not isinstance(cfg, dict):
+        return web.json_response({"ok": False, "error": "Could not load that script: %s" % errmsg(cfg)})
+    return web.json_response({"ok": True, "config": cfg})
 
 
 async def ann_run(request):
@@ -1349,11 +1452,13 @@ def backup_folder():
 def collect_backup():
     return {"kind": "ai_builder_backup", "format": 1, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
             "data": {"templates": load_json(STORE, {}), "history": load_json(HIST, []),
-                     "announcement_settings": load_json(ANN_SETTINGS, {})}}
+                     "announcement_settings": load_json(ANN_SETTINGS, {}),
+                     "announcements": ann_library()}}
 
 
 def parse_backup(text):
-    """Validate a backup file and return (templates, history, announcement_settings). Raises ValueError."""
+    """Validate a backup file and return (templates, history, announcement_settings, announcements). Raises ValueError.
+    announcements is None for backups made before saved announcements existed, so an import leaves yours alone."""
     try:
         d = json.loads(text)
     except ValueError:
@@ -1377,7 +1482,14 @@ def parse_backup(text):
     if not isinstance(ann, dict):
         raise ValueError("The backup's announcement settings are damaged.")
     ann = {k: v for k, v in ann.items() if k in ANN_DEFAULTS and k != "helper_ai_task_entity"}
-    return templates, history, ann
+    lib = data.get("announcements")
+    if lib is not None:
+        if not isinstance(lib, dict):
+            raise ValueError("The backup's saved announcements are damaged.")
+        lib = {k: v for k, v in lib.items() if ANN_ID_RE.match(str(k)) and isinstance(v, dict) and isinstance(v.get("state"), dict)}
+        for k, v in lib.items():
+            v["id"] = k
+    return templates, history, ann, lib
 
 
 def backup_candidates():
@@ -1398,11 +1510,12 @@ def peek_backup(p):
         st = p.stat()
         if st.st_size > 32 * 1024 * 1024:
             return None
-        templates, history, ann = parse_backup(p.read_text(encoding="utf-8"))
+        templates, history, ann, lib = parse_backup(p.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     return {"file": p.name, "size": st.st_size, "modified": time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime)),
-            "templates": len(templates), "history": len(history), "announcements": bool(ann)}
+            "templates": len(templates), "history": len(history), "announcements": bool(ann),
+            "announcements_count": len(lib or {})}
 
 
 def write_backup(tag=""):
@@ -1437,7 +1550,7 @@ async def backup_info(request):
     return web.json_response({
         "path": BACKUP_PATH, "mode": "file" if backup_is_file() else "folder", "keep": BACKUP_KEEP,
         "files": files,
-        "current": {"templates": len(load_json(STORE, {})), "history": len(load_json(HIST, []))},
+        "current": {"templates": len(load_json(STORE, {})), "history": len(load_json(HIST, [])), "announcements": len(ann_library())},
     })
 
 
@@ -1461,7 +1574,7 @@ async def backup_import(request):
     if not path.is_file():
         return web.json_response({"ok": False, "error": "%s was not found in %s." % (name, backup_folder())})
     try:
-        templates, history, ann = parse_backup(path.read_text(encoding="utf-8"))
+        templates, history, ann, lib = parse_backup(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         return web.json_response({"ok": False, "error": str(e)})
     try:
@@ -1471,6 +1584,8 @@ async def backup_import(request):
     save_json(STORE, templates)
     save_json(HIST, history)
     save_json(ANN_SETTINGS, ann)
+    if lib is not None:
+        save_json(ANN_LIB, lib)
     note = ""
     try:
         render_package(templates)
@@ -1480,7 +1595,8 @@ async def backup_import(request):
         note = "Data restored, but the template file could not be rewritten (%s)." % e
     log.info("Imported backup %s (safety copy %s)", path, safety)
     return web.json_response({"ok": True, "file": name, "safety": safety.name, "note": note,
-                              "templates": len(templates), "history": len(history), "announcements": bool(ann)})
+                              "templates": len(templates), "history": len(history), "announcements": bool(ann),
+                              "announcements_count": len(lib if lib is not None else ann_library())})
 
 
 async def on_startup(app):
@@ -1502,6 +1618,9 @@ def main():
         web.get("/builder", page("builder.html")),
         web.get("/announcements", page("announcements.html")),
         web.get("/backup", page("backup.html")),
+        web.get("/ui.css", asset("ui.css", "text/css")),
+        web.get("/ui.js", asset("ui.js", "application/javascript")),
+        web.get("/announcements.js", asset("announcements.js", "application/javascript")),
         web.get("/api/status", status),
         web.get("/api/targets", targets),
         web.get("/api/mine", mine),
@@ -1512,6 +1631,10 @@ def main():
         web.get("/api/ann/options", ann_options),
         web.get("/api/ann/entities", ann_entities),
         web.get("/api/ann/test", ann_test_status),
+        web.get("/api/ann/library", ann_library_list),
+        web.get("/api/ann/script", ann_script_get),
+        web.post("/api/ann/library/save", ann_library_save),
+        web.post("/api/ann/library/delete", ann_library_delete),
         web.post("/api/ann/settings", ann_save_settings),
         web.post("/api/ann/test", ann_test_start),
         web.post("/api/ann/helper", ann_helper),
