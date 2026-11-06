@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.2.1 - 2026-11-06
+
+- Fix: updating from 2.1.1 failed with "unauthorized" because Home Assistant tried to download a prebuilt image that is not available. The add-on now builds on your Home Assistant instead, like SVG Maker
+
 ## 2.2.0 - 2026-11-05
 
 - **SVG Maker is now its own add-on** (`svg_maker`) and its tab and `svg_*` options are removed here. Photo-to-SVG conversion crashed the tracer inside this add-on, so it now runs on its own Debian-based image
