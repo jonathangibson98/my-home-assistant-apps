@@ -26,5 +26,3 @@ configuration:
   mqtt_password:
     name: MQTT password
     description: Only used with an MQTT host.
-network:
-  8100/tcp: Read-only map (and optional ingest API). Used for dashboard embeds and other tracking apps.
