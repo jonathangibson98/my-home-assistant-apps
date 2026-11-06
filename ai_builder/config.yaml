@@ -1,8 +1,8 @@
 name: "Creator & AI Builder"
-version: "2.1.1"
+version: "2.2.0"
 slug: ai_builder
 image: "ghcr.io/jonathangibson98/{arch}-addon-ai_builder"
-description: "Build Home Assistant automations, scenes, scripts, helpers and more from plain English with your ai_task entity, make AI voice announcements, turn photos into SVG icons, and back it all up."
+description: "Build Home Assistant automations, scenes, scripts, helpers and more from plain English with your ai_task entity, make AI voice announcements, and back it all up."
 url: "https://github.com/jonathangibson98/ha-ai-builder"
 arch:
   - aarch64
@@ -44,25 +44,6 @@ options:
   helper_ai_task_entity: ""
   backup_path: /share/ai_builder_backups
   backup_keep: 20
-  svg_output_path: /homeassistant/custom_icons
-  svg_temp_path: /homeassistant/www/svg_maker/temp_icons
-  svg_auto_delete_temp: false
-  svg_auto_delete_after_days: 7
-  svg_filename_style: original_timestamp
-  svg_on_name_conflict: rename
-  svg_default_mode: color
-  svg_default_detail: 5
-  svg_path_style: spline
-  svg_max_image_dimension: 1600
-  svg_max_upload_mb: 25
-  svg_icon_names: true
-  svg_bw_follow_theme: true
-  svg_crop_editor: true
-  svg_auto_crop: true
-  svg_crop_shape: circle
-  svg_crop_padding: 15
-  svg_output_size: 512
-  svg_auto_enhance: true
 schema:
   log_level: list(debug|info|warning|error)
   ai_task_entity: str
@@ -74,22 +55,3 @@ schema:
   helper_ai_task_entity: str?
   backup_path: str
   backup_keep: int(1,200)
-  svg_output_path: str
-  svg_temp_path: str
-  svg_auto_delete_temp: bool
-  svg_auto_delete_after_days: int(1,365)
-  svg_filename_style: list(original|timestamp|original_timestamp)
-  svg_on_name_conflict: list(rename|overwrite)
-  svg_default_mode: list(color|bw)
-  svg_default_detail: int(1,10)
-  svg_path_style: list(spline|polygon|none)
-  svg_max_image_dimension: int(400,4000)
-  svg_max_upload_mb: int(1,100)
-  svg_icon_names: bool
-  svg_bw_follow_theme: bool
-  svg_crop_editor: bool
-  svg_auto_crop: bool
-  svg_crop_shape: list(circle|rounded|square|none)
-  svg_crop_padding: int(0,60)
-  svg_output_size: int(128,2048)
-  svg_auto_enhance: bool

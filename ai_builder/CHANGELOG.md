@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.0 - 2026-11-05
+
+- **SVG Maker is now its own add-on** (`svg_maker`) and its tab and `svg_*` options are removed here. Photo-to-SVG conversion crashed the tracer inside this add-on, so it now runs on its own Debian-based image
+- This add-on no longer installs Pillow or vtracer, so it builds faster and is smaller
+- Everything else (Build, Announcements, Backup) is unchanged
+
 ## 2.1.1 - 2026-11-03
 
 - Fix: converting a photo to SVG could crash the whole add-on (the panel then showed 503 Bad Gateway). Tracing now runs in a separate process, so a crash only fails that one conversion and shows a clear error

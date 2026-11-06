@@ -1,14 +1,12 @@
 # Creator & AI Builder
 
-Type what you want in plain English. Your Home Assistant `ai_task` entity builds it. One add-on, four tools:
+Type what you want in plain English. Your Home Assistant `ai_task` entity builds it. One add-on, three tools:
 
 - **Build**: automations, scenes, scripts, template sensors, helpers, AppDaemon apps, pyscripts, blueprints and whole add-ons.
 - **Announcements**: tap checkboxes to make AI-written voice announcements (weather, news, welcome home, roasts, whatever). It writes the Home Assistant script and pushes it in.
-
-- **SVG Maker**: turn photos into clean, scalable SVG icons and vector files (crop window, auto-crop, auto-enhance, color or black and white).
 - **Backup**: save this add-on's data to a path you choose in the options, and import it back.
 
-Use the tab bar at the top of the sidebar panel to switch: **Build / Announcements / SVG Maker / Backup**.
+Use the tab bar at the top of the sidebar panel to switch: **Build / Announcements / Backup**.
 
 ## Build
 
@@ -29,14 +27,6 @@ Use the tab bar at the top of the sidebar panel to switch: **Build / Announcemen
 - **Test before saving**: preview the data, test text only, or test with sound, using a temporary script that is deleted afterward
 - Helper tab: describe what you want and the AI writes the instructions and ticks the data it needs
 - Settings with searchable entity pickers, Auto-fill, and Export/Import as JSON
-
-## SVG Maker
-
-- Facebook-style crop window: auto-suggested crop, drag and pinch to adjust, circle, rounded, square or full photo
-- Auto-enhance for cleaner shapes and smaller files; color or black and white tracing with adjustable detail
-- Name your file, then Save locally, Download, or Both. Icon-friendly names (`my-dog`) and black and white icons that follow Home Assistant colors
-- Default save folder `/homeassistant/custom_icons` (the Custom Icons integration folder); unsaved results auto-keep in a temp folder, with optional auto-delete
-- Runs fully local. Your photos never leave your Home Assistant
 
 ## Backup
 
@@ -65,9 +55,12 @@ Template sensors need a one-time `configuration.yaml` change. See [DOCS.md](DOCS
 - Home Assistant OS or Supervised (needs the add-on system)
 - Home Assistant 2025.8 or newer (for `ai_task`)
 - A working `ai_task` entity. The default is `ai_task.gemini_pro_ai_task`
-- For SVG Maker: nothing extra. To use saved icons as `local:<name>`, install the Custom Icons integration (HACS)
 - For announcements: a text-to-speech engine and a speaker. Alexa speakers need the `alexa_media` custom integration
 
 ## Support
 
 AI output can be wrong. Always read the config or script before you create or push it.
+
+## SVG Maker moved
+
+The SVG Maker tab was split out into its own add-on, **SVG Maker** (`svg_maker`), because the tracer crashed inside this add-on. Install it separately. The `svg_*` options were removed from this add-on.

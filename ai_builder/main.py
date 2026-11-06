@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Creator & AI Builder - plain-English Home Assistant config builder, AI voice announcements, SVG maker and backups, in one add-on."""
+"""Creator & AI Builder - plain-English Home Assistant config builder, AI voice announcements and backups, in one add-on."""
 import ast
 import asyncio
 import json
@@ -17,11 +17,8 @@ import aiohttp
 import yaml
 from aiohttp import web
 
-import svg_tool
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("ai_builder")
-svg = None  # SvgMaker, created in main()
 
 # Paths can be overridden with env vars so the add-on can be tested off-device.
 DATA = Path(os.environ.get("DATA_DIR", "/data"))
@@ -47,6 +44,27 @@ HDR = {"Authorization": f"Bearer {TOKEN}"}
 
 ENTITY = OPTS.get("ai_task_entity") or "ai_task.gemini_pro_ai_task"
 TIMEOUT = int(OPTS.get("request_timeout") or 180)
+
+
+BLOCKED = ("/proc", "/sys", "/dev", "/etc", "/bin", "/sbin", "/usr", "/lib",
+           "/lib64", "/run", "/var", "/root", "/boot", "/app", "/static")
+KNOWN = ("/homeassistant", "/share", "/media", "/backup", "/ssl", "/config",
+         "/data", "/addon_configs", "/addons")
+
+
+def clean_path(p, default, label):
+    """Absolute folder in a mapped location; anything else falls back to the default."""
+    p = str(p or "").strip()
+    if not p.startswith("/"):
+        log.error("%s must be an absolute path starting with /. Using default %s", label, default)
+        return default
+    n = os.path.normpath(p)
+    if n == "/" or any(n == b or n.startswith(b + "/") for b in BLOCKED):
+        log.error("%s %s is a protected system location. Using default %s", label, n, default)
+        return default
+    if not any(n == k or n.startswith(k + "/") for k in KNOWN):
+        log.warning("%s %s is not inside a Home Assistant mapped folder. It may disappear when the add-on restarts.", label, n)
+    return n
 
 
 def resolve_template_file(value):
@@ -84,7 +102,7 @@ STORE = DATA / "templates.json"
 HIST = DATA / "history.json"
 ANN_SETTINGS = DATA / "announcement_settings.json"
 BACKUP_DEFAULT = "/share/ai_builder_backups"
-BACKUP_PATH = svg_tool.clean_path(OPTS.get("backup_path") or BACKUP_DEFAULT, BACKUP_DEFAULT, "backup_path")
+BACKUP_PATH = clean_path(OPTS.get("backup_path") or BACKUP_DEFAULT, BACKUP_DEFAULT, "backup_path")
 BACKUP_KEEP = max(1, int(OPTS.get("backup_keep") or 20))
 BACKUP_PREFIX = "ai_builder_backup"
 
@@ -1468,7 +1486,6 @@ async def backup_import(request):
 async def on_startup(app):
     app["http"] = aiohttp.ClientSession()
     render_package(load_json(STORE, {}))
-    svg.start()
     log.info("Creator & AI Builder ready - using %s, template file /config/%s, AppDaemon dir %s, backups %s", ENTITY, TEMPLATE_REL, AD_DIR, BACKUP_PATH)
 
 
@@ -1477,18 +1494,14 @@ async def on_cleanup(app):
 
 
 def main():
-    global svg
-    svg = svg_tool.SvgMaker(OPTS)
-    app = web.Application(client_max_size=max(4 * 1024 * 1024, svg.max_upload_bytes + 1024 * 1024), middlewares=[ingress_only])
+    app = web.Application(client_max_size=4 * 1024 * 1024, middlewares=[ingress_only])
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
     app.add_routes([
         web.get("/", page("index.html")),
         web.get("/builder", page("builder.html")),
         web.get("/announcements", page("announcements.html")),
-        web.get("/svg", page("svg.html")),
         web.get("/backup", page("backup.html")),
-        web.get("/svg-crop.js", asset("svg-crop.js", "application/javascript")),
         web.get("/api/status", status),
         web.get("/api/targets", targets),
         web.get("/api/mine", mine),
@@ -1504,10 +1517,6 @@ def main():
         web.post("/api/ann/helper", ann_helper),
         web.post("/api/ann/push", ann_push),
         web.post("/api/ann/run", ann_run),
-        # svg maker
-        web.get("/api/svg/settings", svg.settings),
-        web.post("/api/svg/convert", svg.convert),
-        web.post("/api/svg/save", svg.save),
         # backup / import
         web.get("/api/backup", backup_info),
         web.post("/api/backup/save", backup_save),
