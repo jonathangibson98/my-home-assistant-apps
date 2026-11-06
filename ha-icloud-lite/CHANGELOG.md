@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.6.2
+- Fix: the image build failed for amd64 because the Dockerfile defaulted to the aarch64 base image. It now uses the multi-platform Home Assistant base image.
+
 ## 2.6.0
 - Added logging options to the Configuration tab: `log_level` (debug, info, warning, error) and `log_pyicloud` (Apple library debug output, off by default).
 - Added log lines for logins, 2FA, fast mode on/off, device add/remove, MQTT discovery, and (at debug) every poll and zone distance.
