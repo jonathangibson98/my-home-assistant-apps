@@ -1420,6 +1420,57 @@ async def ann_library_delete(request):
     return web.json_response({"ok": True, "script_deleted": removed_script})
 
 
+class _AnnDumper(yaml.SafeDumper):
+    pass
+
+
+_AnnDumper.add_representer(str, lambda d, v: d.represent_scalar(
+    "tag:yaml.org,2002:str", v, style="|" if "\n" in v else None))  # multi-line text stays readable
+
+
+def ann_dump(cfg):
+    return yaml.dump(cfg, Dumper=_AnnDumper, sort_keys=False, allow_unicode=True, default_flow_style=False, width=1000)
+
+
+def ann_clean_id(x):
+    x = re.sub(r"^script\.", "", str(x or "").strip().lower())
+    return x if ANN_ID_RE.match(x) else ""
+
+
+async def ann_import(request):
+    """Take a script the user pasted (just the script, `my_id:` + script as it appears in scripts.yaml, or only the steps)
+    and return it checked and tidied, so the editor can take it over."""
+    body = await ann_body(request)
+    text = str(body.get("yaml", ""))
+    if not text.strip():
+        return web.json_response({"ok": False, "error": "Paste your script first."})
+    if len(text) > 150_000:
+        return web.json_response({"ok": False, "error": "That script is too big to import."})
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        return web.json_response({"ok": False, "error": "YAML problem: %s" % str(e)[:400]})
+    sid = ""
+    if isinstance(data, list):  # only the steps were pasted
+        data = {"sequence": data}
+    for _ in range(2):  # `script:` wrapper, then `my_id:` wrapper, as in scripts.yaml
+        if isinstance(data, dict) and "sequence" not in data and data:
+            kids = {k: v for k, v in data.items() if isinstance(v, dict)}
+            if len(data) == 1 and data.get("script") is not None and isinstance(data["script"], dict):
+                data = data["script"]
+            elif len(kids) == 1 and len(data) == 1:
+                sid, data = str(next(iter(kids))), next(iter(kids.values()))
+            elif len(kids) > 1:
+                return web.json_response({"ok": False, "error": "That has more than one script in it (%s). Paste one at a time." % ", ".join(list(kids)[:6])})
+    if isinstance(data, dict) and isinstance(data.get("sequence"), dict):
+        data["sequence"] = [data["sequence"]]
+    if not isinstance(data, dict) or not isinstance(data.get("sequence"), list) or not data["sequence"]:
+        return web.json_response({"ok": False, "error": "That does not look like a Home Assistant script. It needs a sequence: list of steps."})
+    if not data.get("alias"):
+        data = {"alias": sid.replace("_", " ").title() if sid else "Imported script", **data}
+    return web.json_response({"ok": True, "id": ann_clean_id(sid), "alias": str(data["alias"]), "config": data, "yaml": ann_dump(data)})
+
+
 async def ann_script_get(request):
     """The saved script config for one id, so a script made before the library existed can be opened for editing."""
     sid = str(request.query.get("id", ""))
@@ -1428,7 +1479,7 @@ async def ann_script_get(request):
     code, cfg = await ha(request.app, "GET", f"/config/script/config/{sid}", timeout=10)
     if code != 200 or not isinstance(cfg, dict):
         return web.json_response({"ok": False, "error": "Could not load that script: %s" % errmsg(cfg)})
-    return web.json_response({"ok": True, "config": cfg})
+    return web.json_response({"ok": True, "config": cfg, "yaml": ann_dump(cfg)})
 
 
 async def ann_run(request):
@@ -1633,6 +1684,7 @@ def main():
         web.get("/api/ann/test", ann_test_status),
         web.get("/api/ann/library", ann_library_list),
         web.get("/api/ann/script", ann_script_get),
+        web.post("/api/ann/import", ann_import),
         web.post("/api/ann/library/save", ann_library_save),
         web.post("/api/ann/library/delete", ann_library_delete),
         web.post("/api/ann/settings", ann_save_settings),

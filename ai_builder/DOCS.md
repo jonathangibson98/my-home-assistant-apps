@@ -173,6 +173,14 @@ The **My announcements** tab lists every announcement you have made. It is store
 - **Update all in Home Assistant** pushes every announcement again using your current Settings.
 - **Made earlier, in Home Assistant** lists scripts this add-on pushed before saving existed. Open one to rebuild the form from the script. Pushing rebuilds the script from the form, so hand edits made in Home Assistant are replaced.
 
+### Import your own script
+
+Already have an announcement script? Tap **Import my script** on **My announcements** and paste it (YAML). A pasted script can be just the script, the script with its id on top like in `scripts.yaml`, or only the steps. You can also pick a script that already exists in Home Assistant and press **Load**.
+
+- Leave **Script id** blank to create a new script, or type the id of an existing script to take it over. Pushing then replaces it, and automations that call it keep working.
+- The editor shows your YAML exactly as written. Change the name and the `alias:` line follows. **Check YAML** tests it, **Save** keeps it here, **Save and push** sends it to Home Assistant.
+- **Switch to the form tools** (tap twice) reads the script into the form so you get the data-source picker, personalities, speakers, volume, helper and test panel. Your own prompt is kept word for word as the instructions. The form rebuilds the script when you push, so steps it does not cover are dropped. Leave without saving to keep your original.
+
 ## Announcement tabs
 
 - **Editor:** pick data, personality, then type **What should it do?** in plain words. Every data source is loaded into a variable (`src_<name>`) in the script, and the AI Task reads those variables.

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.5.0 - 2026-11-06
+
+- **Import your own script.** On **My announcements**, tap **Import my script** and paste any Home Assistant script (YAML). It works with just the script, the script with its id on top (as in `scripts.yaml`), or only the list of steps. You can also load a script that already exists in Home Assistant from a dropdown
+- Imported scripts are kept **exactly as you wrote them** and get their own editor with the YAML, a name field (it keeps the `alias:` line in step), **Check YAML**, Save, **Save and push**, Run saved script and Copy YAML. They also work with Duplicate, Delete, Update all and Backup
+- Type the id of a script you already have to **take it over**: pushing replaces it and automations that call it keep working
+- **Switch to the form tools** reads an imported script into the form (instructions, speakers, volume, personalities) so you can use the helper and the test panel. Your own prompt is kept word for word. Anything the form does not cover is dropped when you push, so leave without saving to keep the original
+
 ## 2.4.0 - 2026-11-06
 
 - **Announcements are now a library.** Every announcement you make is saved inside the add-on (not in the Configuration tab, which is for options like paths and entities) and listed under **My announcements** with status, Edit, Run now, Duplicate and Delete
