@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.0
+
+- **Removed the map.** Live map, history, timeline, places, map settings, import/export/backfill, the read-only
+  map and ingest API on port 8100, and the map's MQTT sensors are gone. The Location and Alerts pages are unchanged.
+- The home page no longer has a Map group or the "who is where" strip, and the Hub pages have no Map button.
+- Port 8100 and the `/homeassistant` config mount are no longer requested.
+- Old map files (`/data/tracker.db`, the map's `settings.json`) are left in `/data` unused; you can delete them.
+- The leftover MQTT entities the map created ("place", "distance today") stop updating; delete them in
+  Home Assistant if they show up as unavailable.
+
 ## 2.4.3
 
 - **Entity ID rename no longer fails silently.** *Location > Devices* now checks Home Assistant itself and shows
