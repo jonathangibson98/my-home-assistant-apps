@@ -1,7 +1,7 @@
 """Location Hub: who is home, switches, device trackers, dashboard card and AI arrival alerts.
 
 This package is the second half of the add-on. It runs inside the same process and the same
-ingress web server as the map (see main.py), under /hub and /api/hub/*.
+ingress web server as the home page (see main.py), under /hub and /api/hub/*.
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ LEGACY_FILES = ("devices.json", "trackers.json", "card.json", "config.json")
 def migrate_legacy_data(data_dir: str | None = None, hub_dir: str | None = None) -> list[str]:
     """Move an old stand-alone Location Hub's files from /data into /data/hub.
 
-    Needed because the map's own settings live in /data/settings.json too. Runs once: it does
+    Runs once: it does
     nothing when /data/hub already exists. Returns the names that were moved.
     """
     data_dir = data_dir or os.environ.get("MT_DATA", "/data")
@@ -39,7 +39,7 @@ def migrate_legacy_data(data_dir: str | None = None, hub_dir: str | None = None)
     try:
         with open(sp, encoding="utf-8") as fp:
             old = json.load(fp)
-        # The hub's sensor settings have uid/name/entity_id; the map's have a "devices" section.
+        # The hub's sensor settings have uid/name/entity_id; the old map's had a "devices" section.
         if isinstance(old, dict) and "uid" in old and "devices" not in old:
             names.append("settings.json")
     except (OSError, ValueError):
@@ -56,7 +56,7 @@ def migrate_legacy_data(data_dir: str | None = None, hub_dir: str | None = None)
 
 
 async def _forever(name: str, fn) -> None:
-    """Keep a background job alive: one failing never takes the others (or the map) down."""
+    """Keep a background job alive: one failing never takes the others  down."""
     while True:
         try:
             await fn()

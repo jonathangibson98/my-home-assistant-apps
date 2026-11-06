@@ -7,7 +7,7 @@ try:
 except ImportError:
     mqtt = None
 
-# The Location Hub part keeps its files in /data/hub so they never collide with the map's own
+# The Location Hub keeps its files in /data/hub, separate from any older
 # /data/settings.json. (An old stand-alone Location Hub install is migrated by hub.migrate_legacy_data.)
 DATA_DIR = os.environ.get("MT_HUB_DATA", "/data/hub")
 os.makedirs(DATA_DIR, exist_ok=True)

@@ -13,9 +13,6 @@ main{max-width:980px;margin:0 auto}
 h1{font-size:26px;letter-spacing:-.02em;margin:22px 0 2px}
 .sub{color:var(--dim);margin:0 0 14px;font-size:14px}
 h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);margin:22px 2px 8px;font-weight:700}
-.who{display:flex;flex-wrap:wrap;gap:6px;min-height:34px}
-.who span{border:1px solid var(--line);background:var(--card);border-radius:999px;padding:5px 12px;font-size:14px}
-.who b{font-weight:700}.who em{font-style:normal;color:var(--dim)}.who .home em{color:var(--ok)}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
 a.tile{display:block;text-decoration:none;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;transition:transform .12s,border-color .12s,background .12s}
 a.tile:hover,a.tile:focus-visible{border-color:var(--acc);background:rgba(255,194,75,.07);transform:translateY(-1px);outline:none}
@@ -28,7 +25,6 @@ a.tile.big{border-color:rgba(255,194,75,.45)}
 <body><main>
 <h1>Location Hub</h1>
 <p class="sub">Pick a section to open it.</p>
-<div class="who" id="who" aria-live="polite"></div>
 
 <div id="groups"></div>
 
@@ -36,12 +32,6 @@ a.tile.big{border-color:rgba(255,194,75,.45)}
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 // [icon, title, description, link]. Links are relative so this works behind HA ingress.
 const GROUPS=[
- ["Map",[
-  ["🗺️","Live map","Everyone right now","map#live",1],
-  ["🕒","History","Trails, heatmap and playback","map#history"],
-  ["🧭","Timeline","Stops and trips for a day","map#timeline"],
-  ["📍","Places","Your places and zones, time spent","map#places"],
-  ["⚙️","Map settings","Devices, icons, import, backfill, export","map#settings"]]],
  ["Location",[
   ["🔘","Switches","Flip input_boolean and switch entities","hub#loc/switches"],
   ["👥","Devices","Who is home sensor and its people","hub#loc/devices"],
@@ -54,16 +44,5 @@ const GROUPS=[
   ["📜","Activity","Last sent, skipped and previewed alerts","hub#alerts/log"]]]];
 document.getElementById("groups").innerHTML=GROUPS.map(([g,tiles])=>
  `<h2>${g}</h2><div class="grid">${tiles.map(([i,t,d,h,big])=>`<a class="tile${big?" big":""}" href="${h}"><span class="ic" aria-hidden="true">${i}</span><b>${esc(t)}</b><small>${esc(d)}</small></a>`).join("")}</div>`).join("");
-
-// Who is where, from the map's live data. Optional: the page works without it.
-(async()=>{
-  try{
-    const r=await fetch("api/state");if(!r.ok)return;
-    const s=await r.json(),devs=(s.devices||[]).filter(d=>d.ts);
-    document.getElementById("who").innerHTML=devs.map(d=>{
-      const at=d.place||"Away";
-      return `<span class="${/^home$/i.test(at)?"home":""}"><b>${esc(d.name)}</b> <em>${esc(at)}</em></span>`}).join("");
-  }catch(e){}
-})();
 </script>
 </main></body></html>

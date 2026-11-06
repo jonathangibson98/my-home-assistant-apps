@@ -98,7 +98,7 @@ async function init(){
 }
 function render(){
   $("#sub").textContent=SUBS[sec];
-  $("#seg").innerHTML=`<button data-nav="">Home</button><button data-nav="map">Map</button>`+Object.entries(SECS).map(([k,v])=>`<button data-sec="${k}" class="${k===sec?"on":""}">${v[0]}</button>`).join("");
+  $("#seg").innerHTML=`<button data-nav="">Home</button>`+Object.entries(SECS).map(([k,v])=>`<button data-sec="${k}" class="${k===sec?"on":""}">${v[0]}</button>`).join("");
   $("#nav").innerHTML=SECS[sec][1].map(([k,l])=>`<button data-tab="${k}" class="${k===tab?"on":""}">${l}</button>`).join("");
   $("#view").innerHTML=VIEWS[tab]();
   if(tab==="log")loadLog();
