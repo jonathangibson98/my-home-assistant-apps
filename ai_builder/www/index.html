@@ -21,17 +21,15 @@
 <nav>
   <button id="b-builder" data-t="builder">Build</button>
   <button id="b-announcements" data-t="announcements">Announcements</button>
-  <button id="b-svg" data-t="svg">SVG Maker</button>
   <button id="b-backup" data-t="backup">Backup</button>
 </nav>
 <div id="frames">
   <iframe id="f-builder" title="AI Builder" hidden></iframe>
   <iframe id="f-announcements" title="Announcement Maker" hidden></iframe>
-  <iframe id="f-svg" title="SVG Maker" hidden></iframe>
   <iframe id="f-backup" title="Backup" hidden></iframe>
 </div>
 <script>
-const TABS = ["builder", "announcements", "svg", "backup"];
+const TABS = ["builder", "announcements", "backup"];
 function show(t) {
   if (!TABS.includes(t)) t = "builder";
   for (const k of TABS) {
