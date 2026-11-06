@@ -1,7 +1,7 @@
 /* Announcements page: library of saved announcements, editor, helper and settings. */
 let O = {}, S = {}, ENT = [], LIB = [], FOUND = [], mem = {};
 let cur = {id: null, isNew: true, pushed: false}, dirty = false, view = "lib", OPEN = "", HEL = {entity: "", goal: "", idea: ""};
-let editorReady = false;
+let editorReady = false, rawMode = false;
 
 const ind = (t, n) => t.split("\n").map(l => l ? " ".repeat(n) + l : l).join("\n");
 const slug = s => (s || "announcement").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 60).replace(/_$/, "") || "announcement";
@@ -61,6 +61,25 @@ const PRE = {
   "You're Late": {name: "You're Late", types: ["household", "locations"], task: "Call out every person by name. Roast whoever is not home and work in where they are. Be nicer to whoever is home."},
   "Blank": {name: "My announcement", types: ["household"], task: ""}
 };
+
+/* ---------- your own pasted script ---------- */
+const cleanId = x => { x = String(x || "").trim().toLowerCase().replace(/^script\./, ""); return /^[a-z0-9_]{1,60}$/.test(x) ? x : "" };
+function getAlias(y) {
+  const m = String(y).match(/^alias:[ \t]*(.+?)[ \t]*$/m); if (!m) return "";
+  let v = m[1]; if (/^[>|]/.test(v)) return "";
+  if (v[0] === '"' && v.endsWith('"')) { try { return JSON.parse(v) } catch (e) { return v.slice(1, -1) } }
+  if (v[0] === "'" && v.endsWith("'")) return v.slice(1, -1).replace(/''/g, "'");
+  return v;
+}
+function setAlias(y, name) {
+  const line = "alias: " + JSON.stringify(name || "Announcement");
+  return /^alias:.*$/m.test(y) ? y.replace(/^alias:.*$/m, () => line) : line + "\n" + y;
+}
+function setRaw(on) {
+  rawMode = !!on;
+  $("#formcards").hidden = rawMode; $("#rawcard").hidden = !rawMode;
+  $("#trycard").hidden = rawMode; $("#ymldet").hidden = rawMode;
+}
 
 /* ---------- views ---------- */
 function showView(v) {
@@ -153,13 +172,13 @@ function libCard(it) {
   }}, "Run now");
   const dup = el("button", {class: "btn sm", onclick: async () => {
     const id = uniqueId(slug((it.name || it.id) + " copy"));
-    const r = await ann("library/save", {id, name: (it.name || it.id) + " copy", state: Object.assign({}, st, {name: (it.name || it.id) + " copy"})});
+    const r = await ann("library/save", {id, name: (it.name || it.id) + " copy", state: Object.assign({}, st, {name: (it.name || it.id) + " copy"}, st.raw != null ? {raw: setAlias(st.raw, (it.name || it.id) + " copy")} : {})});
     if (r.ok) { flash("Copied as a draft: " + id, "ok"); loadLib(); } else flash(r.error, "bad");
   }}, "Duplicate");
   return el("div", {class: "card ann"},
     el("div", {class: "top"}, el("div", {style: "min-width:0"}, el("h3", {}, it.name || it.id), el("div", {class: "dim small mono"}, "script." + it.id)), el("span", {class: "pill " + status[0]}, status[1])),
-    el("div", {class: "clamp"}, st.task || "No instructions yet."),
-    el("div", {class: "meta"}, el("span", {class: "pill plain"}, (st.src || []).length + " data source" + ((st.src || []).length === 1 ? "" : "s")), el("span", {class: "pill plain"}, outsSummary(st)),
+    el("div", {class: "clamp"}, st.raw != null ? "Your own script, kept exactly as you wrote it." : (st.task || "No instructions yet.")),
+    el("div", {class: "meta"}, st.raw != null ? el("span", {class: "pill plain"}, "Own script") : [el("span", {class: "pill plain"}, (st.src || []).length + " data source" + ((st.src || []).length === 1 ? "" : "s")), el("span", {class: "pill plain"}, outsSummary(st))],
       el("span", {class: "pill plain"}, "Edited " + ago(it.updated))),
     el("div", {class: "acts"}, el("button", {class: "btn primary sm", onclick: () => openItem(it)}, "Edit"), run, dup, del), msg);
 }
@@ -217,12 +236,15 @@ function pickBox(parent, attr, key, label, on) {
   parent.append(el("label", {class: "pick", title: label}, i, el("span", {}, label)));
 }
 function st() {
+  if (rawMode) return {name: $("#name").value, raw: $("#rawyaml").value};
   return {name: $("#name").value, src: $$("[data-s]:checked").map(c => c.dataset.s), outs: $$("[data-o]:checked").map(c => c.dataset.o),
     json: $$('[data-o^="n:"]:checked').length > 0, pers: Object.fromEntries($$("[data-p]").map(t => [t.dataset.p, t.value])),
     usePers: $("#usePers").checked && !!O.personality_select, one: $("#one").value, len: +$("#len").value || 1000,
     task: $("#task").value.trim(), vol: +$("#vol").value / 100, pause: $("#pause").checked};
 }
 function applyState(s) {
+  if (s.raw != null) { setRaw(true); if (s.name != null) $("#name").value = s.name; $("#rawyaml").value = s.raw; gen(); return; }
+  setRaw(false);
   if (s.name != null) $("#name").value = s.name;
   $$("[data-s]").forEach(c => c.checked = (s.src || []).includes(c.dataset.s));
   $$("[data-o]").forEach(c => c.checked = (s.outs || []).includes(c.dataset.o));
@@ -267,6 +289,7 @@ function build() {
 
 /* ---------- editor: script text ---------- */
 function makeYaml(s0, o) {
+  if (s0.raw != null) return s0.raw;  /* a pasted script is pushed exactly as written */
   o = o || {}; const s = o.silent ? Object.assign({}, s0, {outs: [], json: false, pause: false}) : s0;
   const chosen = s.src.map(id => usable().find(x => x.id === id)).filter(Boolean), n = JSON.stringify(s.name || "Announcement"), A = O.speaker || "media_player.SET_ME", players = O.music_players || [], flag = O.talking_flag,
     sp_on = s.outs.includes("tts") && !!O.tts_entity && !!O.speaker, al = (O.alexa_targets || []).filter(a => s.outs.includes("a:" + a)), nt = (O.notify_targets || []).filter(a => s.outs.includes("n:" + a)), speak = sp_on || al.length > 0;
@@ -330,7 +353,9 @@ function recover(cfg) {
   });
   const ai = acts.filter(x => x.action === "ai_task.generate_data");
   const text = ai.length ? String((ai[0].data || {}).instructions || "") : "";
-  const m = text.match(/YOUR TASK: ([\s\S]*?)\n\nSTYLE: /); if (m) s.task = m[1].trim();
+  const m = text.match(/YOUR TASK: ([\s\S]*?)\n\nSTYLE: /);
+  if (m) s.task = m[1].trim();
+  else if (text) { s.task = text.trim(); s.pers = {Hype: "Follow the voice and tone given in the task."}; s.one = "Hype"; notes.push("Your own prompt was kept word for word as the instructions, and the style line only points back to it."); }
   const l = text.match(/under (\d+) characters/); if (l) s.len = +l[1];
   s.json = text.includes("Output ONLY a JSON object");
   const styleOf = t => { const z = String(t || "").match(/STYLE: ([\s\S]*?)\nNo markdown/); return z ? z[1] : null };
@@ -346,6 +371,7 @@ function recover(cfg) {
     const hit = Object.keys(keys).find(k => keys[k] === sy);
     if (hit) s.one = hit; else if (sy != null) { s.pers = {Hype: sy}; s.one = "Hype"; notes.push("It used a custom personality style, which is now filed under Hype."); }
   }
+  if (!m && text) s.usePers = false;
   s.outs = [...new Set(s.outs)];
   return {state: s, notes};
 }
@@ -362,7 +388,7 @@ function paintState() {
   const id = cur.id || slug($("#name").value);
   $("#idhelp").textContent = cur.id ? "Script id: script." + cur.id + ". It stays the same if you rename this, so automations that call it keep working."
     : "It will be created as script." + id + (takenIds().has(id) ? " (a number is added because that name is taken)." : ".");
-  $("#presetwrap").hidden = !cur.isNew;
+  $("#presetwrap").hidden = !cur.isNew || rawMode;
 }
 function openEditor(state, c, note) {
   cur = Object.assign({id: null, isNew: true, pushed: false, saved: false}, c);
@@ -398,7 +424,7 @@ async function persist(push) {
   if (push) r = await ann("push", {id: cur.id, yaml: makeYaml(s), state: s, new: cur.isNew && !cur.pushed});
   else r = await ann("library/save", {id: cur.id, name: s.name, state: s});
   btns.forEach(b => b.disabled = false);
-  if (!(r.ok)) { say(r.detail || r.error || "That failed.", "bad"); if (!cur.saved && !cur.pushed) cur.id = null; paintState(); return; }
+  if (!(r.ok)) { say(r.detail || r.error || "That failed.", "bad"); if (!cur.saved && !cur.pushed && !cur.fixedId) cur.id = null; paintState(); return; }
   cur.saved = true; cur.isNew = false; if (push) cur.pushed = true; dirty = false; paintState();
   say(push ? "Done. script." + cur.id + " is up to date in Home Assistant." : "Saved. Home Assistant still has the previous version." + (cur.pushed ? " Push to update it." : ""), "ok");
 }
@@ -420,9 +446,17 @@ $("#gohelp").onclick = () => { showView("help"); $("#tabs").hidden = true; HEL.b
 
 function gen() {
   const s = st(); $("#out").textContent = makeYaml(s);
+  if (rawMode) { paintState(); return; }
   $("#onewrap").hidden = s.usePers; $("#volv").textContent = Math.round(s.vol * 100); paintState();
 }
-document.addEventListener("input", e => { if (e.target.closest("#v-edit")) { gen(); markDirty(); } });
+document.addEventListener("input", e => {
+  if (!e.target.closest("#v-edit")) return;
+  if (rawMode) {
+    if (e.target.id === "name") $("#rawyaml").value = setAlias($("#rawyaml").value, e.target.value);
+    else if (e.target.id === "rawyaml") { const a = getAlias(e.target.value); if (a) $("#name").value = a; }
+  }
+  gen(); markDirty();
+});
 document.addEventListener("change", e => { if (e.target.closest("#v-edit")) { gen(); markDirty(); } });
 
 $("#run").onclick = async () => {
@@ -456,6 +490,55 @@ async function runTest(mode) {
   } catch (e) { $("#tres").textContent = "Failed: " + e; } finally { btns.forEach(x => x.disabled = false); }
 }
 $("#t-data").onclick = () => runTest("data"); $("#t-text").onclick = () => runTest("text"); $("#t-full").onclick = () => runTest("full");
+
+/* ---------- import a pasted script ---------- */
+const imsg = (t, c) => { const m = $("#impmsg"); m.className = "msg " + (c || ""); m.textContent = t || ""; };
+function fillPick() {
+  const sel = $("#imppick"); sel.replaceChildren(el("option", {value: ""}, "Choose a script..."));
+  ENT.filter(e => e.id.startsWith("script.")).forEach(e => sel.append(el("option", {value: e.id.slice(7)}, e.name + " (" + e.id + ")")));
+}
+$("#importbtn").onclick = () => { $("#importbox").hidden = false; imsg(""); fillPick(); $("#impyaml").focus(); };
+$("#impcancel").onclick = () => { $("#importbox").hidden = true; imsg(""); };
+$("#imppickgo").onclick = async () => {
+  const id = $("#imppick").value; if (!id) { imsg("Choose a script first.", "warn"); return; }
+  imsg("Loading...");
+  const r = await ann("script?id=" + encodeURIComponent(id));
+  if (!r.ok) { imsg(r.error, "bad"); return; }
+  $("#impyaml").value = r.yaml; $("#impid").value = id; imsg("Loaded. Press Import to take it over.", "ok");
+};
+$("#impgo").onclick = async () => {
+  const b = $("#impgo"), typed = $("#impid").value.trim();
+  if (typed && !cleanId(typed)) { imsg("The script id can only use lowercase letters, numbers and underscores.", "bad"); return; }
+  b.disabled = true; imsg("Checking your script...");
+  const r = await ann("import", {yaml: $("#impyaml").value});
+  b.disabled = false;
+  if (!r.ok) { imsg(r.error || "That failed.", "bad"); return; }
+  const id = cleanId(typed) || r.id || uniqueId(slug(r.alias)), takeover = !!(cleanId(typed) || r.id);
+  if (LIB.some(x => x.id === id)) { imsg("script." + id + " is already in My announcements. Open it from the list below.", "bad"); return; }
+  const inHA = ENT.some(e => e.id === "script." + id);
+  $("#importbox").hidden = true; $("#impyaml").value = ""; $("#impid").value = ""; imsg("");
+  openEditor(Object.assign(blankState(), {name: r.alias, raw: r.yaml}), {id, isNew: true, pushed: false, saved: false, fixedId: true},
+    "Imported. Your script is kept exactly as written. " + (inHA ? "script." + id + " already exists in Home Assistant, so pushing replaces it." : "Pushing creates script." + id + " in Home Assistant.") + (takeover ? "" : " Nothing is in Home Assistant yet."));
+  markDirty();
+};
+$("#rawcheck").onclick = async () => {
+  say("Checking...");
+  const r = await ann("import", {yaml: $("#rawyaml").value});
+  say(r.ok ? "That is a valid script with " + (r.config.sequence || []).length + " top-level steps." : r.error, r.ok ? "ok" : "bad");
+};
+confirmTap($("#rawform"), "Tap again to switch", async () => {
+  say("Reading your script...");
+  const r = await ann("import", {yaml: $("#rawyaml").value});
+  if (!r.ok) { say(r.error, "bad"); return; }
+  const {state, notes} = recover(r.config);
+  if (!state.task) { say("There is no ai_task.generate_data step in it to put in the form, so it stays as your own script.", "warn"); return; }
+  const b = blankState(), nm = $("#name").value;
+  applyState(Object.assign(b, state, {pers: Object.assign({}, b.pers, state.pers), name: nm}));
+  markDirty();
+  const lg = $("#elegacy"); lg.hidden = false;
+  lg.firstElementChild.textContent = "Switched to the form tools. Pushing rebuilds the script from this form, so anything in your script the form does not cover is dropped. Leave without saving to keep your original." + (notes.length ? " " + notes.join(" ") : "");
+  say("Switched to the form tools. Nothing is saved yet.", "ok");
+});
 
 /* ---------- entity picker ---------- */
 function picker(doms, multi, get, set) {
