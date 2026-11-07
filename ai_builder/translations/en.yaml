@@ -29,3 +29,6 @@ configuration:
   backup_keep:
     name: Backups to keep
     description: When backup_path is a folder, the newest this many ai_builder_backup_*.json files are kept and older ones are deleted.
+  facts_file_path:
+    name: Facts file path
+    description: The MQTT topic folder where Facts saves its text files, for example file_reader/overwrite/ (a fact named random_fact.txt is saved as file_reader/overwrite/random_fact.txt). When set here it wins over the Facts settings page. Letters, numbers, underscores, dashes, dots and slashes only.
