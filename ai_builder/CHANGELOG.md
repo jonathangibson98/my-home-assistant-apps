@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.6.0 - 2026-11-07
+
+- **New Facts tab**, next to Announcements. Make AI-written facts that are saved to a text file over MQTT (default topic prefix `file_reader/overwrite/`), such as a random trivia fact, a dark history fact, a music fact about an artist, or a fact about a city
+- Same workflow as Announcements: **My facts** library (Edit, Run now, Duplicate, Delete, Update all), an editor with a test panel, a Helper tab that writes the instructions and random lists for you, Settings, and Import my script
+- **Random lists** (topic, angle, genre, decade, anything you name) are picked on every run and told to the AI, with an optional random seed. Formats: just the fact, a title and the fact (`Title ||| fact`, split by the script), or a short list. Optional heading above the fact
+- Rules you can switch on or off: real and verifiable, go obscure, keep the household out, don't repeat the last fact (reads your file sensor)
+- **Optional schedule**: every N minutes or hours, and/or when an entity or attribute changes, only when someone is home. It is a separate automation (`<script id>_auto`) that this add-on creates, updates and removes
+- Facts share the AI Task and data sources with Announcements, and are included in Backup and Restore
+- Shared data-source code moved into `sources.js`; Announcements behaves the same
+
 ## 2.5.0 - 2026-11-06
 
 - **Import your own script.** On **My announcements**, tap **Import my script** and paste any Home Assistant script (YAML). It works with just the script, the script with its id on top (as in `scripts.yaml`), or only the list of steps. You can also load a script that already exists in Home Assistant from a dropdown

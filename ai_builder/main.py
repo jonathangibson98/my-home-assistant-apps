@@ -102,6 +102,8 @@ STORE = DATA / "templates.json"
 HIST = DATA / "history.json"
 ANN_SETTINGS = DATA / "announcement_settings.json"
 ANN_LIB = DATA / "announcements.json"  # saved announcements: the form state behind every script, so each one can be edited later
+FACTS_LIB = DATA / "facts.json"  # saved facts: the form state behind every fact script
+FACT_SETTINGS = DATA / "fact_settings.json"
 BACKUP_DEFAULT = "/share/ai_builder_backups"
 BACKUP_PATH = clean_path(OPTS.get("backup_path") or BACKUP_DEFAULT, BACKUP_DEFAULT, "backup_path")
 BACKUP_KEEP = max(1, int(OPTS.get("backup_keep") or 20))
@@ -1489,6 +1491,289 @@ async def ann_run(request):
     return web.json_response({"ok": code == 200, "detail": str(text)[:300]})
 
 
+# ---------------------------------------------------------------- facts
+# Scripts that ask the AI Task for a fact and publish it (MQTT file_reader by default). Same shape as announcements:
+# every fact is saved in the add-on (FACTS_LIB) so it can be edited and pushed again, and an optional automation
+# (id <script id>_auto) runs it on a schedule. Everything lives under /api/facts/. Data sources, the AI Task entity
+# and the entity list are shared with Announcements.
+FACT_DEFAULTS = {"mqtt_prefix": "file_reader/overwrite/", "last_entity": "", "last_attribute": "content",
+                 "home_entities": [], "default_length": 180, "extra_rules": ""}
+FACT_MARK = "Made with Fact Maker"
+FACT_TEST_ID = "fact_maker_test"
+FACT_TEST = {"status": "idle"}
+FACT_TASKS = set()
+FACT_AUTO_SUFFIX = "_auto"
+
+
+def fact_settings():
+    s = dict(FACT_DEFAULTS)
+    s.update({k: v for k, v in load_json(FACT_SETTINGS, {}).items() if k in FACT_DEFAULTS})
+    return s
+
+
+def fact_clean_settings(body):
+    s = dict(FACT_DEFAULTS)
+    prefix = str(body.get("mqtt_prefix", s["mqtt_prefix"])).strip()
+    s["mqtt_prefix"] = prefix if re.match(r"^[A-Za-z0-9_\-./]{0,120}$", prefix) else s["mqtt_prefix"]
+    for k in ("last_entity",):
+        v = str(body.get(k, "")).strip()
+        s[k] = v if (not v or ANN_ENT_RE.match(v)) else ""
+    attr = str(body.get("last_attribute", "")).strip()
+    s["last_attribute"] = attr if re.match(r"^[\w .\-]{0,60}$", attr) else "content"
+    he = body.get("home_entities", [])
+    s["home_entities"] = [x for x in he if isinstance(x, str) and ANN_ENT_RE.match(x)][:20] if isinstance(he, list) else []
+    try:
+        s["default_length"] = max(40, min(2000, int(body.get("default_length") or 180)))
+    except (TypeError, ValueError):
+        s["default_length"] = 180
+    s["extra_rules"] = str(body.get("extra_rules", ""))[:2000]
+    return s
+
+
+def fact_library():
+    lib = load_json(FACTS_LIB, {})
+    return lib if isinstance(lib, dict) else {}
+
+
+def fact_store(sid, name, state, pushed=False):
+    lib = fact_library()
+    now = time.strftime("%Y-%m-%d %H:%M")
+    old = lib.get(sid, {})
+    lib[sid] = {"id": sid, "name": str(name or old.get("name") or sid)[:80],
+                "state": state if state is not None else old.get("state") or {},
+                "updated": now, "pushed_at": now if pushed else old.get("pushed_at")}
+    save_json(FACTS_LIB, lib)
+    return lib[sid]
+
+
+async def fact_options(request):
+    return web.json_response(fact_settings())
+
+
+async def fact_save_settings(request):
+    body = await ann_body(request)
+    save_json(FACT_SETTINGS, fact_clean_settings(body))
+    return web.json_response(fact_settings())
+
+
+async def fact_helper(request):
+    """Turn a plain-English idea into instructions, random lists, output style and data sources."""
+    body = await ann_body(request)
+    idea, ai = str(body.get("idea", ""))[:1000], str(body.get("ai", ""))
+    srcs = [x for x in body.get("sources", []) if isinstance(x, dict) and re.match(r"^\w+$", str(x.get("id", "")))]
+    if not (idea and ANN_ENT_RE.match(ai) and ai.startswith("ai_task.")):
+        return web.json_response({"ok": False, "error": "Describe the fact you want and set an AI Task entity."})
+    prompt = (
+        "You help set up a Home Assistant script that asks an AI for ONE short fact each time it runs, then saves it to a text file "
+        "that a dashboard shows. Later the AI receives live data plus the instructions you write.\n"
+        "Data sources available (id: label): %s\nUser's idea: %s\n"
+        "To keep the facts varied, the script can pick random values from lists before asking. Each list has a short name made of "
+        "lowercase letters and underscores (for example topic, angle, genre, decade) and 6 to 20 items. The AI is told each pick for the run.\n"
+        "Output styles: \"plain\" (just the fact), \"titled\" (a title plus the fact, e.g. the artist name and a fact about them), "
+        "\"list\" (several short lines).\n"
+        "Reply with ONLY JSON, no code fences: {\"name\": \"short script name\", \"task\": \"clear instructions for the fact writer, "
+        "1-5 sentences\", \"picks\": [{\"name\": \"topic\", \"items\": [\"...\"]}], \"style\": \"plain|titled|list\", "
+        "\"title_hint\": \"what the title should be, only for titled\", \"heading\": \"optional heading line shown above the fact, "
+        "may use {{ fact_title }} for titled\", \"file\": \"suggested_file_name.txt\", \"sources\": [\"ids of data sources needed, usually none\"], "
+        "\"length\": 180}" % ("; ".join("%s: %s" % (x["id"], x.get("label", "")) for x in srcs) or "none", idea))
+    j, err = await ann_ai_json(request.app, ai, "Fact helper", prompt)
+    if err:
+        return web.json_response({"ok": False, "error": err})
+    ids = {x["id"] for x in srcs}
+    picks = []
+    for p in (j.get("picks") or [])[:5]:
+        if isinstance(p, dict) and re.match(r"^[a-z][a-z0-9_]{0,24}$", str(p.get("name", ""))):
+            items = [str(i).strip()[:120] for i in (p.get("items") or []) if str(i).strip()][:40]
+            if items:
+                picks.append({"name": p["name"], "items": "\n".join(items)})
+    style = j.get("style") if j.get("style") in ("plain", "titled", "list") else "plain"
+    fname = re.sub(r"[^A-Za-z0-9_\-.]", "", str(j.get("file") or ""))[:60]
+    try:
+        length = max(40, min(2000, int(j.get("length") or 180)))
+    except (TypeError, ValueError):
+        length = 180
+    return web.json_response({
+        "ok": True, "name": str(j.get("name") or "")[:60], "task": str(j.get("task") or "")[:1500], "picks": picks,
+        "style": style, "title_hint": str(j.get("title_hint") or "")[:200], "heading": str(j.get("heading") or "")[:200],
+        "file": fname, "length": length, "sources": [i for i in (j.get("sources") or []) if i in ids]})
+
+
+def fact_has_mark(cfg):
+    return isinstance(cfg, dict) and cfg.get("description") == FACT_MARK
+
+
+async def fact_run_test(app, cfg, mode):
+    """Run the script once under a temporary id and report what it picked, what the AI saw and what it wrote."""
+    global FACT_TEST
+    try:
+        if not isinstance(cfg, dict) or not isinstance(cfg.get("sequence"), list):
+            FACT_TEST = {"status": "error", "error": "The script YAML is empty or not valid."}
+            return
+        seq = cfg["sequence"]
+        ai_at = next((i for i, st in enumerate(seq) if isinstance(st, dict) and st.get("action") == "ai_task.generate_data"), None)
+        if ai_at is None:
+            FACT_TEST = {"status": "error", "error": "There is no ai_task.generate_data step to test."}
+            return
+        keys = []
+        for st in seq:
+            if isinstance(st, dict) and isinstance(st.get("variables"), dict):
+                keys += [k for k in st["variables"] if k != "fact_parts" and k not in keys]
+        if mode == "data":
+            seq = seq[:ai_at]
+            keys = [k for k in keys if not k.startswith("fact_")]
+        else:
+            if mode == "text":  # leave out the step that publishes, so nothing is written
+                seq = [st for st in seq if not (isinstance(st, dict) and st.get("alias") == "Publish")]
+        res = {"values": {k: "{{ %s }}" % k for k in keys}}
+        if mode != "data":
+            res["ai_raw"] = "{{ fact_raw.data | default('') }}"
+        cfg["sequence"] = seq + [{"variables": {"test_result": res}},
+                                 {"stop": "Test finished", "response_variable": "test_result"}]
+        cfg["alias"] = "[TEST] " + str(cfg.get("alias", "fact"))
+        code, text = await ha_text(app, "POST", f"/config/script/config/{FACT_TEST_ID}", cfg)
+        if code != 200:
+            FACT_TEST = {"status": "error", "error": "HA refused the test script (%s): %s" % (code, str(text)[:400])}
+            return
+        await ha_text(app, "POST", "/services/script/reload", {})
+        await asyncio.sleep(1.5)
+        code, text = await ha_text(app, "POST", f"/services/script/{FACT_TEST_ID}", {},
+                                   params={"return_response": "true"}, timeout=420)
+        if code != 200:
+            FACT_TEST = {"status": "error", "error": str(text)[:1500]}
+            return
+        r = json.loads(text).get("service_response") or {}
+        if "values" not in r and len(r) == 1 and isinstance(list(r.values())[0], dict):
+            r = list(r.values())[0]
+        FACT_TEST = dict(r, status="done", mode=mode)
+    except Exception as e:
+        log.exception("fact test failed")
+        FACT_TEST = {"status": "error", "error": str(e)}
+    finally:
+        await ha_text(app, "DELETE", f"/config/script/config/{FACT_TEST_ID}")
+        await ha_text(app, "POST", "/services/script/reload", {})
+
+
+async def fact_test_status(request):
+    return web.json_response(FACT_TEST)
+
+
+async def fact_test_start(request):
+    global FACT_TEST
+    body = await ann_body(request)
+    if FACT_TEST.get("status") == "running":
+        return web.json_response({"ok": False, "error": "A test is already running."})
+    try:
+        cfg = yaml.safe_load(body.get("yaml", ""))
+    except yaml.YAMLError as e:
+        return web.json_response({"error": "YAML problem: %s" % e}, status=400)
+    mode = body.get("mode") if body.get("mode") in ("data", "text", "full") else "text"
+    FACT_TEST = {"status": "running", "mode": mode}
+    t = asyncio.create_task(fact_run_test(request.app, cfg, mode))
+    FACT_TASKS.add(t)
+    t.add_done_callback(FACT_TASKS.discard)
+    return web.json_response({"ok": True})
+
+
+async def fact_push(request):
+    """Create or update the script, and the schedule automation when one is sent (or remove ours when it is not)."""
+    app = request.app
+    body = await ann_body(request)
+    sid = await ann_script_id(body)
+    aid = sid + FACT_AUTO_SUFFIX
+    try:
+        cfg = yaml.safe_load(body.get("yaml", ""))
+        acfg = yaml.safe_load(body["auto_yaml"]) if body.get("auto_yaml") else None
+    except yaml.YAMLError as e:
+        return web.json_response({"error": "YAML problem: %s" % e}, status=400)
+    if not isinstance(cfg, dict):
+        return web.json_response({"ok": False, "detail": "The script YAML is empty or not valid."})
+    if acfg is not None and not isinstance(acfg, dict):
+        return web.json_response({"ok": False, "detail": "The schedule YAML is not valid."})
+    code, text = await ha_text(app, "POST", f"/config/script/config/{sid}", cfg)
+    if code != 200:
+        return web.json_response({"ok": False, "detail": "HA said %s: %s" % (code, str(text)[:300])})
+    await ha_text(app, "POST", "/services/script/reload", {})
+    auto = "none"
+    if acfg is not None:
+        code, text = await ha_text(app, "POST", f"/config/automation/config/{aid}", acfg)
+        if code != 200:
+            return web.json_response({"ok": False, "detail": "The script was pushed, but HA refused the schedule (%s): %s" % (code, str(text)[:300])})
+        await ha_text(app, "POST", "/services/automation/reload", {})
+        auto = "pushed"
+    else:  # schedule switched off: remove the automation, but only one this tool made
+        code, old = await ha(app, "GET", f"/config/automation/config/{aid}", timeout=10)
+        if code == 200 and fact_has_mark(old):
+            code, text = await ha_text(app, "DELETE", f"/config/automation/config/{aid}")
+            if code == 200:
+                await ha_text(app, "POST", "/services/automation/reload", {})
+                auto = "removed"
+    name = str(cfg.get("alias") or sid)
+    if body.get("new"):
+        add_history({"kind": "fact", "name": name, "entity": f"script.{sid}"})
+    state = clean_ann_state(body.get("state"))
+    if state is not None or sid in fact_library():
+        fact_store(sid, name, state, pushed=True)
+    return web.json_response({"ok": True, "entity": f"script.{sid}", "auto": auto})
+
+
+async def fact_library_list(request):
+    app = request.app
+    lib = fact_library()
+    st, states = await ha(app, "GET", "/states")
+    ok = st == 200 and isinstance(states, list)
+    live = {s["entity_id"].split(".", 1)[1]: s for s in states if ok and s["entity_id"].startswith("script.")}
+    autos = {str((s.get("attributes") or {}).get("id")): s for s in states if ok and s["entity_id"].startswith("automation.")}
+    items = []
+    for i, v in lib.items():
+        a = autos.get(i + FACT_AUTO_SUFFIX)
+        items.append({**v, "in_ha": i in live, "last_run": ((live.get(i) or {}).get("attributes") or {}).get("last_triggered"),
+                      "auto_in_ha": a is not None, "auto_on": bool(a) and a.get("state") == "on"})
+    items.sort(key=lambda x: str(x.get("updated") or ""), reverse=True)
+    return web.json_response({"items": items, "ha_ok": ok})
+
+
+async def fact_library_save(request):
+    body = await ann_body(request)
+    sid = await ann_script_id(body)
+    state = clean_ann_state(body.get("state"))
+    if state is None:
+        return web.json_response({"ok": False, "error": "Nothing to save."})
+    return web.json_response({"ok": True, "item": fact_store(sid, body.get("name"), state)})
+
+
+async def fact_library_delete(request):
+    app = request.app
+    body = await ann_body(request)
+    sid = await ann_script_id(body)
+    aid = sid + FACT_AUTO_SUFFIX
+    lib = fact_library()
+    removed = False
+    if body.get("delete_script"):
+        code, cfg = await ha(app, "GET", f"/config/script/config/{sid}", timeout=10)
+        if sid not in lib and not (code == 200 and fact_has_mark(cfg)):
+            return web.json_response({"ok": False, "error": "That script wasn't made here, so it won't be deleted."})
+        if code == 200:
+            code, text = await ha_text(app, "DELETE", f"/config/script/config/{sid}")
+            if code != 200:
+                return web.json_response({"ok": False, "error": "HA said %s: %s" % (code, str(text)[:300])})
+            await ha_text(app, "POST", "/services/script/reload", {})
+            removed = True
+        code, old = await ha(app, "GET", f"/config/automation/config/{aid}", timeout=10)
+        if code == 200 and fact_has_mark(old):
+            await ha_text(app, "DELETE", f"/config/automation/config/{aid}")
+            await ha_text(app, "POST", "/services/automation/reload", {})
+    lib.pop(sid, None)
+    save_json(FACTS_LIB, lib)
+    return web.json_response({"ok": True, "script_deleted": removed})
+
+
+async def fact_run(request):
+    body = await ann_body(request)
+    sid = await ann_script_id(body)
+    code, text = await ha_text(request.app, "POST", "/services/script/turn_on", {"entity_id": f"script.{sid}"})
+    return web.json_response({"ok": code == 200, "detail": str(text)[:300]})
+
+
 # ---------------------------------------------------------------- backup / import
 # Saves this add-on's own data (template sensors it manages, "Made so far" history, announcement settings)
 # to the folder (or single .json file) given in the backup_path option, and imports it back.
@@ -1504,12 +1789,14 @@ def collect_backup():
     return {"kind": "ai_builder_backup", "format": 1, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
             "data": {"templates": load_json(STORE, {}), "history": load_json(HIST, []),
                      "announcement_settings": load_json(ANN_SETTINGS, {}),
-                     "announcements": ann_library()}}
+                     "announcements": ann_library(),
+                     "fact_settings": load_json(FACT_SETTINGS, {}),
+                     "facts": fact_library()}}
 
 
 def parse_backup(text):
-    """Validate a backup file and return (templates, history, announcement_settings, announcements). Raises ValueError.
-    announcements is None for backups made before saved announcements existed, so an import leaves yours alone."""
+    """Validate a backup file and return (templates, history, announcement_settings, announcements, fact_settings, facts).
+    Raises ValueError. announcements and facts are None for backups made before they existed, so an import leaves yours alone."""
     try:
         d = json.loads(text)
     except ValueError:
@@ -1540,7 +1827,19 @@ def parse_backup(text):
         lib = {k: v for k, v in lib.items() if ANN_ID_RE.match(str(k)) and isinstance(v, dict) and isinstance(v.get("state"), dict)}
         for k, v in lib.items():
             v["id"] = k
-    return templates, history, ann, lib
+    fset = data.get("fact_settings")
+    if fset is not None:
+        if not isinstance(fset, dict):
+            raise ValueError("The backup's fact settings are damaged.")
+        fset = fact_clean_settings(fset)
+    facts = data.get("facts")
+    if facts is not None:
+        if not isinstance(facts, dict):
+            raise ValueError("The backup's saved facts are damaged.")
+        facts = {k: v for k, v in facts.items() if ANN_ID_RE.match(str(k)) and isinstance(v, dict) and isinstance(v.get("state"), dict)}
+        for k, v in facts.items():
+            v["id"] = k
+    return templates, history, ann, lib, fset, facts
 
 
 def backup_candidates():
@@ -1561,12 +1860,12 @@ def peek_backup(p):
         st = p.stat()
         if st.st_size > 32 * 1024 * 1024:
             return None
-        templates, history, ann, lib = parse_backup(p.read_text(encoding="utf-8"))
+        templates, history, ann, lib, fset, facts = parse_backup(p.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     return {"file": p.name, "size": st.st_size, "modified": time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime)),
             "templates": len(templates), "history": len(history), "announcements": bool(ann),
-            "announcements_count": len(lib or {})}
+            "announcements_count": len(lib or {}), "facts_count": len(facts or {})}
 
 
 def write_backup(tag=""):
@@ -1601,7 +1900,8 @@ async def backup_info(request):
     return web.json_response({
         "path": BACKUP_PATH, "mode": "file" if backup_is_file() else "folder", "keep": BACKUP_KEEP,
         "files": files,
-        "current": {"templates": len(load_json(STORE, {})), "history": len(load_json(HIST, [])), "announcements": len(ann_library())},
+        "current": {"templates": len(load_json(STORE, {})), "history": len(load_json(HIST, [])), "announcements": len(ann_library()),
+                    "facts": len(fact_library())},
     })
 
 
@@ -1625,7 +1925,7 @@ async def backup_import(request):
     if not path.is_file():
         return web.json_response({"ok": False, "error": "%s was not found in %s." % (name, backup_folder())})
     try:
-        templates, history, ann, lib = parse_backup(path.read_text(encoding="utf-8"))
+        templates, history, ann, lib, fset, facts = parse_backup(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         return web.json_response({"ok": False, "error": str(e)})
     try:
@@ -1637,6 +1937,10 @@ async def backup_import(request):
     save_json(ANN_SETTINGS, ann)
     if lib is not None:
         save_json(ANN_LIB, lib)
+    if fset is not None:
+        save_json(FACT_SETTINGS, fset)
+    if facts is not None:
+        save_json(FACTS_LIB, facts)
     note = ""
     try:
         render_package(templates)
@@ -1647,7 +1951,8 @@ async def backup_import(request):
     log.info("Imported backup %s (safety copy %s)", path, safety)
     return web.json_response({"ok": True, "file": name, "safety": safety.name, "note": note,
                               "templates": len(templates), "history": len(history), "announcements": bool(ann),
-                              "announcements_count": len(lib if lib is not None else ann_library())})
+                              "announcements_count": len(lib if lib is not None else ann_library()),
+                              "facts_count": len(facts if facts is not None else fact_library())})
 
 
 async def on_startup(app):
@@ -1668,10 +1973,13 @@ def main():
         web.get("/", page("index.html")),
         web.get("/builder", page("builder.html")),
         web.get("/announcements", page("announcements.html")),
+        web.get("/facts", page("facts.html")),
         web.get("/backup", page("backup.html")),
         web.get("/ui.css", asset("ui.css", "text/css")),
         web.get("/ui.js", asset("ui.js", "application/javascript")),
         web.get("/announcements.js", asset("announcements.js", "application/javascript")),
+        web.get("/sources.js", asset("sources.js", "application/javascript")),
+        web.get("/facts.js", asset("facts.js", "application/javascript")),
         web.get("/api/status", status),
         web.get("/api/targets", targets),
         web.get("/api/mine", mine),
@@ -1692,6 +2000,17 @@ def main():
         web.post("/api/ann/helper", ann_helper),
         web.post("/api/ann/push", ann_push),
         web.post("/api/ann/run", ann_run),
+        # facts
+        web.get("/api/facts/options", fact_options),
+        web.get("/api/facts/test", fact_test_status),
+        web.get("/api/facts/library", fact_library_list),
+        web.post("/api/facts/library/save", fact_library_save),
+        web.post("/api/facts/library/delete", fact_library_delete),
+        web.post("/api/facts/settings", fact_save_settings),
+        web.post("/api/facts/test", fact_test_start),
+        web.post("/api/facts/helper", fact_helper),
+        web.post("/api/facts/push", fact_push),
+        web.post("/api/facts/run", fact_run),
         # backup / import
         web.get("/api/backup", backup_info),
         web.post("/api/backup/save", backup_save),

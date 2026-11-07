@@ -1,12 +1,13 @@
 # Creator & AI Builder
 
-Type what you want in plain English. Your Home Assistant `ai_task` entity builds it. One add-on, three tools:
+Type what you want in plain English. Your Home Assistant `ai_task` entity builds it. One add-on, four tools:
 
 - **Build**: automations, scenes, scripts, template sensors, helpers, AppDaemon apps, pyscripts, blueprints and whole add-ons.
 - **Announcements**: tap checkboxes to make AI-written voice announcements (weather, news, welcome home, roasts, whatever). It writes the Home Assistant script and pushes it in.
+- **Facts**: AI-written facts for a dashboard. Pick random topics and angles, a format and a file, optionally run on a schedule. It writes the Home Assistant script (and automation) and pushes it in.
 - **Backup**: save this add-on's data to a path you choose in the options, and import it back.
 
-Use the tab bar at the top of the sidebar panel to switch: **Build / Announcements / Backup**.
+Use the tab bar at the top of the sidebar panel to switch: **Build / Announcements / Facts / Backup**.
 
 ## Build
 
@@ -27,6 +28,14 @@ Use the tab bar at the top of the sidebar panel to switch: **Build / Announcemen
 - **Test before saving**: preview the data, test text only, or test with sound, using a temporary script that is deleted afterward
 - Helper tab: describe what you want and the AI writes the instructions and ticks the data it needs
 - Settings with searchable entity pickers, Auto-fill, and Export/Import as JSON
+
+## Facts
+
+- Random lists (topic, angle, genre...) so every fact is different, plus a random seed
+- Formats: just the fact, a title and the fact, or a short list, with an optional heading
+- Rules: real and verifiable, go obscure, keep the household out, don't repeat the last fact
+- Saved over MQTT (default `file_reader/overwrite/`), with an optional schedule and "someone is home" condition
+- Test before saving, Helper tab, import your own script, and everything is included in Backup
 
 ## Backup
 
