@@ -39,7 +39,7 @@ const PRE = {
 /* ---------- state ---------- */
 const defAuto = () => ({on: false, every: 10, unit: "minutes", watch: "", watchAttr: "", watchFor: 10, home: []});
 const blankState = () => ({name: "My fact", src: [], task: "", picks: [], seed: true, len: F.default_length || 180, style: "plain", titleHint: "", heading: "", count: 5,
-  file: "", swear: "none", real: true, obscure: true, skip: "", noPeople: true, avoidLast: true, lastEntity: "", lastAttr: "", extra: "", ai: "", auto: defAuto(), autoRaw: "", autoId: ""});
+  file: "", swear: "none", real: true, obscure: true, skip: "", noPeople: true, avoidLast: true, lastEntity: "", lastAttr: "", extra: "", ai: "", auto: defAuto(), autoRaw: "", autoId: "", autoOnly: false});
 const clone = o => JSON.parse(JSON.stringify(o));
 const full = s => Object.assign(blankState(), clone(s || {}), {auto: Object.assign(defAuto(), (s && s.auto) || {})});
 
@@ -80,6 +80,7 @@ function buildPrompt(s, chosen) {
 }
 
 function makeYaml(s0, o) {
+  if (s0.autoOnly) return "";
   if (s0.raw != null) return s0.raw;  /* a pasted script is pushed exactly as written */
   const s = full(s0), name = JSON.stringify(s.name || "Fact"), picks = pickList(s), lr = lastRef(s);
   const chosen = (s.src || []).map(id => usable().find(x => x.id === id)).filter(Boolean);
@@ -117,6 +118,7 @@ const autoSummary = a => {
   if (a.watch) p.push("when " + a.watch + " changes");
   return p.join(" and ") || "no trigger set";
 };
+const isAutoOnly = s => !!(s && s.autoOnly);
 const ownAuto = s => !!String((s && s.autoRaw) || "").trim();
 function makeAuto(s0, sid) {
   if (ownAuto(s0)) return s0.autoRaw;
@@ -143,7 +145,7 @@ function makeAuto(s0, sid) {
   return y;
 }
 const pushBody = (s, id, extra) => Object.assign({id, yaml: makeYaml(s), auto_yaml: makeAuto(s, id), state: s,
-  auto_raw: ownAuto(s), auto_id: ownAuto(s) ? (s.autoId || "") : ""}, extra || {});
+  auto_raw: ownAuto(s), auto_only: isAutoOnly(s), auto_id: isAutoOnly(s) ? id : ownAuto(s) ? (s.autoId || "") : ""}, extra || {});
 const hasTrigger = s => !!(s.auto && ((+s.auto.every > 0) || s.auto.watch));
 
 /* ---------- DOM ---------- */
@@ -194,10 +196,10 @@ function libCard(it) {
   const status = !it.pushed_at && !it.in_ha ? ["warn", "Draft, not in Home Assistant"] : it.in_ha ? ["ok", "In Home Assistant"] : ["bad", "Missing in Home Assistant"];
   const msg = el("div", {class: "msg", style: "margin:0"});
   const del = el("button", {class: "btn danger sm"}, "Delete");
-  confirmTap(del, it.in_ha ? "Tap again: removes the script too" : "Tap again to delete", () => removeFact(it.id, !!it.in_ha));
+  confirmTap(del, isAutoOnly(st) ? "Tap again: forgets it here (HA keeps it)" : it.in_ha ? "Tap again: removes the script too" : "Tap again to delete", () => removeFact(it.id, !isAutoOnly(st) && !!it.in_ha));
   const run = el("button", {class: "btn sm", disabled: !it.in_ha, title: it.in_ha ? "Run it now" : "Push it to Home Assistant first", onclick: async () => {
     run.disabled = true; msg.className = "msg"; msg.textContent = "Starting...";
-    const r = await fapi("run", {id: it.id}); msg.className = "msg " + (r.ok ? "ok" : "bad"); msg.textContent = r.ok ? "Started." : (r.detail || r.error); run.disabled = false;
+    const r = await fapi("run", {id: it.id, auto_only: isAutoOnly(st)}); msg.className = "msg " + (r.ok ? "ok" : "bad"); msg.textContent = r.ok ? "Started." : (r.detail || r.error); run.disabled = false;
   }}, "Run now");
   const dup = el("button", {class: "btn sm", onclick: async () => {
     const nm = (it.name || it.id) + " copy", id = uniqueId(fslug(nm));
@@ -206,7 +208,8 @@ function libCard(it) {
   }}, "Duplicate");
   const a = st.auto || {}, pills = [];
   const autoPill = () => !it.auto_in_ha ? el("span", {class: "pill warn"}, "Automation not pushed") : it.auto_on ? el("span", {class: "pill ok"}, "Your automation is on") : el("span", {class: "pill warn"}, "Your automation is off in HA");
-  if (raw) { pills.push(el("span", {class: "pill plain"}, "Own script")); if (ownAuto(st)) pills.push(autoPill()); }
+  if (isAutoOnly(st)) { pills.push(el("span", {class: "pill plain"}, "Own automation")); pills.push(autoPill()); }
+  else if (raw) { pills.push(el("span", {class: "pill plain"}, "Own script")); if (ownAuto(st)) pills.push(autoPill()); }
   else if (ownAuto(st)) {
     pills.push(el("span", {class: "pill plain"}, fileOf(Object.assign({}, st, {name: st.name || it.name}))));
     pills.push(autoPill());
@@ -217,8 +220,8 @@ function libCard(it) {
   }
   pills.push(el("span", {class: "pill plain"}, "Edited " + ago(it.updated)));
   return el("div", {class: "card ann"},
-    el("div", {class: "top"}, el("div", {style: "min-width:0"}, el("h3", {}, it.name || it.id), el("div", {class: "dim small mono"}, "script." + it.id)), el("span", {class: "pill " + status[0]}, status[1])),
-    el("div", {class: "clamp"}, raw ? "Your own script, kept exactly as you wrote it." : (st.task || "No instructions yet.")),
+    el("div", {class: "top"}, el("div", {style: "min-width:0"}, el("h3", {}, it.name || it.id), el("div", {class: "dim small mono"}, (isAutoOnly(st) ? "automation id: " : "script.") + it.id)), el("span", {class: "pill " + status[0]}, status[1])),
+    el("div", {class: "clamp"}, isAutoOnly(st) ? "Your own automation, kept exactly as you wrote it." : raw ? "Your own script, kept exactly as you wrote it." : (st.task || "No instructions yet.")),
     el("div", {class: "meta"}, pills),
     el("div", {class: "acts"}, el("button", {class: "btn primary sm", onclick: () => openItem(it)}, "Edit"), run, dup, del), msg);
 }
@@ -288,8 +291,37 @@ $("#imppickgo").onclick = async () => {
   if (!r.ok) { imsg(r.error, "bad"); return; }
   $("#impyaml").value = r.yaml; $("#impid").value = id; imsg("Loaded. Press Import to take it over.", "ok");
 };
+const looksAuto = t => /^[ \t-]*(triggers?|actions?|automation)[ \t]*:/m.test(t) && !/^[ \t]*sequence[ \t]*:/m.test(t);
+async function importAutoOnly(b) {
+  const picked = $("#impauto").value, text = $("#impyaml").value;
+  let yml, alias, id = "", takeover = false;
+  b.disabled = true; imsg("Checking your automation...");
+  if (!text.trim() && picked) {
+    const r = await api("facts/automation?id=" + encodeURIComponent(picked));
+    b.disabled = false;
+    if (!r.ok) { imsg(r.error, "bad"); return; }
+    yml = r.yaml; alias = (r.config && r.config.alias) || picked; id = picked; takeover = true;
+  } else {
+    const r = await api("facts/import_auto", {yaml: text});
+    b.disabled = false;
+    if (!r.ok) { imsg(r.error || "That failed.", "bad"); return; }
+    yml = r.yaml; alias = r.alias; id = r.id || "";
+    const L = await loadAutos();
+    const same = L.find(a => a.id === id) || L.find(a => a.name.trim().toLowerCase() === alias.trim().toLowerCase());
+    if (same) { id = same.id; takeover = true; }
+  }
+  const typed = $("#impid").value.trim().toLowerCase();
+  if (typed) { if (!/^[a-z0-9_]{1,60}$/.test(typed)) { imsg("The id can only use lowercase letters, numbers and underscores (60 at most).", "bad"); return; } id = typed; takeover = (AUTOS || []).some(a => a.id === id); }
+  if (!id) id = uniqueId(fslug(alias));
+  if (LIB.some(x => x.id === id)) { imsg(id + " is already in My facts. Open it from the list below.", "bad"); return; }
+  $("#importbox").hidden = true; $("#impyaml").value = ""; $("#impid").value = ""; $("#impauto").value = ""; imsg("");
+  openEditor(Object.assign(blankState(), {name: alias, autoOnly: true, autoRaw: yml, autoId: id}), {id, isNew: true, pushed: false, saved: false, fixedId: true},
+    "Imported. Your automation is kept exactly as written. " + (takeover ? "It matches an automation you already have in Home Assistant, so pushing replaces it (a copy of the old one is saved first)." : "Pushing creates it as a new automation in Home Assistant."));
+  markDirty();
+}
 $("#impgo").onclick = async () => {
   const b = $("#impgo"), typed = $("#impid").value.trim();
+  if ((!$("#impyaml").value.trim() && $("#impauto").value) || looksAuto($("#impyaml").value)) { await importAutoOnly(b); return; }
   if (typed && !cleanId(typed)) { imsg("The script id can only use lowercase letters, numbers and underscores (54 at most).", "bad"); return; }
   b.disabled = true; imsg("Checking your script...");
   const r = await api("ann/import", {yaml: $("#impyaml").value});
@@ -345,6 +377,43 @@ function autoCard(n) {
   return c;
 }
 
+const TOPIC_RE = /^([ \t-]*topic:[ \t]*)(.+?)[ \t]*$/gm;
+const topicsIn = y => [...String(y || "").matchAll(TOPIC_RE)].map(m => ({line: m[0], pre: m[1], raw: m[2], val: m[2].replace(/^(['"])(.*)\1$/, "$2")}));
+function setTopic(y, i, val) {
+  let n = -1;
+  return String(y).replace(TOPIC_RE, (m, pre, raw) => { n++; if (n !== i) return m; const q = /^['"]/.test(raw) ? raw[0] : ""; return pre + q + val + q; });
+}
+function autoOnlyCard(n) {
+  const c = card(n, "Your automation", "Kept exactly as you wrote it, including its AI request and where it saves. Edit the YAML here, then Save or Save and push.");
+  const ta = el("textarea", {class: "code", spellcheck: "false", style: "min-height:460px", value: E.autoRaw || ""});
+  const tp = el("div", {});
+  const drawTopics = () => {
+    tp.replaceChildren();
+    const T = topicsIn(E.autoRaw);
+    if (!T.length) return;
+    tp.append(el("label", {class: "l"}, T.length > 1 ? "Files it saves to" : "File it saves to"));
+    T.forEach((t, i) => {
+      const inp = el("input", {value: t.val, style: "max-width:420px", spellcheck: "false", autocomplete: "off"});
+      inp.onchange = () => { const v = inp.value.trim(); if (!/^[A-Za-z0-9_\-./]+$/.test(v)) { say("The file path can only use letters, numbers, underscores, dashes, dots and slashes.", "warn"); inp.value = t.val; return; } E.autoRaw = setTopic(E.autoRaw, i, v); ta.value = E.autoRaw; changed(); drawTopics(); };
+      const row = el("div", {class: "inline", style: "margin-top:6px"}, inp);
+      let pre = F.mqtt_prefix || ""; if (pre && !pre.endsWith("/")) pre += "/";
+      const target = pre + t.val.split("/").pop();
+      if (pre && t.val !== target) row.append(el("button", {class: "btn sm", title: "Use " + target, onclick: () => { E.autoRaw = setTopic(E.autoRaw, i, target); ta.value = E.autoRaw; changed(); drawTopics(); }}, "Use my folder"));
+      tp.append(row);
+    });
+    tp.append(el("p", {class: "help"}, "Your folder is " + (F.mqtt_prefix || "not set") + (F.prefix_locked ? " (set in the add-on Configuration tab)." : " (Facts > Settings, or the add-on Configuration tab).")));
+  };
+  ta.oninput = () => { E.autoRaw = ta.value; const a = getAlias(ta.value); if (a) { E.name = a; $("#form input").value = a; } changed(); };
+  const chk = el("button", {class: "btn sm", onclick: async () => {
+    say("Checking..."); const r = await api("facts/import_auto", {yaml: E.autoRaw});
+    say(r.ok ? "That is a valid automation." : r.error, r.ok ? "ok" : "bad");
+    if (r.ok) drawTopics();
+  }}, "Check YAML");
+  add(c, ta, el("div", {class: "row", style: "margin-top:10px"}, chk), tp);
+  drawTopics();
+  return c;
+}
+
 /* ---------- editor ---------- */
 const changed = () => { gen(); markDirty(); };
 const add = (parent, ...kids) => { kids.flat(Infinity).forEach(x => { if (x != null && x !== false) parent.append(x); }); return parent; };
@@ -375,14 +444,15 @@ function drawForm() {
   const raw = rawMode();
   /* 1. name */
   const c1 = card(1, "Name");
-  const nm = tf("Script name", "name", {after: () => { if (raw) E.raw = setAlias(E.raw, E.name); }});
+  const nm = tf(isAutoOnly(E) ? "Automation name" : "Script name", "name", {after: () => { if (raw) E.raw = setAlias(E.raw, E.name); if (isAutoOnly(E) && ownAuto(E)) E.autoRaw = setAlias(E.autoRaw, E.name); }});
   add(c1, nm, el("p", {class: "help", id: "idhelp"}));
-  if (cur.isNew && !raw) {
+  if (cur.isNew && !raw && !isAutoOnly(E)) {
     const chips = el("div", {class: "chips"});
     Object.entries(PRE).forEach(([k, p]) => chips.append(el("button", {class: "chip", onclick: () => applyPreset(p)}, k)));
     add(c1, el("label", {class: "l"}, "Start from"), chips, el("p", {class: "msg warn", id: "pnote"}));
   }
   f.append(c1);
+  if (isAutoOnly(E)) { f.append(autoOnlyCard(2)); gen(); return; }
   if (raw) {
     const t = el("textarea", {class: "code", spellcheck: "false", style: "min-height:440px", value: E.raw});
     t.oninput = () => { E.raw = t.value; const a = getAlias(t.value); if (a) { E.name = a; $("#form input").value = a; } changed(); };
@@ -496,7 +566,8 @@ function paintState() {
   if (!E) return;
   $("#etitle").textContent = (E.name || "").trim() || "New fact";
   const id = cur.id || fslug(E.name), h = $("#idhelp");
-  if (h) h.textContent = cur.id ? "Script id: script." + cur.id + ". It stays the same if you rename this, so automations that call it keep working."
+  if (h && isAutoOnly(E)) h.textContent = cur.id ? "Automation id: " + cur.id + ". Pushing updates that automation in Home Assistant." : "";
+  else if (h) h.textContent = cur.id ? "Script id: script." + cur.id + ". It stays the same if you rename this, so automations that call it keep working."
     : "It will be created as script." + id + (takenIds().has(id) ? " (a number is added because that name is taken)." : ".");
 }
 function openEditor(state, c, note) {
@@ -504,7 +575,7 @@ function openEditor(state, c, note) {
   E = full(state);
   $("#msg").textContent = ""; $("#tres").replaceChildren();
   const n = $("#enote"); n.hidden = !note; if (note) n.firstElementChild.textContent = note;
-  $("#trycard").hidden = rawMode(); $("#ymldet").hidden = rawMode(); $("#autodet").hidden = rawMode() && !ownAuto(E);
+  $("#trycard").hidden = rawMode() || isAutoOnly(E); $("#ymldet").hidden = rawMode() || isAutoOnly(E); $("#autodet").hidden = isAutoOnly(E) || (rawMode() && !ownAuto(E));
   drawForm(); dirty = false; paintState(); showView("edit");
 }
 function openNew(over) { openEditor(Object.assign(blankState(), over || {}), {isNew: true}); }
@@ -514,6 +585,7 @@ function openItem(it) {
 }
 function say(text, cls) { const m = $("#msg"); m.className = "msg " + (cls || ""); m.textContent = text; }
 function problems() {
+  if (isAutoOnly(E)) return ownAuto(E) ? "" : "Paste the automation first.";
   if (rawMode()) return "";
   if (!(E.task || "").trim()) return "Say what the fact should be about first.";
   if (E.auto.on && !hasTrigger(E)) return "The schedule needs a repeat time or an entity to watch.";
@@ -524,6 +596,7 @@ async function persist(push) {
   if (push) { const p = problems(); if (p) { say(p, "warn"); return; } }
   const s = clone(E);
   if (!cur.id) cur.id = uniqueId(fslug(s.name));
+  if (isAutoOnly(s)) s.autoId = cur.id;
   const btns = [$("#save"), $("#push")]; btns.forEach(b => b.disabled = true);
   say(push ? "Pushing to Home Assistant..." : "Saving...");
   let r;
@@ -533,7 +606,7 @@ async function persist(push) {
   if (!r.ok) { say(r.detail || r.error || "That failed.", "bad"); if (!cur.saved && !cur.pushed && !cur.fixedId) cur.id = null; paintState(); return; }
   cur.saved = true; cur.isNew = false; if (push) cur.pushed = true; dirty = false; paintState();
   const am = push ? (ownAuto(s) ? " Your automation is pushed exactly as written." : s.raw == null && s.auto.on ? " The schedule (" + autoSummary(s.auto) + ") is on." : r.auto === "removed" ? " The old schedule was removed." : "") : "";
-  say(push ? "Done. script." + cur.id + " is up to date in Home Assistant." + am : "Saved. Home Assistant still has the previous version." + (cur.pushed ? " Push to update it." : ""), "ok");
+  say(push ? "Done. " + (isAutoOnly(s) ? "The automation" : "script." + cur.id) + " is up to date in Home Assistant." + am : "Saved. Home Assistant still has the previous version." + (cur.pushed ? " Push to update it." : ""), "ok");
 }
 $("#save").onclick = () => persist(false);
 $("#push").onclick = () => persist(true);
@@ -552,7 +625,7 @@ $("#newfact").onclick = () => openNew();
 function gen() {
   if (!E) return;
   $("#out").textContent = makeYaml(E);
-  $("#autodet").hidden = rawMode() && !ownAuto(E);
+  $("#autodet").hidden = isAutoOnly(E) || (rawMode() && !ownAuto(E));
   const a = makeAuto(E, cur.id || fslug(E.name));
   $("#autoout").textContent = a || (rawMode() && !ownAuto(E) ? "" : E.auto.on ? "Set a repeat time or an entity to watch to see the schedule." : "No schedule. Turn on \"Run it automatically\" to make one.");
   const t = $("#topicshow"); if (t) t.textContent = topicOf(E);
@@ -561,7 +634,7 @@ function gen() {
 $("#run").onclick = async () => {
   if (!cur.id) { say("Push it to Home Assistant first.", "warn"); return; }
   say("Starting...");
-  const r = await fapi("run", {id: cur.id}); say(r.ok ? "Started the saved script." : (r.detail || r.error), r.ok ? "ok" : "bad");
+  const r = await fapi("run", {id: cur.id, auto_only: isAutoOnly(E)}); say(r.ok ? "Started the saved " + (isAutoOnly(E) ? "automation." : "script.") : (r.detail || r.error), r.ok ? "ok" : "bad");
 };
 $("#copy").onclick = async () => {
   try { await navigator.clipboard.writeText($("#out").textContent); say("Copied.", "ok"); }
@@ -661,8 +734,8 @@ function drawSettings() {
   const scard = (t, sub) => { const c = el("div", {class: "card"}, el("div", {class: "ch"}, el("h2", {}, t), sub ? el("p", {}, sub) : null)); v.append(c); return c; };
   if (!ENT.length) v.append(el("div", {class: "note warn"}, el("div", {}, "Could not load your entity list from Home Assistant. You can still type entity ids into any field. Check the add-on's Log tab.")));
   const c1 = scard("Where facts are saved", "Every fact publishes to this MQTT topic prefix plus its own file name.");
-  const pf = el("input", {value: F.mqtt_prefix || "", placeholder: "file_reader/overwrite/"}); pf.oninput = () => { F.mqtt_prefix = pf.value.trim() };
-  add(c1, el("label", {class: "l"}, "MQTT topic prefix"), pf, el("p", {class: "help"}, "For example file_reader/overwrite/ makes file_reader/overwrite/random_fact.txt for a fact whose file name is random_fact.txt."));
+  const pf = el("input", {value: F.mqtt_prefix || "", placeholder: "file_reader/overwrite/", disabled: !!F.prefix_locked}); pf.oninput = () => { F.mqtt_prefix = pf.value.trim() };
+  add(c1, el("label", {class: "l"}, "MQTT topic prefix"), pf, el("p", {class: "help"}, "For example file_reader/overwrite/ makes file_reader/overwrite/random_fact.txt for a fact whose file name is random_fact.txt." + (F.prefix_locked ? " This is set by the Facts file path option in the add-on Configuration tab. Change it there." : " You can also set it in the add-on Configuration tab (Facts file path).")));
   const c2 = scard("Don't repeat the last fact", "Default sensor the AI is shown so it avoids repeating itself. Each fact can use a different one.");
   add(c2, el("label", {class: "l"}, "Sensor that reads your fact file"), picker(null, false, () => F.last_entity ? [F.last_entity] : [], a => { F.last_entity = a[0] || ""; }));
   const la = el("input", {value: F.last_attribute || "", placeholder: "content", style: "max-width:260px"}); la.oninput = () => { F.last_attribute = la.value.trim() };
