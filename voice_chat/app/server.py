@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Voice Chat 2.0 - hands-free voice conversation with a Home Assistant AI agent.
+"""Voice Chat 2.1 - hands-free voice conversation with a Home Assistant AI agent.
 
 Runs two ways from the same code:
   * Home Assistant add-on (Supervisor token, ingress, /data/options.json)
@@ -57,6 +57,13 @@ DEFAULTS = {
     "browser_playback": (bool, True),
     "save_history": (bool, True),
     "history_limit": (int, 100),
+    # 2.1 - household context (who is who, nicknames, places, music...)
+    "context_enabled": (bool, True),
+    "context_entity": (str, "sensor.combined_info"),
+    "context_attributes": (str, "household_text,friends_text,notable_people,places"),
+    "context_skip_agents": (str, "conversation.home_assistant"),
+    "context_max_chars": (int, 40000),
+    "speaker_name": (str, ""),
 }
 
 
@@ -246,6 +253,106 @@ async def wait_playback(mp: str) -> None:
         await asyncio.sleep(0.4)
 
 
+# ------------------------------------------------------------- household context
+#
+# Reads your combined info sensor (sensor.combined_info) and hands it to the AI
+# agent with the first message of a conversation, so it knows who Jon, MJ, Von,
+# Justin... are when you mention them. The text is NOT stored in chat history and
+# NOT shown on the page.
+
+CONTEXT_CACHE: dict = {"ts": 0.0, "text": "", "facts": ""}
+CONV_SEEN: dict[str, float] = {}  # conversation_id -> last time we talked in it
+CONTEXT_RESEND_S = 240  # Home Assistant forgets a conversation after ~5 idle minutes
+CONTEXT_CACHE_S = 60
+
+
+def render(value, depth: int = 0) -> str:
+    """Turn a sensor attribute (text, list or dict) into plain indented text."""
+    pad = "  " * depth
+    if isinstance(value, dict):
+        lines = []
+        for k, v in value.items():
+            if isinstance(v, (dict, list)):
+                if v:
+                    lines += [f"{pad}{k}:", render(v, depth + 1)]
+            elif v not in (None, ""):
+                lines.append(f"{pad}{k}: {v}")
+        return "\n".join(lines)
+    if isinstance(value, list):
+        out = []
+        for v in value:
+            if isinstance(v, (dict, list)):
+                out += [f"{pad}-", render(v, depth + 1)]
+            else:
+                out.append(f"{pad}- {v}")
+        return "\n".join(out)
+    return f"{pad}{value}"
+
+
+def context_agent_ok(agent: str) -> bool:
+    """The built-in Home Assistant agent matches fixed sentences, so extra text would break it."""
+    skip = {a.strip() for a in opt("context_skip_agents").split(",") if a.strip()}
+    return agent not in skip
+
+
+async def load_context() -> str:
+    if not OPTIONS["context_enabled"] or not opt("context_entity"):
+        return ""
+    now = time.time()
+    if CONTEXT_CACHE["text"] and now - CONTEXT_CACHE["ts"] < CONTEXT_CACHE_S:
+        return CONTEXT_CACHE["text"]
+    try:
+        state = await ha("GET", f"/states/{opt('context_entity')}")
+    except HAError as e:
+        log.warning("Household context unavailable: %s", e)
+        return CONTEXT_CACHE["text"]  # an old copy beats none
+    attrs = (state or {}).get("attributes") or {}
+    sections = []
+    for name in (a.strip() for a in opt("context_attributes").split(",") if a.strip()):
+        value = attrs.get(name)
+        if value in (None, "", [], {}):
+            log.warning("Context attribute %r not found on %s", name, opt("context_entity"))
+            continue
+        title = name.removesuffix("_text").replace("_", " ").upper()
+        sections.append(f"=== {title} ===\n{render(value)}")
+    text = "\n\n".join(sections)
+    limit = OPTIONS["context_max_chars"]
+    if limit > 0 and len(text) > limit:
+        log.warning("Household context is %d characters, cutting it to %d", len(text), limit)
+        text = text[:limit].rsplit("\n", 1)[0]
+    CONTEXT_CACHE.update(ts=now, text=text, facts=str((state or {}).get("state") or ""))
+    log.info("Household context loaded: %d characters (%s)", len(text), CONTEXT_CACHE["facts"])
+    return text
+
+
+def with_context(context: str, message: str) -> str:
+    who = f"The person talking to you right now is {opt('speaker_name')}. " if opt("speaker_name") else ""
+    return (
+        "[Background on the household and their friends, loaded automatically. "
+        "Use it quietly so you know who people are: names, nicknames, relationships, "
+        "jobs, places and music taste. "
+        f"{who}"
+        "Do not read it back or mention it unless asked.]\n"
+        f"{context}\n"
+        "[End of background]\n\n"
+        f"{message}"
+    )
+
+
+def context_due(conv_id: str) -> bool:
+    last = CONV_SEEN.get(conv_id or "", 0)
+    return time.time() - last > CONTEXT_RESEND_S
+
+
+def remember_conversation(conv_id) -> None:
+    if not conv_id:
+        return
+    now = time.time()
+    CONV_SEEN[conv_id] = now
+    for k in [k for k, t in CONV_SEEN.items() if now - t > 3600]:
+        CONV_SEEN.pop(k, None)
+
+
 # ------------------------------------------------------------- history
 
 def history_dir() -> Path:
@@ -314,9 +421,17 @@ async def compute_status() -> dict:
     if stt and stt not in by_id:
         problems.append(f"“{stt}” (stt_entity) doesn’t exist. Available: {available('stt')}")
 
+    ctx_entity = opt("context_entity")
+    if OPTIONS["context_enabled"] and ctx_entity and ctx_entity not in by_id:
+        problems.append(f"“{ctx_entity}” (context_entity) doesn’t exist, so the AI won’t know your household. "
+                        "Set context_entity to your combined info sensor or turn off context_enabled.")
+
     return {
         "problems": problems,
-        "version": "2.0.0",
+        "context": {"enabled": bool(OPTIONS["context_enabled"] and ctx_entity and ctx_entity in by_id),
+                    "entity": ctx_entity},
+        "context_skip_agents": [a.strip() for a in opt("context_skip_agents").split(",") if a.strip()],
+        "version": "2.1.0",
         "media_player": opt("media_player"),
         "conversation_agent": opt("conversation_agent"),
         "speakers": listing("media_player"),
@@ -367,12 +482,22 @@ async def chat(request):
     if not text:
         return web.json_response({"error": "Empty message"}, status=400)
     agent = chosen_agent(body)
-    payload = {"text": text, "language": await language(), "agent_id": agent}
-    if body.get("conversation_id"):
-        payload["conversation_id"] = body["conversation_id"]
+    sent_id = body.get("conversation_id") or ""
+    send_text, injected = text, False
+    # Give the AI the household background on the first message, and again if
+    # Home Assistant has forgotten the conversation after a few quiet minutes.
+    if body.get("context", True) and context_agent_ok(agent) and context_due(sent_id):
+        background = await load_context()
+        if background:
+            send_text, injected = with_context(background, text), True
+    payload = {"text": send_text, "language": await language(), "agent_id": agent}
+    if sent_id:
+        payload["conversation_id"] = sent_id
     result = await ha("POST", "/conversation/process", json=payload)
     reply = reply_text(result) or "I didn’t get a reply from the agent."
     conv_id = (result or {}).get("conversation_id")
+    if injected or sent_id in CONV_SEEN:
+        remember_conversation(conv_id)
     log.info("You: %s | Agent: %s", text, reply[:120])
     record_exchange(str(body.get("chat_id") or ""), agent, conv_id, text, reply)
     out = {"text": reply, "conversation_id": conv_id, "audio": None}
@@ -522,7 +647,7 @@ async def main():
         log.info("HTTPS page listening on port 8443")
     else:
         log.info("Direct HTTPS page is off. Set a password in Configuration to turn it on.")
-    log.info("Voice Chat 2.0 ready (%s mode)", "add-on" if ADDON else "standalone")
+    log.info("Voice Chat 2.1 ready (%s mode)", "add-on" if ADDON else "standalone")
     try:
         for problem in (await compute_status())["problems"]:
             log.warning("Config problem: %s", problem)

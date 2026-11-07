@@ -68,6 +68,7 @@ footer{display:flex;flex-direction:column;align-items:center;gap:10px;padding:12
 #composer button{border:0;border-radius:12px;padding:0 16px;background:var(--listen);color:#fff;font-weight:600}
 #composer button:disabled{opacity:.45;cursor:default}
 .tog{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:.85rem}
+.tog[hidden]{display:none}
 .orb{position:relative;width:104px;height:104px;border-radius:50%;border:0;background:var(--c);color:#fff;display:grid;place-items:center;transition:background .25s}
 .orb::before{content:"";position:absolute;inset:-12px;border-radius:50%;border:3px solid var(--c);opacity:.4;transform:scale(calc(1 + var(--lvl)));transition:transform .09s linear}
 .orb svg{width:42px;height:42px;fill:currentColor}
@@ -86,6 +87,7 @@ body[data-phase=thinking] .orb::before{animation:breathe 1.6s ease-in-out infini
     <h1>Voice Chat</h1>
     <div class="pick"><span>AI</span> <select id="agent" aria-label="AI agent"></select></div>
     <div class="pick"><span>Speak on</span> <button id="spkBtn" type="button" aria-expanded="false">…</button></div>
+    <label class="tog" id="ctxRow" hidden><input id="ctxToggle" type="checkbox" checked> AI knows my household info</label>
   </div>
   <div class="btns">
     <button id="hist" class="ghost" type="button">History</button>
@@ -393,7 +395,8 @@ body[data-phase=thinking] .orb::before{animation:breathe 1.6s ease-in-out infini
     setPhase('thinking');
     const r = await api('chat', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, conversation_id: convId, chat_id: chatId, agent: $('#agent').value, speakers, speak }),
+      body: JSON.stringify({ text, conversation_id: convId, chat_id: chatId, agent: $('#agent').value, speakers, speak,
+        context: $('#ctxToggle').checked }),
     });
     if (my !== epoch) return;
     convId = r.conversation_id || convId;
@@ -566,7 +569,13 @@ body[data-phase=thinking] .orb::before{animation:breathe 1.6s ease-in-out infini
     for (const a of cfg.agents) agentSel.add(new Option(a.name, a.entity_id));
     const savedAgent = store.get('voice-agent');
     agentSel.value = cfg.agents.some(a => a.entity_id === savedAgent) ? savedAgent : cfg.conversation_agent;
-    agentSel.onchange = () => { store.set('voice-agent', agentSel.value); convId = null; };
+    // Household info toggle: only offered for AI agents that can use it (not the built-in sentence matcher).
+    const ctxRow = $('#ctxRow'), ctxBox = $('#ctxToggle');
+    const showCtx = () => { ctxRow.hidden = !(cfg.context && cfg.context.enabled) || cfg.context_skip_agents.includes(agentSel.value); };
+    ctxBox.checked = store.get('voice-context') !== 'off';
+    ctxBox.onchange = () => store.set('voice-context', ctxBox.checked ? 'on' : 'off');
+    agentSel.onchange = () => { store.set('voice-agent', agentSel.value); convId = null; showCtx(); };
+    showCtx();
 
     let saved = null;
     try { saved = JSON.parse(store.get('voice-speakers')); } catch (e) {}
