@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.8.0 - 2026-11-07
+
+- **Import a whole automation as a fact.** Import my script now also takes an automation that does everything itself (asks the AI, then saves the result), like a daily birthdays automation. Paste the YAML (a single automation, a `- id:` item from `automations.yaml`, or one under `automation:`), or leave the box empty and pick one from the **Automation** dropdown. It is kept exactly as written and you edit the YAML in the editor
+- If a pasted automation has the same name as one already in Home Assistant, it takes that one over, so pushing updates it instead of making a duplicate. A copy of the old one is saved first
+- **Choose where the text file goes.** The editor lists every `topic:` in your automation as a field you can change, with a **Use my folder** button
+- **New add-on option: Facts file path** (Configuration tab). Sets the MQTT folder for all facts, for example `file_reader/overwrite/`. When set, it wins over Facts > Settings, which then shows it as locked. Blank keeps the old behavior
+- Automation-only facts have **Run now** (triggers the automation, skipping its conditions) and show whether the automation is on. Deleting one only forgets it here and never deletes it from Home Assistant
+
 ## 2.7.0 - 2026-11-07
 
 - **Facts can keep your own automations.** Each fact now has a **Your own automation** card. Load an automation you already have from a dropdown (or paste YAML) and it is kept exactly as written and pushed with the fact's script. It works for generated facts and for imported scripts

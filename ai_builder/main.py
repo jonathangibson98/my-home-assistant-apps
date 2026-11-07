@@ -1498,6 +1498,8 @@ async def ann_run(request):
 # and the entity list are shared with Announcements.
 FACT_DEFAULTS = {"mqtt_prefix": "file_reader/overwrite/", "last_entity": "", "last_attribute": "content",
                  "home_entities": [], "default_length": 180, "extra_rules": ""}
+_fp = str(OPTS.get("facts_file_path") or "").strip()
+FACTS_PATH_OPT = _fp if re.match(r"^[A-Za-z0-9_\-./]{1,120}$", _fp) else ""  # add-on option: where fact text files are saved
 FACT_MARK = "Made with Fact Maker"
 FACT_TEST_ID = "fact_maker_test"
 FACT_TEST = {"status": "idle"}
@@ -1508,6 +1510,9 @@ FACT_AUTO_SUFFIX = "_auto"
 def fact_settings():
     s = dict(FACT_DEFAULTS)
     s.update({k: v for k, v in load_json(FACT_SETTINGS, {}).items() if k in FACT_DEFAULTS})
+    s["prefix_locked"] = bool(FACTS_PATH_OPT)
+    if FACTS_PATH_OPT:  # set in the add-on Configuration tab, so it wins over the Facts settings
+        s["mqtt_prefix"] = FACTS_PATH_OPT
     return s
 
 
@@ -1515,6 +1520,8 @@ def fact_clean_settings(body):
     s = dict(FACT_DEFAULTS)
     prefix = str(body.get("mqtt_prefix", s["mqtt_prefix"])).strip()
     s["mqtt_prefix"] = prefix if re.match(r"^[A-Za-z0-9_\-./]{0,120}$", prefix) else s["mqtt_prefix"]
+    if FACTS_PATH_OPT:
+        s["mqtt_prefix"] = FACTS_PATH_OPT
     for k in ("last_entity",):
         v = str(body.get(k, "")).strip()
         s[k] = v if (not v or ANN_ENT_RE.match(v)) else ""
@@ -1710,6 +1717,9 @@ async def fact_push(request):
     sid = await ann_script_id(body)
     aid = fact_auto_id(body, sid)
     own = bool(body.get("auto_raw"))
+    auto_only = bool(body.get("auto_only"))
+    if auto_only:
+        return await fact_push_auto(app, body, sid)
     try:
         cfg = yaml.safe_load(body.get("yaml", ""))
         acfg = yaml.safe_load(body["auto_yaml"]) if body.get("auto_yaml") else None
@@ -1754,6 +1764,63 @@ async def fact_push(request):
     return web.json_response({"ok": True, "entity": f"script.{sid}", "auto": auto})
 
 
+async def fact_push_auto(app, body, aid):
+    """A fact that is only an automation (it asks the AI and publishes by itself, no script): push it exactly as written."""
+    try:
+        acfg = yaml.safe_load(body.get("auto_yaml") or "")
+    except yaml.YAMLError as e:
+        return web.json_response({"error": "YAML problem: %s" % e}, status=400)
+    if not isinstance(acfg, dict):
+        return web.json_response({"ok": False, "detail": "The automation YAML is empty or not valid."})
+    bad = fact_auto_problem(acfg)
+    if bad:
+        return web.json_response({"ok": False, "detail": bad})
+    code, old = await ha(app, "GET", f"/config/automation/config/{aid}", timeout=10)
+    if code == 200 and isinstance(old, dict) and old != acfg:
+        fact_backup_automation(aid, old)
+    code, text = await ha_text(app, "POST", f"/config/automation/config/{aid}", acfg)
+    if code != 200:
+        return web.json_response({"ok": False, "detail": "HA said %s: %s" % (code, str(text)[:300])})
+    await ha_text(app, "POST", "/services/automation/reload", {})
+    name = str(acfg.get("alias") or aid)
+    if body.get("new"):
+        add_history({"kind": "fact", "name": name, "entity": "automation." + aid})
+    state = clean_ann_state(body.get("state"))
+    if state is not None or aid in fact_library():
+        fact_store(aid, name, state, pushed=True)
+    return web.json_response({"ok": True, "entity": "automation." + aid, "auto": "pushed"})
+
+
+async def fact_import_auto(request):
+    """Check an automation the user pasted (one automation, `- id:` list item as in automations.yaml, or under `automation:`)."""
+    body = await ann_body(request)
+    text = str(body.get("yaml", ""))
+    if not text.strip():
+        return web.json_response({"ok": False, "error": "Paste your automation first."})
+    if len(text) > 150_000:
+        return web.json_response({"ok": False, "error": "That automation is too big to import."})
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        return web.json_response({"ok": False, "error": "YAML problem: %s" % str(e)[:400]})
+    wrapped = False
+    if isinstance(data, dict) and isinstance(data.get("automation"), (list, dict)) and len(data) == 1:
+        data, wrapped = data["automation"], True
+    if isinstance(data, list):
+        if len(data) != 1 or not isinstance(data[0], dict):
+            return web.json_response({"ok": False, "error": "That has more than one automation in it. Paste one at a time."})
+        data, wrapped = data[0], True
+    if not isinstance(data, dict):
+        return web.json_response({"ok": False, "error": "That does not look like a Home Assistant automation."})
+    bad = fact_auto_problem(data)
+    if bad:
+        return web.json_response({"ok": False, "error": bad})
+    cid = str(data.get("id") or "")
+    return web.json_response({"ok": True, "alias": str(data.get("alias") or "Imported automation")[:80],
+                              "id": cid if ANN_ID_RE.match(cid) else "",
+                              "yaml": ann_dump(data) if wrapped else text})
+
+
 async def fact_automations(request):
     """Automations that already exist in Home Assistant, so one can be loaded into a fact."""
     st, states = await ha(request.app, "GET", "/states")
@@ -1791,6 +1858,11 @@ async def fact_library_list(request):
     for i, v in lib.items():
         own_id = str(((v.get("state") or {}).get("autoId")) or "")
         a = autos.get(own_id if ANN_ID_RE.match(own_id) else i + FACT_AUTO_SUFFIX)
+        if (v.get("state") or {}).get("autoOnly"):
+            a = autos.get(i)
+            items.append({**v, "in_ha": a is not None, "last_run": ((a or {}).get("attributes") or {}).get("last_triggered"),
+                          "auto_in_ha": a is not None, "auto_on": bool(a) and a.get("state") == "on"})
+            continue
         items.append({**v, "in_ha": i in live, "last_run": ((live.get(i) or {}).get("attributes") or {}).get("last_triggered"),
                       "auto_in_ha": a is not None, "auto_on": bool(a) and a.get("state") == "on"})
     items.sort(key=lambda x: str(x.get("updated") or ""), reverse=True)
@@ -1813,6 +1885,10 @@ async def fact_library_delete(request):
     aid = sid + FACT_AUTO_SUFFIX
     lib = fact_library()
     removed = False
+    if (lib.get(sid, {}).get("state") or {}).get("autoOnly"):  # your own automation: only forget it here
+        lib.pop(sid, None)
+        save_json(FACTS_LIB, lib)
+        return web.json_response({"ok": True, "script_deleted": False})
     if body.get("delete_script"):
         code, cfg = await ha(app, "GET", f"/config/script/config/{sid}", timeout=10)
         if sid not in lib and not (code == 200 and fact_has_mark(cfg)):
@@ -1835,6 +1911,14 @@ async def fact_library_delete(request):
 async def fact_run(request):
     body = await ann_body(request)
     sid = await ann_script_id(body)
+    if body.get("auto_only"):
+        st, states = await ha(request.app, "GET", "/states")
+        ent = next((e["entity_id"] for e in (states if st == 200 and isinstance(states, list) else [])
+                    if e["entity_id"].startswith("automation.") and str((e.get("attributes") or {}).get("id")) == sid), "")
+        if not ent:
+            return web.json_response({"ok": False, "detail": "That automation is not in Home Assistant yet. Push it first."})
+        code, text = await ha_text(request.app, "POST", "/services/automation/trigger", {"entity_id": ent, "skip_condition": True})
+        return web.json_response({"ok": code == 200, "detail": str(text)[:300]})
     code, text = await ha_text(request.app, "POST", "/services/script/turn_on", {"entity_id": f"script.{sid}"})
     return web.json_response({"ok": code == 200, "detail": str(text)[:300]})
 
@@ -2071,6 +2155,7 @@ def main():
         web.get("/api/facts/library", fact_library_list),
         web.get("/api/facts/automations", fact_automations),
         web.get("/api/facts/automation", fact_automation_get),
+        web.post("/api/facts/import_auto", fact_import_auto),
         web.post("/api/facts/library/save", fact_library_save),
         web.post("/api/facts/library/delete", fact_library_delete),
         web.post("/api/facts/settings", fact_save_settings),
