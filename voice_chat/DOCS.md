@@ -48,6 +48,12 @@ Open **Voice Chat** in the sidebar. Choose the **AI** and where it should **Spea
 
 With `context_enabled` on, the first message of each conversation carries the text from `context_entity` (people, nicknames, relationships, places, music) in front of what you said. The AI uses it quietly and doesn't read it back. It is not shown in the chat or saved in History. If Home Assistant forgets the conversation after about five quiet minutes, it is sent again with your next message. Turn it off for one browser with the **AI knows my household info** switch.
 
+### Live info (locations and anything else that changes)
+
+Tap **Live info** on the page, search for an entity (for example `sensor.everybodys_locations`), tap it to add it, rename it if you like, and press **Save**. Each entry can also list the attributes to send (for example `jon,mj,von`); leave it blank to send the state and every attribute. Add the word `state` to the list to include the state too. Up to 40 entities.
+
+Their current values are read from Home Assistant at the moment you send a message. The AI gets them with the first message of a conversation and again whenever they have changed since it last saw them. Press **Preview what the AI sees** to check the text. The list lives in `/data/live_entities.json`.
+
 It only works with AI agents that understand free text (Google Generative AI, Ollama, OpenAI, ...). The built-in Home Assistant agent is skipped.
 
 ## Which device listens, which device speaks

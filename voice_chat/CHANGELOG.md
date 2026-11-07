@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.2.0
+
+- **Live info.** New **Live info** button on the page. Search for any Home Assistant entity (for example `sensor.everybodys_locations`), give it a name, optionally pick which attributes to send, and save. The AI reads their current values fresh from Home Assistant, so it knows where everyone is right now.
+- Live values go along with your message only when they changed since the AI last saw them, and always with the first message of a conversation. Nothing is repeated every turn, and none of it shows up in the chat or the saved history.
+- **Preview** button shows exactly what the AI is being sent.
+- The list is saved in `/data/live_entities.json` and starts with `sensor.everybodys_locations`.
+- The page switch is now "Give the AI my household & live info" and turns off both.
+
 ## 2.1.0
 
 - **The AI now knows your household.** Voice Chat reads your combined info sensor (`sensor.combined_info`) and gives it to the AI with the first message of every conversation, so when you say "Von", "Guapo" or "MJ's sister" it knows who you mean. It is sent again automatically if Home Assistant forgets the conversation after a few quiet minutes. The background never shows up in the chat or the saved history.
