@@ -24,16 +24,18 @@
   <nav class="tabs" aria-label="Sections">
     <button class="tab" id="b-builder" data-t="builder">Build</button>
     <button class="tab" id="b-announcements" data-t="announcements">Announcements</button>
+    <button class="tab" id="b-facts" data-t="facts">Facts</button>
     <button class="tab" id="b-backup" data-t="backup">Backup</button>
   </nav>
 </header>
 <div id="frames">
   <iframe id="f-builder" title="Build" hidden></iframe>
   <iframe id="f-announcements" title="Announcements" hidden></iframe>
+  <iframe id="f-facts" title="Facts" hidden></iframe>
   <iframe id="f-backup" title="Backup" hidden></iframe>
 </div>
 <script>
-const TABS = ["builder", "announcements", "backup"];
+const TABS = ["builder", "announcements", "facts", "backup"];
 function show(t) {
   if (!TABS.includes(t)) t = "builder";
   for (const k of TABS) {
