@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.0
+
+- **The AI now knows your household.** Voice Chat reads your combined info sensor (`sensor.combined_info`) and gives it to the AI with the first message of every conversation, so when you say "Von", "Guapo" or "MJ's sister" it knows who you mean. It is sent again automatically if Home Assistant forgets the conversation after a few quiet minutes. The background never shows up in the chat or the saved history.
+- New options: `context_enabled`, `context_entity`, `context_attributes`, `context_skip_agents`, `context_max_chars`, `speaker_name`.
+- "AI knows my household info" switch on the page (remembered per browser). Hidden for the built-in Home Assistant agent, which only matches fixed sentences.
+- A banner appears if `context_entity` doesn't exist.
+
 ## 2.0.0
 
 - **Standalone Docker version.** `docker-compose.yml` + `Dockerfile.standalone` run Voice Chat anywhere, against any Home Assistant, using a long-lived access token. Settings come from `VC_*` environment variables. A password is always required (one is generated if you don't set it).
