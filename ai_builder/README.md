@@ -35,6 +35,7 @@ Use the tab bar at the top of the sidebar panel to switch: **Build / Announcemen
 - Formats: just the fact, a title and the fact, or a short list, with an optional heading
 - Rules: real and verifiable, go obscure, keep the household out, don't repeat the last fact
 - Saved over MQTT (default `file_reader/overwrite/`), with an optional schedule and "someone is home" condition
+- Keep your own automations with a fact: load an existing automation, or import a script and its automation together
 - Test before saving, Helper tab, import your own script, and everything is included in Backup
 
 ## Backup

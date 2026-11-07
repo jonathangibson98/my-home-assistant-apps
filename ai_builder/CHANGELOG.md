@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.7.0 - 2026-11-07
+
+- **Facts can keep your own automations.** Each fact now has a **Your own automation** card. Load an automation you already have from a dropdown (or paste YAML) and it is kept exactly as written and pushed with the fact's script. It works for generated facts and for imported scripts
+- **Import my script** has a new **Automation that runs it** dropdown, so a script and its automation come in together
+- Pushing over an automation that already exists saves a copy of the old one first, in `/data/automation_backups` inside the add-on
+- Your own automations are never deleted by this add-on. Only the generated `<script id>_auto` schedule is removed when you turn the schedule off
+- Library cards show whether your automation is in Home Assistant and on or off. Automations defined only in YAML files (no UI id) cannot be loaded, because Home Assistant cannot edit them from here
+
 ## 2.6.0 - 2026-11-07
 
 - **New Facts tab**, next to Announcements. Make AI-written facts that are saved to a text file over MQTT (default topic prefix `file_reader/overwrite/`), such as a random trivia fact, a dark history fact, a music fact about an artist, or a fact about a city

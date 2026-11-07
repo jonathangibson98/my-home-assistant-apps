@@ -1674,12 +1674,42 @@ async def fact_test_start(request):
     return web.json_response({"ok": True})
 
 
+FACT_AUTO_BACKUPS = DATA / "automation_backups"
+
+
+def fact_auto_id(body, sid):
+    """The automation id to use: the user's own (taken over from Home Assistant) or <script id>_auto."""
+    a = str(body.get("auto_id") or "").strip()
+    return a if ANN_ID_RE.match(a) else sid + FACT_AUTO_SUFFIX
+
+
+def fact_auto_problem(acfg):
+    keys = set(acfg)
+    if not ({"triggers", "trigger"} & keys):
+        return "That automation has no triggers: list."
+    if not ({"actions", "action"} & keys):
+        return "That automation has no actions: list."
+    return ""
+
+
+def fact_backup_automation(aid, old):
+    """Keep a copy of an automation the user wrote before a push replaces it."""
+    try:
+        FACT_AUTO_BACKUPS.mkdir(parents=True, exist_ok=True)
+        (FACT_AUTO_BACKUPS / ("%s-%s.yaml" % (aid, time.strftime("%Y%m%d-%H%M%S")))).write_text(
+            yaml.safe_dump(old, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    except OSError:
+        log.exception("could not back up automation %s", aid)
+
+
 async def fact_push(request):
-    """Create or update the script, and the schedule automation when one is sent (or remove ours when it is not)."""
+    """Create or update the script, and its automation: either the generated schedule, or the user's own automation
+    kept exactly as written (auto_raw). Removes the generated schedule when none is sent; never removes a user's own."""
     app = request.app
     body = await ann_body(request)
     sid = await ann_script_id(body)
-    aid = sid + FACT_AUTO_SUFFIX
+    aid = fact_auto_id(body, sid)
+    own = bool(body.get("auto_raw"))
     try:
         cfg = yaml.safe_load(body.get("yaml", ""))
         acfg = yaml.safe_load(body["auto_yaml"]) if body.get("auto_yaml") else None
@@ -1688,16 +1718,24 @@ async def fact_push(request):
     if not isinstance(cfg, dict):
         return web.json_response({"ok": False, "detail": "The script YAML is empty or not valid."})
     if acfg is not None and not isinstance(acfg, dict):
-        return web.json_response({"ok": False, "detail": "The schedule YAML is not valid."})
+        return web.json_response({"ok": False, "detail": "The automation YAML is not valid."})
+    if acfg is not None and own:
+        bad = fact_auto_problem(acfg)
+        if bad:
+            return web.json_response({"ok": False, "detail": bad})
     code, text = await ha_text(app, "POST", f"/config/script/config/{sid}", cfg)
     if code != 200:
         return web.json_response({"ok": False, "detail": "HA said %s: %s" % (code, str(text)[:300])})
     await ha_text(app, "POST", "/services/script/reload", {})
     auto = "none"
     if acfg is not None:
+        if own:  # take over: keep a copy of what is there now, and keep the user's id inside the config if they have one
+            code, old = await ha(app, "GET", f"/config/automation/config/{aid}", timeout=10)
+            if code == 200 and isinstance(old, dict) and old != acfg:
+                fact_backup_automation(aid, old)
         code, text = await ha_text(app, "POST", f"/config/automation/config/{aid}", acfg)
         if code != 200:
-            return web.json_response({"ok": False, "detail": "The script was pushed, but HA refused the schedule (%s): %s" % (code, str(text)[:300])})
+            return web.json_response({"ok": False, "detail": "The script was pushed, but HA refused the automation (%s): %s" % (code, str(text)[:300])})
         await ha_text(app, "POST", "/services/automation/reload", {})
         auto = "pushed"
     else:  # schedule switched off: remove the automation, but only one this tool made
@@ -1716,6 +1754,32 @@ async def fact_push(request):
     return web.json_response({"ok": True, "entity": f"script.{sid}", "auto": auto})
 
 
+async def fact_automations(request):
+    """Automations that already exist in Home Assistant, so one can be loaded into a fact."""
+    st, states = await ha(request.app, "GET", "/states")
+    out = []
+    if st == 200 and isinstance(states, list):
+        for e in states:
+            if not e["entity_id"].startswith("automation."):
+                continue
+            a = e.get("attributes") or {}
+            cid = str(a.get("id") or "")
+            if ANN_ID_RE.match(cid):  # automations without a UI id (defined in YAML files) cannot be edited here
+                out.append({"id": cid, "entity": e["entity_id"], "name": a.get("friendly_name") or cid, "state": e.get("state")})
+    out.sort(key=lambda x: x["name"].lower())
+    return web.json_response({"ok": st == 200, "items": out})
+
+
+async def fact_automation_get(request):
+    aid = str(request.query.get("id", ""))
+    if not ANN_ID_RE.match(aid):
+        return web.json_response({"ok": False, "error": "Bad automation id."})
+    code, cfg = await ha(request.app, "GET", f"/config/automation/config/{aid}", timeout=10)
+    if code != 200 or not isinstance(cfg, dict):
+        return web.json_response({"ok": False, "error": "Could not load that automation: %s" % errmsg(cfg)})
+    return web.json_response({"ok": True, "config": cfg, "yaml": ann_dump(cfg), "id": aid})
+
+
 async def fact_library_list(request):
     app = request.app
     lib = fact_library()
@@ -1725,7 +1789,8 @@ async def fact_library_list(request):
     autos = {str((s.get("attributes") or {}).get("id")): s for s in states if ok and s["entity_id"].startswith("automation.")}
     items = []
     for i, v in lib.items():
-        a = autos.get(i + FACT_AUTO_SUFFIX)
+        own_id = str(((v.get("state") or {}).get("autoId")) or "")
+        a = autos.get(own_id if ANN_ID_RE.match(own_id) else i + FACT_AUTO_SUFFIX)
         items.append({**v, "in_ha": i in live, "last_run": ((live.get(i) or {}).get("attributes") or {}).get("last_triggered"),
                       "auto_in_ha": a is not None, "auto_on": bool(a) and a.get("state") == "on"})
     items.sort(key=lambda x: str(x.get("updated") or ""), reverse=True)
@@ -2004,6 +2069,8 @@ def main():
         web.get("/api/facts/options", fact_options),
         web.get("/api/facts/test", fact_test_status),
         web.get("/api/facts/library", fact_library_list),
+        web.get("/api/facts/automations", fact_automations),
+        web.get("/api/facts/automation", fact_automation_get),
         web.post("/api/facts/library/save", fact_library_save),
         web.post("/api/facts/library/delete", fact_library_delete),
         web.post("/api/facts/settings", fact_save_settings),
