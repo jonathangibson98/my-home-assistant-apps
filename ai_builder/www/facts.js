@@ -39,7 +39,7 @@ const PRE = {
 /* ---------- state ---------- */
 const defAuto = () => ({on: false, every: 10, unit: "minutes", watch: "", watchAttr: "", watchFor: 10, home: []});
 const blankState = () => ({name: "My fact", src: [], task: "", picks: [], seed: true, len: F.default_length || 180, style: "plain", titleHint: "", heading: "", count: 5,
-  file: "", swear: "none", real: true, obscure: true, skip: "", noPeople: true, avoidLast: true, lastEntity: "", lastAttr: "", extra: "", ai: "", auto: defAuto()});
+  file: "", swear: "none", real: true, obscure: true, skip: "", noPeople: true, avoidLast: true, lastEntity: "", lastAttr: "", extra: "", ai: "", auto: defAuto(), autoRaw: "", autoId: ""});
 const clone = o => JSON.parse(JSON.stringify(o));
 const full = s => Object.assign(blankState(), clone(s || {}), {auto: Object.assign(defAuto(), (s && s.auto) || {})});
 
@@ -117,7 +117,9 @@ const autoSummary = a => {
   if (a.watch) p.push("when " + a.watch + " changes");
   return p.join(" and ") || "no trigger set";
 };
+const ownAuto = s => !!String((s && s.autoRaw) || "").trim();
 function makeAuto(s0, sid) {
+  if (ownAuto(s0)) return s0.autoRaw;
   if (s0.raw != null) return "";
   const s = full(s0), a = s.auto;
   if (!a.on) return "";
@@ -140,6 +142,8 @@ function makeAuto(s0, sid) {
   y += "actions:\n  - action: script." + sid + "\n";
   return y;
 }
+const pushBody = (s, id, extra) => Object.assign({id, yaml: makeYaml(s), auto_yaml: makeAuto(s, id), state: s,
+  auto_raw: ownAuto(s), auto_id: ownAuto(s) ? (s.autoId || "") : ""}, extra || {});
 const hasTrigger = s => !!(s.auto && ((+s.auto.every > 0) || s.auto.watch));
 
 /* ---------- DOM ---------- */
@@ -201,8 +205,12 @@ function libCard(it) {
     if (r.ok) { flash("Copied as a draft: " + id, "ok"); loadLib(); } else flash(r.error, "bad");
   }}, "Duplicate");
   const a = st.auto || {}, pills = [];
-  if (raw) pills.push(el("span", {class: "pill plain"}, "Own script"));
-  else {
+  const autoPill = () => !it.auto_in_ha ? el("span", {class: "pill warn"}, "Automation not pushed") : it.auto_on ? el("span", {class: "pill ok"}, "Your automation is on") : el("span", {class: "pill warn"}, "Your automation is off in HA");
+  if (raw) { pills.push(el("span", {class: "pill plain"}, "Own script")); if (ownAuto(st)) pills.push(autoPill()); }
+  else if (ownAuto(st)) {
+    pills.push(el("span", {class: "pill plain"}, fileOf(Object.assign({}, st, {name: st.name || it.name}))));
+    pills.push(autoPill());
+  } else {
     pills.push(el("span", {class: "pill plain"}, fileOf(Object.assign({}, st, {name: st.name || it.name}))));
     if (a.on) pills.push(!it.auto_in_ha ? el("span", {class: "pill warn"}, "Schedule not pushed") : it.auto_on ? el("span", {class: "pill ok"}, "Runs " + autoSummary(a)) : el("span", {class: "pill warn"}, "Schedule is off in HA"));
     else pills.push(el("span", {class: "pill plain"}, "Manual only"));
@@ -230,7 +238,7 @@ async function updateAll() {
   const todo = LIB.filter(x => x.pushed_at); let ok = 0; const bad = [];
   flash("Updating " + todo.length + "...", "");
   for (const it of todo) {
-    const s = it.state || {}, r = await fapi("push", {id: it.id, yaml: makeYaml(s), auto_yaml: makeAuto(s, it.id), state: s});
+    const s = it.state || {}, r = await fapi("push", pushBody(s, it.id));
     if (r.ok) ok++; else bad.push(it.name + ": " + (r.detail || r.error));
   }
   flash("Updated " + ok + " of " + todo.length + " with your current settings." + (bad.length ? " Failed: " + bad.join("; ") : ""), bad.length ? "bad" : "ok");
@@ -263,11 +271,15 @@ function setAlias(y, name) {
   return /^alias:.*$/m.test(y) ? y.replace(/^alias:.*$/m, () => line) : line + "\n" + y;
 }
 const imsg = (t, c) => { const m = $("#impmsg"); m.className = "msg " + (c || ""); m.textContent = t || ""; };
+function fillAutoPick() {
+  const sel = $("#impauto"); sel.replaceChildren(el("option", {value: ""}, "None"));
+  loadAutos().then(L => L.forEach(a => sel.append(el("option", {value: a.id}, a.name + " (" + a.state + ")"))));
+}
 function fillPick() {
   const sel = $("#imppick"); sel.replaceChildren(el("option", {value: ""}, "Choose a script..."));
   ENT.filter(e => e.id.startsWith("script.")).forEach(e => sel.append(el("option", {value: e.id.slice(7)}, e.name + " (" + e.id + ")")));
 }
-$("#importbtn").onclick = () => { $("#importbox").hidden = false; imsg(""); fillPick(); $("#impyaml").focus(); };
+$("#importbtn").onclick = () => { $("#importbox").hidden = false; imsg(""); fillPick(); fillAutoPick(); $("#impyaml").focus(); };
 $("#impcancel").onclick = () => { $("#importbox").hidden = true; imsg(""); };
 $("#imppickgo").onclick = async () => {
   const id = $("#imppick").value; if (!id) { imsg("Choose a script first.", "warn"); return; }
@@ -286,11 +298,52 @@ $("#impgo").onclick = async () => {
   const id = cleanId(typed) || cleanId(r.id) || uniqueId(fslug(r.alias)), takeover = !!(cleanId(typed) || cleanId(r.id));
   if (LIB.some(x => x.id === id)) { imsg("script." + id + " is already in My facts. Open it from the list below.", "bad"); return; }
   const inHA = ENT.some(e => e.id === "script." + id);
-  $("#importbox").hidden = true; $("#impyaml").value = ""; $("#impid").value = ""; imsg("");
-  openEditor(Object.assign(blankState(), {name: r.alias, raw: r.yaml}), {id, isNew: true, pushed: false, saved: false, fixedId: true},
-    "Imported. Your script is kept exactly as written. " + (inHA ? "script." + id + " already exists in Home Assistant, so pushing replaces it." : "Pushing creates script." + id + " in Home Assistant.") + (takeover ? "" : " Nothing is in Home Assistant yet."));
+  let autoState = {};
+  const pickedAuto = $("#impauto").value;
+  if (pickedAuto) {
+    const ar = await api("facts/automation?id=" + encodeURIComponent(pickedAuto));
+    if (!ar.ok) { imsg(ar.error || "Could not load that automation.", "bad"); return; }
+    autoState = {autoRaw: ar.yaml, autoId: ar.id};
+  }
+  $("#importbox").hidden = true; $("#impyaml").value = ""; $("#impid").value = ""; $("#impauto").value = ""; imsg("");
+  openEditor(Object.assign(blankState(), {name: r.alias, raw: r.yaml}, autoState), {id, isNew: true, pushed: false, saved: false, fixedId: true},
+    "Imported. Your script" + (autoState.autoRaw ? " and its automation are" : " is") + " kept exactly as written. " + (inHA ? "script." + id + " already exists in Home Assistant, so pushing replaces it." : "Pushing creates script." + id + " in Home Assistant.") + (takeover ? "" : " Nothing is in Home Assistant yet."));
   markDirty();
 };
+
+/* ---------- your own automation ---------- */
+let AUTOS = null;
+async function loadAutos() {
+  if (AUTOS) return AUTOS;
+  const r = await api("facts/automations");
+  AUTOS = r && r.ok ? r.items : [];
+  return AUTOS;
+}
+function autoCard(n) {
+  const has = ownAuto(E);
+  const c = card(n, "Your own automation", "Optional. Keep an automation you already have, exactly as written. It is pushed with this script and replaces the schedule below.");
+  const sel = el("select", {style: "max-width:420px"}, el("option", {value: ""}, "Load one you already have..."));
+  loadAutos().then(L => L.forEach(a => sel.append(el("option", {value: a.id}, a.name + " (" + a.state + ")"))));
+  const ta = el("textarea", {class: "code", spellcheck: "false", style: "min-height:220px", placeholder: "alias: My fact schedule\ntriggers:\n  - trigger: time_pattern\n    minutes: \"/10\"\nactions:\n  - action: script.my_fact", value: E.autoRaw || ""});
+  const idin = el("input", {value: E.autoId || "", placeholder: "automation id (blank = new one)", style: "max-width:320px", autocomplete: "off"});
+  const note = el("p", {class: "msg"});
+  ta.oninput = () => { E.autoRaw = ta.value; changed(); };
+  idin.oninput = () => { E.autoId = idin.value.trim().toLowerCase(); changed(); };
+  const load = el("button", {class: "btn sm", onclick: async () => {
+    if (!sel.value) { note.className = "msg warn"; note.textContent = "Choose an automation first."; return; }
+    note.className = "msg"; note.textContent = "Loading...";
+    const r = await api("facts/automation?id=" + encodeURIComponent(sel.value));
+    if (!r.ok) { note.className = "msg bad"; note.textContent = r.error; return; }
+    ta.value = E.autoRaw = r.yaml; idin.value = E.autoId = r.id; changed();
+    note.className = "msg ok"; note.textContent = "Loaded. Pushing replaces it in Home Assistant (a copy of the old one is saved first).";
+  }}, "Load");
+  const clear = el("button", {class: "btn sm", onclick: () => { E.autoRaw = ""; E.autoId = ""; changed(); drawForm(); }}, "Remove it from this fact");
+  add(c, el("div", {class: "row"}, sel, load), el("label", {class: "l"}, "Automation YAML"), ta,
+    el("label", {class: "l"}, "Automation id"), idin,
+    el("p", {class: "help"}, "Leave the id blank to make a new automation, or load one so pushing updates that same automation."),
+    el("div", {class: "row", style: "margin-top:10px"}, has ? clear : null), note);
+  return c;
+}
 
 /* ---------- editor ---------- */
 const changed = () => { gen(); markDirty(); };
@@ -338,6 +391,8 @@ function drawForm() {
       say(r.ok ? "That is a valid script with " + (r.config.sequence || []).length + " top-level steps." : r.error, r.ok ? "ok" : "bad");
     }}, "Check YAML");
     f.append(card(2, "Your script", "Kept exactly as you wrote it. Edit the YAML here, then Save or Save and push.", t, el("div", {class: "row", style: "margin-top:10px"}, chk)));
+    f.append(autoCard(3));
+    gen();
     return;
   }
 
@@ -416,6 +471,7 @@ function drawForm() {
     if ((F.home_entities || []).length && !(A.home || []).length) add(c5, el("button", {class: "btn sm", style: "margin-top:6px", onclick: () => { A.home = [...F.home_entities]; changed(); drawForm(); }}, "Use my default presence list"));
   }
   f.append(c5);
+  f.append(autoCard(6));
   gen();
 }
 
@@ -448,7 +504,7 @@ function openEditor(state, c, note) {
   E = full(state);
   $("#msg").textContent = ""; $("#tres").replaceChildren();
   const n = $("#enote"); n.hidden = !note; if (note) n.firstElementChild.textContent = note;
-  $("#trycard").hidden = rawMode(); $("#ymldet").hidden = rawMode(); $("#autodet").hidden = rawMode();
+  $("#trycard").hidden = rawMode(); $("#ymldet").hidden = rawMode(); $("#autodet").hidden = rawMode() && !ownAuto(E);
   drawForm(); dirty = false; paintState(); showView("edit");
 }
 function openNew(over) { openEditor(Object.assign(blankState(), over || {}), {isNew: true}); }
@@ -471,12 +527,12 @@ async function persist(push) {
   const btns = [$("#save"), $("#push")]; btns.forEach(b => b.disabled = true);
   say(push ? "Pushing to Home Assistant..." : "Saving...");
   let r;
-  if (push) r = await fapi("push", {id: cur.id, yaml: makeYaml(s), auto_yaml: makeAuto(s, cur.id), state: s, new: cur.isNew && !cur.pushed});
+  if (push) r = await fapi("push", pushBody(s, cur.id, {new: cur.isNew && !cur.pushed}));
   else r = await fapi("library/save", {id: cur.id, name: s.name, state: s});
   btns.forEach(b => b.disabled = false);
   if (!r.ok) { say(r.detail || r.error || "That failed.", "bad"); if (!cur.saved && !cur.pushed && !cur.fixedId) cur.id = null; paintState(); return; }
   cur.saved = true; cur.isNew = false; if (push) cur.pushed = true; dirty = false; paintState();
-  const am = push ? (s.raw == null && s.auto.on ? " The schedule (" + autoSummary(s.auto) + ") is on." : r.auto === "removed" ? " The old schedule was removed." : "") : "";
+  const am = push ? (ownAuto(s) ? " Your automation is pushed exactly as written." : s.raw == null && s.auto.on ? " The schedule (" + autoSummary(s.auto) + ") is on." : r.auto === "removed" ? " The old schedule was removed." : "") : "";
   say(push ? "Done. script." + cur.id + " is up to date in Home Assistant." + am : "Saved. Home Assistant still has the previous version." + (cur.pushed ? " Push to update it." : ""), "ok");
 }
 $("#save").onclick = () => persist(false);
@@ -496,8 +552,9 @@ $("#newfact").onclick = () => openNew();
 function gen() {
   if (!E) return;
   $("#out").textContent = makeYaml(E);
+  $("#autodet").hidden = rawMode() && !ownAuto(E);
   const a = makeAuto(E, cur.id || fslug(E.name));
-  $("#autoout").textContent = a || (rawMode() ? "" : E.auto.on ? "Set a repeat time or an entity to watch to see the schedule." : "No schedule. Turn on \"Run it automatically\" to make one.");
+  $("#autoout").textContent = a || (rawMode() && !ownAuto(E) ? "" : E.auto.on ? "Set a repeat time or an entity to watch to see the schedule." : "No schedule. Turn on \"Run it automatically\" to make one.");
   const t = $("#topicshow"); if (t) t.textContent = topicOf(E);
   paintState();
 }
