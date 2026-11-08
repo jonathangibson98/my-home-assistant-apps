@@ -522,11 +522,27 @@ function defaultCard(s) {
   const base = (f.split("/").pop() || "").replace(/\.[^.]*$/, "");
   const key = isAsAuto(s) && s.style === "json" ? listKeyOf(s) : ((String(s.autoRaw || "").match(/\{\s*"(\w+)"\s*:/) || [])[1]) || "items";
   const list = (isAutoOnly(s) && /tojson/.test(s.autoRaw || "")) || (isAsAuto(s) && s.style === "json");
-  return {kind: list ? "list" : "text", show: defaultShow(s), secs: 8, height: 140, sensor: s.lastEntity || (base ? "sensor.read_" + base : "sensor.read_fact"), emoji: list ? "📋" : "🎱", title: s.name || "Fact", key};
+  return {kind: list ? "list" : "text", show: defaultShow(s), secs: 8, height: 140, itemH: 60, toggle: "", sensor: s.lastEntity || (base ? "sensor.read_" + base : "sensor.read_fact"), emoji: list ? "📋" : "🎱", title: s.name || "Fact", key};
 }
 const cardOf = s => Object.assign(defaultCard(s), s.card || {});
 const jq = t => String(t).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+/* the per-item field lines shared by the scrolling card */
+function showParts(c) {
+  const show = (c.show || []).map(x => ({key: String(x.key || "").replace(/[^A-Za-z0-9_]/g, ""), as: x.as})).filter(x => x.key && x.as !== "hide");
+  const keysOf = r => show.filter(x => x.as === r).map(x => "'" + x.key + "'").join(", ");
+  const roles = ["title", "text", "small"].filter(r => keysOf(r));
+  const sets = roles.flatMap(r => ["{% set n_" + r + " = namespace(l=[]) %}",
+    "{% for k in [" + keysOf(r) + "] %}{% set v = person.get(k) %}{% if v is not none and v != '' and not (k == 'year' and v == 0) %}{% set n_" + r + ".l = n_" + r + ".l + [((v | abs | string) ~ ' BC') if (k == 'year' and v is number and v < 0) else (v | string)] %}{% endif %}{% endfor %}"]);
+  const out = {title: "<div class=\"sc-title\">{{ n_title.l | join(', ') }}</div>", text: "<div class=\"sc-text\">{{ n_text.l | join(' · ') }}</div>", small: "<div class=\"sc-small\">{{ n_small.l | join(' · ') }}</div>"};
+  return {sets, lines: roles.map(r => out[r])};
+}
+/* wraps any card so it only shows while an input_boolean is on */
 function cardYaml(s) {
+  const c = cardOf(s), y = cardYamlBase(s), t = String(c.toggle || "").trim();
+  if (!/^input_boolean\.[a-z0-9_]+$/.test(t)) return y;
+  return "type: conditional\nconditions:\n  - condition: state\n    entity: " + t + "\n    state: 'on'\ncard:\n" + y.trimEnd().split("\n").map(l => l ? "  " + l : l).join("\n") + "\n";
+}
+function cardYamlBase(s) {
   const c = cardOf(s), L = [];
   const GLASS = [
     "ha-card {",
@@ -567,6 +583,28 @@ function cardYaml(s) {
       "  </div>", "  {% endif %}", "  {% endfor %}", "</div>");
     return "type: custom:html-template-card\ntitle: " + JSON.stringify((c.emoji ? c.emoji + " " : "") + c.title) + "\nignore_line_breaks: true\ncontent: |\n" + L.map(x => "  " + x).join("\n") + "\n";
   }
+  if (c.kind === "scroll") {
+    const key = String(c.key || "items").replace(/[^A-Za-z0-9_]/g, ""), secs = Math.max(1, +c.secs || 8), H = Math.max(120, +c.height || 400), itemH = Math.max(20, +c.itemH || 60), P = showParts(c);
+    L.push("{% set raw = (state_attr('" + jq(c.sensor) + "', 'content') or '') | replace('```json', '') | replace('```', '') | trim %}",
+      "{% set data = (raw | from_json(default={})) if raw[:1] in ['{', '['] else {} %}",
+      "{% set people = data.get('" + jq(key) + "', []) if data is mapping else (data if data is list else []) %}",
+      "{% set box_height = " + (H - 60) + " %}",
+      "{% set est = (people | length * " + itemH + ") if people else ((raw | length / 50) | round(0, 'ceil') * 24) %}",
+      "{% set needs_scroll = est > box_height %}",
+      "{% set duration = ([people | length, 1] | max * " + secs + ") if people else ([(raw | length / 12) | round(0, 'ceil'), 10] | max) %}",
+      "<style>", ...GLASS.map(x => "  " + x), "  height: " + H + "px !important;", "  overflow: hidden !important;", "}",
+      ".scroll-wrap { position: relative; height: {{ box_height }}px; overflow: hidden; padding: 0 16px; box-sizing: border-box; }",
+      ".scroll-content { width: 100%; font-size: 18px; line-height: 1.3; {% if needs_scroll %}position: absolute; top: 0; animation: scroll-up {{ duration }}s linear infinite;{% else %}position: static;{% endif %} }",
+      ".sc-item { margin-bottom: 14px; }", ".sc-title { font-weight: bold; }", ".sc-text { font-size: 16px; margin-top: 2px; }", ".sc-small { font-size: 13px; opacity: 0.65; margin-top: 2px; }",
+      "@keyframes scroll-up {", "  0%   { transform: translateY(0); }", "  5%   { transform: translateY(0); }", "  95%  { transform: translateY(-100%); }", "  100% { transform: translateY(-100%); }", "}",
+      "</style>",
+      "<div class=\"scroll-wrap\">", "  <div class=\"scroll-content\">",
+      "    {% if people %}", "    {% for person in people %}", "    {% if person is mapping %}",
+      ...P.sets.map(x => "    " + x), "    <div class=\"sc-item\">", ...P.lines.map(x => "      " + x), "    </div>",
+      "    {% endif %}", "    {% endfor %}", "    {% else %}", "    {{ (raw or 'Nothing loaded yet') | replace('\\n', '<br>') }}", "    {% endif %}",
+      "  </div>", "</div>");
+    return "type: custom:html-template-card\ntitle: " + JSON.stringify((c.emoji ? c.emoji + " " : "") + c.title) + "\nignore_line_breaks: true\ncontent: |\n" + L.map(x => "  " + x).join("\n") + "\n";
+  }
   const fb = ((c.emoji ? c.emoji + " " : "") + c.title.toUpperCase() + (c.emoji ? " " + c.emoji : "")).trim();
   L.push("{% set raw = (state_attr('" + jq(c.sensor) + "', 'content') or '') | trim %}",
     "{% set lines = raw.split('\\n') %}",
@@ -592,13 +630,13 @@ function dashCard(n) {
   const c = E.card, prev = el("textarea", {class: "code", readonly: true, spellcheck: "false", style: "min-height:150px"}), msg = el("p", {class: "msg"});
   const upd = () => { prev.value = cardYaml(E); };
   const inp = (label, k, ph, help) => { const i = el("input", {value: c[k] || "", placeholder: ph || "", autocomplete: "off", spellcheck: "false"}); i.oninput = () => { c[k] = i.value.trim() === i.value ? i.value : i.value; upd(); markDirty(); }; return [el("label", {class: "l"}, label), i, help ? el("p", {class: "help"}, help) : null]; };
-  const kind = el("select", {style: "max-width:320px"}, el("option", {value: "text"}, "Text card (one fact, title on top)"), el("option", {value: "list"}, "Rotating list (fades through a list)"));
+  const kind = el("select", {style: "max-width:320px"}, el("option", {value: "text"}, "Text card (one fact, title on top)"), el("option", {value: "list"}, "Rotating list (fades through a list)"), el("option", {value: "scroll"}, "Scrolling (scrolls a long list or text)"));
   kind.value = c.kind; kind.onchange = () => { c.kind = kind.value; drawOpts(); upd(); markDirty(); };
   const opts = el("div", {});
   const drawOpts = () => { opts.replaceChildren(); add(opts, inp("Sensor that reads the file", "sensor", "sensor.read_my_fact", "The file_reader sensor for this fact's file. It has to expose the text as a content attribute."),
     inp(c.kind === "list" ? "Card title" : "Fallback title", "title", "Random Fact", c.kind === "list" ? null : "Used when the file does not start with a # title line."), inp("Emoji", "emoji", "🎱"),
-    c.kind === "list" ? inp("List name in the JSON", "key", "birthdays", "The key that holds the list, for example birthdays.") : null,
-    c.kind === "list" ? listOpts() : null); };
+    c.kind !== "text" ? inp("List name in the JSON", "key", "birthdays", "The key that holds the list, for example birthdays.") : null,
+    c.kind !== "text" ? listOpts() : null); };
   const listOpts = () => {
     if (!Array.isArray(c.show)) c.show = defaultShow(E);
     const box = el("div", {}), roleOpts = [["title", "Title (bold)"], ["text", "Text"], ["small", "Small, dim"], ["hide", "Don't show"]];
@@ -615,12 +653,12 @@ function dashCard(n) {
       el("button", {class: "btn sm", onclick: () => { c.show = defaultShow(E); drawOpts(); upd(); markDirty(); }}, "Reset from this fact's fields")),
       el("p", {class: "help"}, "Type the field names from your items" + (names ? " (this fact has: " + names + ")" : "") + ". Fields with the same style are joined on one line."));
     const nm = (label, k, ph) => { const i = el("input", {type: "number", min: 1, value: c[k] || "", placeholder: ph, style: "max-width:140px"}); i.oninput = () => { c[k] = i.value === "" ? "" : +i.value; upd(); markDirty(); }; return [el("label", {class: "l"}, label), i]; };
-    add(box, nm("Seconds each item stays up", "secs", "8"), nm("Card height (px)", "height", "140"), el("p", {class: "help"}, "Make the card taller if long text is cut off."));
+    add(box, nm(c.kind === "scroll" ? "Scroll speed: seconds per item" : "Seconds each item stays up", "secs", "8"), nm("Card height (px)", "height", c.kind === "scroll" ? "400" : "140"), c.kind === "scroll" ? nm("Height of one item (px, used to decide if it needs to scroll)", "itemH", "60") : null, el("p", {class: "help"}, c.kind === "scroll" ? "It only scrolls when the items are taller than the card. If the file is plain text instead of a JSON list, the whole text scrolls." : "Make the card taller if long text is cut off."));
     return box;
   };
   drawOpts(); upd();
   const copy = el("button", {class: "btn primary", onclick: async () => { const ok = await copyText(prev.value); msg.className = "msg " + (ok ? "ok" : "warn"); msg.textContent = ok ? "Copied. In your dashboard, add a Manual card and paste." : "Your browser blocked copying. Tap the box above, select all, and copy."; if (!ok) { prev.removeAttribute("readonly"); prev.focus(); prev.select(); } }}, "Copy dashboard card");
-  return card(n, "Dashboard card", "Makes the glass-style card for this fact. Paste it into a Manual card on your dashboard.", el("label", {class: "l"}, "Style"), kind, opts, el("label", {class: "l"}, "Card YAML"), prev, el("div", {class: "row", style: "margin-top:10px"}, copy), msg);
+  return card(n, "Dashboard card", "Makes the glass-style card for this fact. Paste it into a Manual card on your dashboard.", el("label", {class: "l"}, "Style"), kind, el("label", {class: "l"}, "Show / hide switch (optional)"), picker(["input_boolean"], false, () => c.toggle ? [c.toggle] : [], a => { c.toggle = a[0] || ""; upd(); markDirty(); }), el("p", {class: "help"}, "Wraps the card so it only shows while this input_boolean is on, like your News and Music cards. Make it first under Settings > Devices & services > Helpers > Toggle."), opts, el("label", {class: "l"}, "Card YAML"), prev, el("div", {class: "row", style: "margin-top:10px"}, copy), msg);
 }
 async function copyCards(list, say2) {
   const ys = list.map(it => cardYaml(Object.assign({}, it.state || {}, {name: (it.state && it.state.name) || it.name})));
