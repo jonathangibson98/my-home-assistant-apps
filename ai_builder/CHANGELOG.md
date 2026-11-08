@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.10.2 - 2026-11-07
+
+- **Scrolling dashboard card.** A new card style that scrolls a long list (or plain text) upward, like a news roundup. It uses the same field picker as the rotating list (title, text, small), plus scroll speed, card height and item height. It only scrolls when the content is taller than the card
+- **Show / hide switch for any card.** Pick an `input_boolean` and the card (text, rotating or scrolling) is wrapped in a conditional card so it only shows while that switch is on. Works with Copy card and Copy all cards
+
 ## 2.10.1 - 2026-11-07
 
 - **Rotating list dashboard card: pick what it shows.** Each field of your items can be shown as a Title (bold), Text, Small (dim) or not at all, with seconds per item and card height. It starts from the fact's own fields (for example name and info) instead of the old birthdays-only layout
