@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.10.0 - 2026-11-07
+
+- **Facts are now ONE automation, not a script plus an automation.** A new fact is pushed as a single Home Assistant automation: its triggers (every N minutes or hours, when an entity changes, only when someone is home), then the steps that ask the AI and publish to MQTT. No script is created. With no schedule it has no triggers, and **Run now** starts it
+- **New format: A data list (JSON).** For lists like notable birthdays. Name the list (for example `birthdays`), say how many items, and add the fields each item has (text, number or yes / no). The automation reads the AI's JSON safely (code fences are stripped, a bad answer publishes nothing), drops items that fail an optional **Only keep items where** test, sorts them, trims to your count and publishes `{"birthdays": [...]}`
+- New presets **Daily birthdays (JSON list)** and **Blank list (JSON)**. The Helper can also suggest the JSON format and its fields
+- **Test** shows how many items came back and the JSON that would be published
+- Older facts made as a script plus a schedule keep working. Open one and tap **Switch to a single automation**, then push: the old script and its `_auto` schedule are removed (only ones this add-on made)
+- Deleting a single-automation fact removes its automation from Home Assistant (only if this add-on made it). Pushing over an automation this add-on made no longer saves a backup copy each time
+- Announcements are unchanged
+
 ## 2.9.0 - 2026-11-07
 
 - **Edit imported automations and scripts with fields, no YAML needed.** An imported automation now opens as cards: Settings, When it runs (every so often, at a time, when something changes and more), Only if, and What it does. The steps have their own fields: Ask the AI (task name, AI entity, instructions, answer name), Save to a file (path and what to save, with a Use my folder button) and Set variables. Add, remove and reorder anything. Imported scripts get the same editor

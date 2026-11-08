@@ -207,21 +207,21 @@ Only the Home Assistant ingress gateway can reach this add-on's web server, so o
 
 # Facts
 
-AI-written facts for a dashboard. Each fact is a Home Assistant script that asks your AI Task for one fact and saves it to a text file over MQTT (by default under `file_reader/overwrite/`). It works like Announcements: a library, an editor, a test panel and a helper. The AI Task, data sources and entity list are shared with Announcements.
+AI-written facts for a dashboard. Each fact is one Home Assistant automation (triggers, then the steps) that asks your AI Task for one fact and saves it to a text file over MQTT (by default under `file_reader/overwrite/`). It works like Announcements: a library, an editor, a test panel and a helper. The AI Task, data sources and entity list are shared with Announcements.
 
 ## My facts
 
 - **New fact** starts the editor. **Start from** has presets modeled on a random trivia fact, a dark history fact, a music fact (random artist, or titled "Artist ||| fact") and a city fact.
-- Each saved fact shows its status, its file, and whether its schedule is on. **Edit, Run now, Duplicate, Delete** work like Announcements. **Save** keeps changes here only, **Save and push** creates or updates the script (and schedule) in Home Assistant. The script id stays the same.
+- Each saved fact shows its status, its file, and whether its schedule is on. **Edit, Run now, Duplicate, Delete** work like Announcements. **Save** keeps changes here only, **Save and push** creates or updates the automation in Home Assistant. Its id stays the same. Facts made before 2.10.0 are a script plus a schedule automation; open one and tap **Switch to a single automation**, then push.
 - **Import my script** takes a script you wrote by hand and keeps it exactly as written.
 
 ## The editor
 
 1. **Name**, plus presets.
 2. **What it's about**: optional data sources (shared with Announcements), what the fact should be, and **random lists**. Each run picks one option from every list and tells the AI (for example `TOPIC FOR THIS RUN`). A random number is added so repeats are less likely.
-3. **How it reads**: just the fact, a title and the fact, or a short list; a heading line saved above it (can use `{{ fact_title }}` and your list names); length; language (clean, light, profanity as needed); rules (real and verifiable, go obscure, keep the household out, don't repeat the last fact); extra rules.
+3. **How it reads**: just the fact, a title and the fact, a short list, or a **data list (JSON)** (name the list, say how many items, add fields, optionally sort and drop items that fail a test, for example birthdays: `{"birthdays": [{"name": ..., "year": ...}]}`); a heading line saved above it (can use `{{ fact_title }}` and your list names); length; language (clean, light, profanity as needed); rules (real and verifiable, go obscure, keep the household out, don't repeat the last fact); extra rules.
 4. **Where it goes**: the file name, added to the MQTT topic prefix from Settings. A name with a slash is used as the full topic.
-5. **Run it automatically** (optional): every N minutes or hours, and/or when an entity or attribute changes, only when someone is home. This makes an automation named after the fact that calls the script. Turning it off and pushing removes that automation.
+5. **Run it automatically** (optional): every N minutes or hours, and/or when an entity or attribute changes, only when someone is home. These become the triggers and conditions of the fact's automation. With the schedule off the automation has no triggers and you start it with **Run now**.
 
 **Try it first** runs a temporary copy of the script and deletes it: **Preview what it picks** (no AI call), **Test, don't publish**, **Test and publish**.
 

@@ -1577,12 +1577,15 @@ async def fact_helper(request):
         "To keep the facts varied, the script can pick random values from lists before asking. Each list has a short name made of "
         "lowercase letters and underscores (for example topic, angle, genre, decade) and 6 to 20 items. The AI is told each pick for the run.\n"
         "Output styles: \"plain\" (just the fact), \"titled\" (a title plus the fact, e.g. the artist name and a fact about them), "
-        "\"list\" (several short lines).\n"
+        "\"list\" (several short lines), \"json\" (a data list of many items with named fields, for example today's notable birthdays with name, year and what they are known for; "
+        "use it only when the user wants many items kept as structured data).\n"
         "Reply with ONLY JSON, no code fences: {\"name\": \"short script name\", \"task\": \"clear instructions for the fact writer, "
         "1-5 sentences\", \"picks\": [{\"name\": \"topic\", \"items\": [\"...\"]}], \"style\": \"plain|titled|list\", "
         "\"title_hint\": \"what the title should be, only for titled\", \"heading\": \"optional heading line shown above the fact, "
         "may use {{ fact_title }} for titled\", \"file\": \"suggested_file_name.txt\", \"sources\": [\"ids of data sources needed, usually none\"], "
-        "\"length\": 180}" % ("; ".join("%s: %s" % (x["id"], x.get("label", "")) for x in srcs) or "none", idea))
+        "\"length\": 180, \"list_key\": \"only for json: name of the list, e.g. birthdays\", \"count\": 10, "
+        "\"fields\": [{\"key\": \"lowercase_name\", \"hint\": \"what it holds\", \"type\": \"text|number|yesno\"}] (only for json), "
+        "\"sort_by\": \"field name or empty\", \"sort_dir\": \"asc|desc\", \"uses_date\": false (true when the list depends on today's date)}" % ("; ".join("%s: %s" % (x["id"], x.get("label", "")) for x in srcs) or "none", idea))
     j, err = await ann_ai_json(request.app, ai, "Fact helper", prompt)
     if err:
         return web.json_response({"ok": False, "error": err})
@@ -1593,7 +1596,19 @@ async def fact_helper(request):
             items = [str(i).strip()[:120] for i in (p.get("items") or []) if str(i).strip()][:40]
             if items:
                 picks.append({"name": p["name"], "items": "\n".join(items)})
-    style = j.get("style") if j.get("style") in ("plain", "titled", "list") else "plain"
+    style = j.get("style") if j.get("style") in ("plain", "titled", "list", "json") else "plain"
+    fields = []
+    for f in (j.get("fields") or [])[:14]:
+        if isinstance(f, dict):
+            k = re.sub(r"[^a-z0-9_]+", "_", str(f.get("key") or "").lower()).strip("_")[:30]
+            if k and all(k != x["key"] for x in fields):
+                fields.append({"key": k, "hint": str(f.get("hint") or "")[:120], "type": f.get("type") if f.get("type") in ("text", "number", "yesno") else "text"})
+    list_key = re.sub(r"[^a-z0-9_]+", "_", str(j.get("list_key") or "").lower()).strip("_")[:30] or "items"
+    try:
+        count = max(1, min(200, int(j.get("count") or 10)))
+    except (TypeError, ValueError):
+        count = 10
+    sort_by = ",".join(x for x in (t.strip() for t in str(j.get("sort_by") or "").split(",")) if any(x == f["key"] for f in fields))
     fname = re.sub(r"[^A-Za-z0-9_\-.]", "", str(j.get("file") or ""))[:60]
     try:
         length = max(40, min(2000, int(j.get("length") or 180)))
@@ -1602,7 +1617,15 @@ async def fact_helper(request):
     return web.json_response({
         "ok": True, "name": str(j.get("name") or "")[:60], "task": str(j.get("task") or "")[:1500], "picks": picks,
         "style": style, "title_hint": str(j.get("title_hint") or "")[:200], "heading": str(j.get("heading") or "")[:200],
-        "file": fname, "length": length, "sources": [i for i in (j.get("sources") or []) if i in ids]})
+        "file": fname, "length": length, "sources": [i for i in (j.get("sources") or []) if i in ids],
+        "list_key": list_key, "count": count, "fields": fields if style == "json" else [], "sort_by": sort_by,
+        "sort_dir": "asc" if j.get("sort_dir") == "asc" else "desc", "uses_date": bool(j.get("uses_date"))})
+
+
+def fact_is_auto(state):
+    """A fact that lives as one automation (an imported one, or a generated one made with 'asAuto')."""
+    st = state if isinstance(state, dict) else {}
+    return bool(st.get("autoOnly") or (st.get("asAuto") and st.get("raw") is None))
 
 
 def fact_has_mark(cfg):
@@ -1776,19 +1799,33 @@ async def fact_push_auto(app, body, aid):
     if bad:
         return web.json_response({"ok": False, "detail": bad})
     code, old = await ha(app, "GET", f"/config/automation/config/{aid}", timeout=10)
-    if code == 200 and isinstance(old, dict) and old != acfg:
+    if code == 200 and isinstance(old, dict) and old != acfg and not fact_has_mark(old):
         fact_backup_automation(aid, old)
     code, text = await ha_text(app, "POST", f"/config/automation/config/{aid}", acfg)
     if code != 200:
         return web.json_response({"ok": False, "detail": "HA said %s: %s" % (code, str(text)[:300])})
     await ha_text(app, "POST", "/services/automation/reload", {})
+    cleaned = False
+    if body.get("cleanup_script"):  # a fact that used to be a script + schedule automation is now this one automation
+        code, oldscript = await ha(app, "GET", f"/config/script/config/{aid}", timeout=10)
+        if code == 200 and fact_has_mark(oldscript):
+            code, _t = await ha_text(app, "DELETE", f"/config/script/config/{aid}")
+            if code == 200:
+                await ha_text(app, "POST", "/services/script/reload", {})
+                cleaned = True
+        code, oldauto = await ha(app, "GET", f"/config/automation/config/{aid + FACT_AUTO_SUFFIX}", timeout=10)
+        if code == 200 and fact_has_mark(oldauto):
+            code, _t = await ha_text(app, "DELETE", f"/config/automation/config/{aid + FACT_AUTO_SUFFIX}")
+            if code == 200:
+                await ha_text(app, "POST", "/services/automation/reload", {})
+                cleaned = True
     name = str(acfg.get("alias") or aid)
     if body.get("new"):
         add_history({"kind": "fact", "name": name, "entity": "automation." + aid})
     state = clean_ann_state(body.get("state"))
     if state is not None or aid in fact_library():
         fact_store(aid, name, state, pushed=True)
-    return web.json_response({"ok": True, "entity": "automation." + aid, "auto": "pushed"})
+    return web.json_response({"ok": True, "entity": "automation." + aid, "auto": "pushed", "cleaned": cleaned})
 
 
 async def fact_import_auto(request):
@@ -1858,7 +1895,7 @@ async def fact_library_list(request):
     for i, v in lib.items():
         own_id = str(((v.get("state") or {}).get("autoId")) or "")
         a = autos.get(own_id if ANN_ID_RE.match(own_id) else i + FACT_AUTO_SUFFIX)
-        if (v.get("state") or {}).get("autoOnly"):
+        if fact_is_auto(v.get("state")):
             a = autos.get(i)
             items.append({**v, "in_ha": a is not None, "last_run": ((a or {}).get("attributes") or {}).get("last_triggered"),
                           "auto_in_ha": a is not None, "auto_on": bool(a) and a.get("state") == "on"})
@@ -1885,10 +1922,24 @@ async def fact_library_delete(request):
     aid = sid + FACT_AUTO_SUFFIX
     lib = fact_library()
     removed = False
-    if (lib.get(sid, {}).get("state") or {}).get("autoOnly"):  # your own automation: only forget it here
+    st_ = lib.get(sid, {}).get("state") or {}
+    if st_.get("autoOnly"):  # your own automation: only forget it here
         lib.pop(sid, None)
         save_json(FACTS_LIB, lib)
         return web.json_response({"ok": True, "script_deleted": False})
+    if fact_is_auto(st_):  # a generated fact that is one automation: remove it from HA only if this tool made it
+        removed = False
+        if body.get("delete_script"):
+            code, old = await ha(app, "GET", f"/config/automation/config/{sid}", timeout=10)
+            if code == 200 and fact_has_mark(old):
+                code, text = await ha_text(app, "DELETE", f"/config/automation/config/{sid}")
+                if code != 200:
+                    return web.json_response({"ok": False, "error": "HA said %s: %s" % (code, str(text)[:300])})
+                await ha_text(app, "POST", "/services/automation/reload", {})
+                removed = True
+        lib.pop(sid, None)
+        save_json(FACTS_LIB, lib)
+        return web.json_response({"ok": True, "script_deleted": removed})
     if body.get("delete_script"):
         code, cfg = await ha(app, "GET", f"/config/script/config/{sid}", timeout=10)
         if sid not in lib and not (code == 200 and fact_has_mark(cfg)):
