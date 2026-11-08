@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.10.3 - 2026-11-07
+
+- **Scrolling is now a checkbox, not a style.** Style is back to Text or Rotating list, with **Scroll when it doesn't fit the box** underneath. On a rotating list, each item still fades in and out, and an item taller than the card scrolls while it is showing. On a text card, long text scrolls instead of shrinking. A "characters that fit on one line" setting tunes when it kicks in
+- The separate Scrolling style from 2.10.2 is removed; a card saved with it becomes a rotating list with scrolling on. The show / hide switch is unchanged
+
 ## 2.10.2 - 2026-11-07
 
 - **Scrolling dashboard card.** A new card style that scrolls a long list (or plain text) upward, like a news roundup. It uses the same field picker as the rotating list (title, text, small), plus scroll speed, card height and item height. It only scrolls when the content is taller than the card
