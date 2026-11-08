@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.9.0 - 2026-11-07
+
+- **Edit imported automations and scripts with fields, no YAML needed.** An imported automation now opens as cards: Settings, When it runs (every so often, at a time, when something changes and more), Only if, and What it does. The steps have their own fields: Ask the AI (task name, AI entity, instructions, answer name), Save to a file (path and what to save, with a Use my folder button) and Set variables. Add, remove and reorder anything. Imported scripts get the same editor
+- Anything without a field (for example `to: null` on a trigger, or an `if` step) stays in a **More settings** YAML box on that item, so nothing is lost
+- A **Full YAML (advanced)** box stays below, and the fields and the YAML always match. Editing with the fields tidies the YAML layout, and what it does stays the same
+- **Copy dashboard card.** Every fact has a Dashboard card section and a **Copy card** button in the list, and **Copy all cards** makes one vertical stack. It writes the glass-style card (title from the first `#` line, font size by length) for the sensor that reads the fact's file. A Rotating list style fades through a JSON list, like birthdays. The sensor defaults to `sensor.read_<file name>` and you can change it
+- Ships its own copy of js-yaml (MIT licence) so the fields work without internet
+
 ## 2.8.0 - 2026-11-07
 
 - **Import a whole automation as a fact.** Import my script now also takes an automation that does everything itself (asks the AI, then saves the result), like a daily birthdays automation. Paste the YAML (a single automation, a `- id:` item from `automations.yaml`, or one under `automation:`), or leave the box empty and pick one from the **Automation** dropdown. It is kept exactly as written and you edit the YAML in the editor

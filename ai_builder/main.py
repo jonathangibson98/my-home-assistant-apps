@@ -2129,6 +2129,8 @@ def main():
         web.get("/announcements.js", asset("announcements.js", "application/javascript")),
         web.get("/sources.js", asset("sources.js", "application/javascript")),
         web.get("/facts.js", asset("facts.js", "application/javascript")),
+        web.get("/autoform.js", asset("autoform.js", "application/javascript")),
+        web.get("/js-yaml.min.js", asset("js-yaml.min.js", "application/javascript")),
         web.get("/api/status", status),
         web.get("/api/targets", targets),
         web.get("/api/mine", mine),
