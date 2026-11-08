@@ -506,12 +506,23 @@ async function copyText(t) {
   let ok = false; try { ok = document.execCommand("copy"); } catch (e) { /* ignore */ }
   ta.remove(); return ok;
 }
+/* which fields of each item the rotating card shows, and how: title (bold), text, small (dim) or hide */
+function defaultShow(s) {
+  if (isAsAuto(s) && s.style === "json") {
+    let first = true;
+    return fieldList(s).filter(f => f.type === "text" || f.key === "year").map(f => {
+      if (f.key === "year") return {key: f.key, as: "title"};
+      const as = first ? "title" : "text"; first = false; return {key: f.key, as};
+    });
+  }
+  return [{key: "name", as: "title"}, {key: "year", as: "title"}, {key: "known_for", as: "text"}, {key: "reason", as: "small"}];
+}
 function defaultCard(s) {
   const f = isAutoOnly(s) ? ((topicsIn(s.autoRaw)[0] || {}).val || "") : fileOf(s);
   const base = (f.split("/").pop() || "").replace(/\.[^.]*$/, "");
   const key = isAsAuto(s) && s.style === "json" ? listKeyOf(s) : ((String(s.autoRaw || "").match(/\{\s*"(\w+)"\s*:/) || [])[1]) || "items";
   const list = (isAutoOnly(s) && /tojson/.test(s.autoRaw || "")) || (isAsAuto(s) && s.style === "json");
-  return {kind: list ? "list" : "text", sensor: s.lastEntity || (base ? "sensor.read_" + base : "sensor.read_fact"), emoji: list ? "📋" : "🎱", title: s.name || "Fact", key};
+  return {kind: list ? "list" : "text", show: defaultShow(s), secs: 8, height: 140, sensor: s.lastEntity || (base ? "sensor.read_" + base : "sensor.read_fact"), emoji: list ? "📋" : "🎱", title: s.name || "Fact", key};
 }
 const cardOf = s => Object.assign(defaultCard(s), s.card || {});
 const jq = t => String(t).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
@@ -527,24 +538,33 @@ function cardYaml(s) {
     "  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.3) !important;",
     "  color: rgba(255,255,255,0.9);"];
   if (c.kind === "list") {
-    const key = c.key || "items";
+    const key = String(c.key || "items").replace(/[^A-Za-z0-9_]/g, ""), secs = Math.max(2, +c.secs || 8), H = Math.max(80, +c.height || 140);
+    const show = (c.show || []).map(x => ({key: String(x.key || "").replace(/[^A-Za-z0-9_]/g, ""), as: x.as})).filter(x => x.key && x.as !== "hide");
+    const keysOf = r => show.filter(x => x.as === r).map(x => "'" + x.key + "'").join(", ");
+    const roles = ["title", "text", "small"].filter(r => keysOf(r));
+    const part = r => [
+      "      {% set n_" + r + " = namespace(l=[]) %}",
+      "      {% for k in [" + keysOf(r) + "] %}{% set v = person.get(k) %}{% if v is not none and v != '' and not (k == 'year' and v == 0) %}{% set n_" + r + ".l = n_" + r + ".l + [((v | abs | string) ~ ' BC') if (k == 'year' and v is number and v < 0) else (v | string)] %}{% endif %}{% endfor %}"];
+    const out = {title: "      <b>{{ n_title.l | join(', ') }}</b>", text: "      <div class=\"fx-text\">{{ n_text.l | join(' · ') }}</div>", small: "      <div class=\"fx-reason\">{{ n_small.l | join(' · ') }}</div>"};
     L.push("{% set raw = (state_attr('" + jq(c.sensor) + "', 'content') or '') | replace('```json', '') | replace('```', '') | trim %}",
-      "{% set data = raw | from_json if raw else {'" + jq(key) + "': []} %}",
-      "{% set people = data." + key + " | default([]) %}",
+      "{% set data = (raw | from_json(default={})) if raw else {} %}",
+      "{% set people = data.get('" + jq(key) + "', []) if data is mapping else (data if data is list else []) %}",
       "{% set count = [people | length, 1] | max %}",
-      "{% set seconds_per_person = 8 %}", "{% set total_duration = count * seconds_per_person %}", "{% set pct_per_person = 100 / count %}",
-      "<style>", ...GLASS.map(x => "  " + x), "  height: 140px !important;", "  overflow: hidden !important;", "}",
-      ".fx-wrap { position: relative; height: 80px; overflow: hidden; padding: 0 16px; box-sizing: border-box; }",
-      ".fx-item { position: absolute; top: 0; left: 16px; right: 16px; font-size: 18px; opacity: 0; animation: fx-cycle {{ total_duration }}s infinite; }",
+      "{% set seconds_per_item = " + secs + " %}", "{% set total_duration = count * seconds_per_item %}", "{% set pct_per_item = 100 / count %}",
+      "<style>", ...GLASS.map(x => "  " + x), "  height: " + H + "px !important;", "  overflow: hidden !important;", "}",
+      ".fx-wrap { position: relative; height: " + (H - 60) + "px; overflow: hidden; padding: 0 16px; box-sizing: border-box; }",
+      ".fx-item { position: absolute; top: 0; left: 16px; right: 16px; font-size: 18px; line-height: 1.3; opacity: 0; animation: fx-cycle {{ total_duration }}s infinite; }",
+      ".fx-text { font-size: 15px; margin-top: 2px; }",
       ".fx-reason { font-size: 13px; opacity: 0.7; margin-top: 2px; }",
-      "@keyframes fx-cycle {", "  0%, 100% { opacity: 0; }", "  2% { opacity: 1; }", "  {{ (pct_per_person - 2) | round(2) }}% { opacity: 1; }", "  {{ pct_per_person | round(2) }}% { opacity: 0; }", "}",
+      "@keyframes fx-cycle {", "  0%, 100% { opacity: 0; }", "  2% { opacity: 1; }", "  {{ (pct_per_item - 2) | round(2) }}% { opacity: 1; }", "  {{ pct_per_item | round(2) }}% { opacity: 0; }", "}",
       "</style>",
       "<div class=\"fx-wrap\">", "  {% if people | length == 0 %}<div style=\"font-size:18px;\">Nothing loaded yet</div>{% endif %}",
       "  {% for person in people %}",
-      "  <div class=\"fx-item\" style=\"animation-delay: -{{ ((count - loop.index0) * seconds_per_person) % total_duration }}s;\">",
-      "    {{ '⭐ ' if person.rel else '' }}<b>{{ person.name }}</b>{% if person.year is defined %}, {% if person.year < 0 %}{{ person.year | abs }} BC{% elif person.year == 0 %}year unknown{% else %}{{ person.year }}{% endif %}{% endif %}{% if person.known_for is defined %}, {{ person.known_for }}{% endif %}",
-      "    {% if person.reason %}<div class=\"fx-reason\">{{ person.reason }}</div>{% endif %}",
-      "  </div>", "  {% endfor %}", "</div>");
+      "  {% if person is mapping %}",
+      ...roles.flatMap(part).map(x => x.replace(/^      /, "    ")),
+      "  <div class=\"fx-item\" style=\"animation-delay: -{{ ((count - loop.index0) * seconds_per_item) % total_duration }}s;\">",
+      ...roles.map(r => out[r].replace(/^      /, "    ")),
+      "  </div>", "  {% endif %}", "  {% endfor %}", "</div>");
     return "type: custom:html-template-card\ntitle: " + JSON.stringify((c.emoji ? c.emoji + " " : "") + c.title) + "\nignore_line_breaks: true\ncontent: |\n" + L.map(x => "  " + x).join("\n") + "\n";
   }
   const fb = ((c.emoji ? c.emoji + " " : "") + c.title.toUpperCase() + (c.emoji ? " " + c.emoji : "")).trim();
@@ -577,7 +597,27 @@ function dashCard(n) {
   const opts = el("div", {});
   const drawOpts = () => { opts.replaceChildren(); add(opts, inp("Sensor that reads the file", "sensor", "sensor.read_my_fact", "The file_reader sensor for this fact's file. It has to expose the text as a content attribute."),
     inp(c.kind === "list" ? "Card title" : "Fallback title", "title", "Random Fact", c.kind === "list" ? null : "Used when the file does not start with a # title line."), inp("Emoji", "emoji", "🎱"),
-    c.kind === "list" ? inp("List name in the JSON", "key", "birthdays", "The key that holds the list, for example birthdays.") : null); };
+    c.kind === "list" ? inp("List name in the JSON", "key", "birthdays", "The key that holds the list, for example birthdays.") : null,
+    c.kind === "list" ? listOpts() : null); };
+  const listOpts = () => {
+    if (!Array.isArray(c.show)) c.show = defaultShow(E);
+    const box = el("div", {}), roleOpts = [["title", "Title (bold)"], ["text", "Text"], ["small", "Small, dim"], ["hide", "Don't show"]];
+    box.append(el("label", {class: "l"}, "What to show for each item"));
+    c.show.forEach((x, i) => {
+      const k = el("input", {value: x.key, placeholder: "field name", autocomplete: "off", spellcheck: "false", style: "flex:1 1 120px;min-width:0"});
+      const r = el("select", {style: "flex:0 0 auto;width:auto"}, roleOpts.map(([v, t]) => el("option", {value: v}, t))); r.value = x.as || "text";
+      k.oninput = () => { x.key = k.value.trim(); upd(); markDirty(); }; r.onchange = () => { x.as = r.value; upd(); markDirty(); };
+      const rm = el("button", {class: "btn danger sm"}, "Remove"); confirmTap(rm, "Tap again", () => { c.show.splice(i, 1); drawOpts(); upd(); markDirty(); });
+      box.append(el("div", {class: "inline", style: "flex-wrap:wrap;gap:6px;margin-bottom:8px"}, k, r, rm));
+    });
+    const names = isAsAuto(E) && E.style === "json" ? fieldList(E).map(f => f.key).join(", ") : "";
+    box.append(el("div", {class: "row"}, el("button", {class: "btn sm", onclick: () => { c.show.push({key: "", as: "text"}); drawOpts(); }}, "Add a field"),
+      el("button", {class: "btn sm", onclick: () => { c.show = defaultShow(E); drawOpts(); upd(); markDirty(); }}, "Reset from this fact's fields")),
+      el("p", {class: "help"}, "Type the field names from your items" + (names ? " (this fact has: " + names + ")" : "") + ". Fields with the same style are joined on one line."));
+    const nm = (label, k, ph) => { const i = el("input", {type: "number", min: 1, value: c[k] || "", placeholder: ph, style: "max-width:140px"}); i.oninput = () => { c[k] = i.value === "" ? "" : +i.value; upd(); markDirty(); }; return [el("label", {class: "l"}, label), i]; };
+    add(box, nm("Seconds each item stays up", "secs", "8"), nm("Card height (px)", "height", "140"), el("p", {class: "help"}, "Make the card taller if long text is cut off."));
+    return box;
+  };
   drawOpts(); upd();
   const copy = el("button", {class: "btn primary", onclick: async () => { const ok = await copyText(prev.value); msg.className = "msg " + (ok ? "ok" : "warn"); msg.textContent = ok ? "Copied. In your dashboard, add a Manual card and paste." : "Your browser blocked copying. Tap the box above, select all, and copy."; if (!ok) { prev.removeAttribute("readonly"); prev.focus(); prev.select(); } }}, "Copy dashboard card");
   return card(n, "Dashboard card", "Makes the glass-style card for this fact. Paste it into a Manual card on your dashboard.", el("label", {class: "l"}, "Style"), kind, opts, el("label", {class: "l"}, "Card YAML"), prev, el("div", {class: "row", style: "margin-top:10px"}, copy), msg);
