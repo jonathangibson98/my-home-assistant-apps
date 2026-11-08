@@ -118,6 +118,7 @@ const autoSummary = a => {
   if (a.watch) p.push("when " + a.watch + " changes");
   return p.join(" and ") || "no trigger set";
 };
+const F_PREFIX = () => { const p = F.mqtt_prefix || ""; return p && !p.endsWith("/") ? p + "/" : p; };
 const isAutoOnly = s => !!(s && s.autoOnly);
 const ownAuto = s => !!String((s && s.autoRaw) || "").trim();
 function makeAuto(s0, sid) {
@@ -223,7 +224,7 @@ function libCard(it) {
     el("div", {class: "top"}, el("div", {style: "min-width:0"}, el("h3", {}, it.name || it.id), el("div", {class: "dim small mono"}, (isAutoOnly(st) ? "automation id: " : "script.") + it.id)), el("span", {class: "pill " + status[0]}, status[1])),
     el("div", {class: "clamp"}, isAutoOnly(st) ? "Your own automation, kept exactly as you wrote it." : raw ? "Your own script, kept exactly as you wrote it." : (st.task || "No instructions yet.")),
     el("div", {class: "meta"}, pills),
-    el("div", {class: "acts"}, el("button", {class: "btn primary sm", onclick: () => openItem(it)}, "Edit"), run, dup, del), msg);
+    el("div", {class: "acts"}, el("button", {class: "btn primary sm", onclick: () => openItem(it)}, "Edit"), run, el("button", {class: "btn sm", title: "Copy a dashboard card for this fact", onclick: () => copyCards([it], (t, c) => { msg.className = "msg " + (c || ""); msg.textContent = t; })}, "Copy card"), dup, del), msg);
 }
 async function removeFact(id, alsoScript) {
   const r = await fapi("library/delete", {id, delete_script: !!alsoScript});
@@ -319,6 +320,7 @@ async function importAutoOnly(b) {
     "Imported. Your automation is kept exactly as written. " + (takeover ? "It matches an automation you already have in Home Assistant, so pushing replaces it (a copy of the old one is saved first)." : "Pushing creates it as a new automation in Home Assistant."));
   markDirty();
 }
+$("#copyall").onclick = () => copyCards(LIB, (t, c) => { const m = $("#libmsg"); m.className = "msg " + (c || ""); m.textContent = t; });
 $("#impgo").onclick = async () => {
   const b = $("#impgo"), typed = $("#impid").value.trim();
   if ((!$("#impyaml").value.trim() && $("#impauto").value) || looksAuto($("#impyaml").value)) { await importAutoOnly(b); return; }
@@ -377,41 +379,135 @@ function autoCard(n) {
   return c;
 }
 
-const TOPIC_RE = /^([ \t-]*topic:[ \t]*)(.+?)[ \t]*$/gm;
-const topicsIn = y => [...String(y || "").matchAll(TOPIC_RE)].map(m => ({line: m[0], pre: m[1], raw: m[2], val: m[2].replace(/^(['"])(.*)\1$/, "$2")}));
-function setTopic(y, i, val) {
-  let n = -1;
-  return String(y).replace(TOPIC_RE, (m, pre, raw) => { n++; if (n !== i) return m; const q = /^['"]/.test(raw) ? raw[0] : ""; return pre + q + val + q; });
-}
-function autoOnlyCard(n) {
-  const c = card(n, "Your automation", "Kept exactly as you wrote it, including its AI request and where it saves. Edit the YAML here, then Save or Save and push.");
-  const ta = el("textarea", {class: "code", spellcheck: "false", style: "min-height:460px", value: E.autoRaw || ""});
-  const tp = el("div", {});
-  const drawTopics = () => {
-    tp.replaceChildren();
-    const T = topicsIn(E.autoRaw);
-    if (!T.length) return;
-    tp.append(el("label", {class: "l"}, T.length > 1 ? "Files it saves to" : "File it saves to"));
-    T.forEach((t, i) => {
-      const inp = el("input", {value: t.val, style: "max-width:420px", spellcheck: "false", autocomplete: "off"});
-      inp.onchange = () => { const v = inp.value.trim(); if (!/^[A-Za-z0-9_\-./]+$/.test(v)) { say("The file path can only use letters, numbers, underscores, dashes, dots and slashes.", "warn"); inp.value = t.val; return; } E.autoRaw = setTopic(E.autoRaw, i, v); ta.value = E.autoRaw; changed(); drawTopics(); };
-      const row = el("div", {class: "inline", style: "margin-top:6px"}, inp);
-      let pre = F.mqtt_prefix || ""; if (pre && !pre.endsWith("/")) pre += "/";
-      const target = pre + t.val.split("/").pop();
-      if (pre && t.val !== target) row.append(el("button", {class: "btn sm", title: "Use " + target, onclick: () => { E.autoRaw = setTopic(E.autoRaw, i, target); ta.value = E.autoRaw; changed(); drawTopics(); }}, "Use my folder"));
-      tp.append(row);
-    });
-    tp.append(el("p", {class: "help"}, "Your folder is " + (F.mqtt_prefix || "not set") + (F.prefix_locked ? " (set in the add-on Configuration tab)." : " (Facts > Settings, or the add-on Configuration tab).")));
+/* ---------- visual editor for your own automation or script ---------- */
+let FORMCTX = null;
+/* field: which part of the state holds the YAML ("autoRaw" or "raw"); script: true for a script (steps only) */
+function formCards(n, field, script) {
+  let A = AF.Y.parse(E[field] || "");
+  const holder = el("div", {class: "stack"});
+  const msg = el("p", {class: "msg"});
+  const ta = el("textarea", {class: "code", spellcheck: "false", style: "min-height:440px", value: E[field] || ""});
+  const ctx = {
+    commit() { E[field] = AF.Y.dump(A); ta.value = E[field]; changed(); },
+    redraw() { draw(); },
+    setAlias(v) { if (!A) { E[field] = setAlias(E[field], v); ta.value = E[field]; changed(); return; } A.alias = v; this.commit(); },
   };
-  ta.oninput = () => { E.autoRaw = ta.value; const a = getAlias(ta.value); if (a) { E.name = a; $("#form input").value = a; } changed(); };
+  const draw = () => {
+    holder.replaceChildren();
+    if (!A) { holder.append(el("p", {class: "msg bad"}, "The YAML below could not be read, so the fields are hidden. Fix it and tap outside the box.")); return; }
+    AF.cards(A, ctx, n, {script}).forEach(c => holder.append(c));
+  };
+  ta.oninput = () => { E[field] = ta.value; const a = getAlias(ta.value); if (a) { E.name = a; const ni = $("#form input"); if (ni) ni.value = a; } changed(); };
+  ta.onchange = () => {
+    const o = AF.Y.parse(ta.value), w = o ? "" : AF.Y.why(ta.value) || "That needs to be key: value lines.";
+    if (!o) { A = null; msg.className = "msg bad"; msg.textContent = w; draw(); return; }
+    A = o; msg.className = "msg ok"; msg.textContent = "Read. The fields above now match this YAML."; draw();
+  };
   const chk = el("button", {class: "btn sm", onclick: async () => {
-    say("Checking..."); const r = await api("facts/import_auto", {yaml: E.autoRaw});
-    say(r.ok ? "That is a valid automation." : r.error, r.ok ? "ok" : "bad");
-    if (r.ok) drawTopics();
+    say("Checking...");
+    const r = script ? await api("ann/import", {yaml: E[field]}) : await api("facts/import_auto", {yaml: E[field]});
+    say(r.ok ? "That is a valid " + (script ? "script." : "automation.") : r.error, r.ok ? "ok" : "bad");
   }}, "Check YAML");
-  add(c, ta, el("div", {class: "row", style: "margin-top:10px"}, chk), tp);
-  drawTopics();
-  return c;
+  FORMCTX = ctx;
+  draw();
+  const adv = el("details", {class: "card"}, el("summary", {}, el("b", {}, "Full YAML (advanced)")),
+    el("p", {class: "help", style: "margin:8px 0"}, "The same thing as the fields above. Edit either one. Changes made with the fields tidy up how the YAML is laid out, and what it does stays the same."),
+    ta, el("div", {class: "row", style: "margin-top:10px"}, chk), msg);
+  return [holder, adv];
+}
+function autoOnlyCard(n) { return formCards(n, "autoRaw", false); }
+
+const TOPIC_RE = /^([ \t-]*topic:[ \t]*)(.+?)[ \t]*$/gm;
+const topicsIn = y => [...String(y || "").matchAll(TOPIC_RE)].map(m => ({val: m[2].replace(/^(['"])(.*)\1$/, "$2")}));
+
+/* ---------- dashboard card ---------- */
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); return true; } catch (e) { /* the app's frame may block the clipboard */ }
+  const ta = el("textarea", {style: "position:fixed;top:0;left:0;opacity:0"}); ta.value = t; document.body.append(ta); ta.focus(); ta.select();
+  try { ta.setSelectionRange(0, t.length); } catch (e) { /* ignore */ }
+  let ok = false; try { ok = document.execCommand("copy"); } catch (e) { /* ignore */ }
+  ta.remove(); return ok;
+}
+function defaultCard(s) {
+  const f = isAutoOnly(s) ? ((topicsIn(s.autoRaw)[0] || {}).val || "") : fileOf(s);
+  const base = (f.split("/").pop() || "").replace(/\.[^.]*$/, "");
+  const key = ((String(s.autoRaw || "").match(/\{\s*"(\w+)"\s*:/) || [])[1]) || "items";
+  const list = isAutoOnly(s) && /tojson/.test(s.autoRaw || "");
+  return {kind: list ? "list" : "text", sensor: s.lastEntity || (base ? "sensor.read_" + base : "sensor.read_fact"), emoji: list ? "📋" : "🎱", title: s.name || "Fact", key};
+}
+const cardOf = s => Object.assign(defaultCard(s), s.card || {});
+const jq = t => String(t).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+function cardYaml(s) {
+  const c = cardOf(s), L = [];
+  const GLASS = [
+    "ha-card {",
+    "  background: rgba(255, 255, 255, 0.06) !important;",
+    "  backdrop-filter: blur(28px) saturate(200%) !important;",
+    "  -webkit-backdrop-filter: blur(28px) saturate(200%) !important;",
+    "  border: 1px solid rgba(255, 255, 255, 0.2) !important;",
+    "  border-radius: 20px !important;",
+    "  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.3) !important;",
+    "  color: rgba(255,255,255,0.9);"];
+  if (c.kind === "list") {
+    const key = c.key || "items";
+    L.push("{% set raw = (state_attr('" + jq(c.sensor) + "', 'content') or '') | replace('```json', '') | replace('```', '') | trim %}",
+      "{% set data = raw | from_json if raw else {'" + jq(key) + "': []} %}",
+      "{% set people = data." + key + " | default([]) %}",
+      "{% set count = [people | length, 1] | max %}",
+      "{% set seconds_per_person = 8 %}", "{% set total_duration = count * seconds_per_person %}", "{% set pct_per_person = 100 / count %}",
+      "<style>", ...GLASS.map(x => "  " + x), "  height: 140px !important;", "  overflow: hidden !important;", "}",
+      ".fx-wrap { position: relative; height: 80px; overflow: hidden; padding: 0 16px; box-sizing: border-box; }",
+      ".fx-item { position: absolute; top: 0; left: 16px; right: 16px; font-size: 18px; opacity: 0; animation: fx-cycle {{ total_duration }}s infinite; }",
+      ".fx-reason { font-size: 13px; opacity: 0.7; margin-top: 2px; }",
+      "@keyframes fx-cycle {", "  0%, 100% { opacity: 0; }", "  2% { opacity: 1; }", "  {{ (pct_per_person - 2) | round(2) }}% { opacity: 1; }", "  {{ pct_per_person | round(2) }}% { opacity: 0; }", "}",
+      "</style>",
+      "<div class=\"fx-wrap\">", "  {% if people | length == 0 %}<div style=\"font-size:18px;\">Nothing loaded yet</div>{% endif %}",
+      "  {% for person in people %}",
+      "  <div class=\"fx-item\" style=\"animation-delay: -{{ ((count - loop.index0) * seconds_per_person) % total_duration }}s;\">",
+      "    {{ '⭐ ' if person.rel else '' }}<b>{{ person.name }}</b>{% if person.year is defined %}, {% if person.year < 0 %}{{ person.year | abs }} BC{% elif person.year == 0 %}year unknown{% else %}{{ person.year }}{% endif %}{% endif %}{% if person.known_for is defined %}, {{ person.known_for }}{% endif %}",
+      "    {% if person.reason %}<div class=\"fx-reason\">{{ person.reason }}</div>{% endif %}",
+      "  </div>", "  {% endfor %}", "</div>");
+    return "type: custom:html-template-card\ntitle: " + JSON.stringify((c.emoji ? c.emoji + " " : "") + c.title) + "\nignore_line_breaks: true\ncontent: |\n" + L.map(x => "  " + x).join("\n") + "\n";
+  }
+  const fb = ((c.emoji ? c.emoji + " " : "") + c.title.toUpperCase() + (c.emoji ? " " + c.emoji : "")).trim();
+  L.push("{% set raw = (state_attr('" + jq(c.sensor) + "', 'content') or '') | trim %}",
+    "{% set lines = raw.split('\\n') %}",
+    "{% if raw.startswith('#') %}", "  {% set title = lines[0] | replace('#', '') | trim %}", "  {% set fact = lines[1:] | join(' ') | trim %}",
+    "{% else %}", "  {% set title = '" + jq(fb) + "' %}", "  {% set fact = raw %}", "{% endif %}",
+    "{% set len = fact | length %}",
+    "{% if len > 260 %}", "  {% set fsize = 13 %}", "{% elif len > 220 %}", "  {% set fsize = 15 %}", "{% elif len > 160 %}", "  {% set fsize = 17 %}",
+    "{% elif len > 100 %}", "  {% set fsize = 20 %}", "{% else %}", "  {% set fsize = 23 %}", "{% endif %}",
+    "<style>", ...GLASS.map(x => "  " + x), "  height: 170px !important;", "  overflow: hidden !important;", "}",
+    ".card-title { font-size: 25px; font-weight: 600; padding: 14px 16px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }",
+    ".content-wrap { height: 106px; overflow: hidden; padding: 4px 16px 0; box-sizing: border-box; display: flex; align-items: flex-start; }",
+    ".content-text { font-size: {{ fsize }}px; line-height: 1.3; width: 100%; }",
+    "</style>",
+    "<div class=\"card-title\">{{ title }}</div>",
+    "<div class=\"content-wrap\">", "  <div class=\"content-text\">{{ fact }}</div>", "</div>");
+  return "type: custom:html-template-card\nignore_line_breaks: true\ncontent: |\n" + L.map(x => "  " + x).join("\n") + "\n";
+}
+function stackYaml(list) {
+  return "type: vertical-stack\ncards:\n" + list.map(y => y.trimEnd().split("\n").map((l, i) => (i ? "    " : "  - ") + l).join("\n")).join("\n") + "\n";
+}
+function dashCard(n) {
+  E.card = Object.assign(defaultCard(E), E.card || {});
+  const c = E.card, prev = el("textarea", {class: "code", readonly: true, spellcheck: "false", style: "min-height:150px"}), msg = el("p", {class: "msg"});
+  const upd = () => { prev.value = cardYaml(E); };
+  const inp = (label, k, ph, help) => { const i = el("input", {value: c[k] || "", placeholder: ph || "", autocomplete: "off", spellcheck: "false"}); i.oninput = () => { c[k] = i.value.trim() === i.value ? i.value : i.value; upd(); markDirty(); }; return [el("label", {class: "l"}, label), i, help ? el("p", {class: "help"}, help) : null]; };
+  const kind = el("select", {style: "max-width:320px"}, el("option", {value: "text"}, "Text card (one fact, title on top)"), el("option", {value: "list"}, "Rotating list (fades through a list)"));
+  kind.value = c.kind; kind.onchange = () => { c.kind = kind.value; drawOpts(); upd(); markDirty(); };
+  const opts = el("div", {});
+  const drawOpts = () => { opts.replaceChildren(); add(opts, inp("Sensor that reads the file", "sensor", "sensor.read_my_fact", "The file_reader sensor for this fact's file. It has to expose the text as a content attribute."),
+    inp(c.kind === "list" ? "Card title" : "Fallback title", "title", "Random Fact", c.kind === "list" ? null : "Used when the file does not start with a # title line."), inp("Emoji", "emoji", "🎱"),
+    c.kind === "list" ? inp("List name in the JSON", "key", "birthdays", "The key that holds the list, for example birthdays.") : null); };
+  drawOpts(); upd();
+  const copy = el("button", {class: "btn primary", onclick: async () => { const ok = await copyText(prev.value); msg.className = "msg " + (ok ? "ok" : "warn"); msg.textContent = ok ? "Copied. In your dashboard, add a Manual card and paste." : "Your browser blocked copying. Tap the box above, select all, and copy."; if (!ok) { prev.removeAttribute("readonly"); prev.focus(); prev.select(); } }}, "Copy dashboard card");
+  return card(n, "Dashboard card", "Makes the glass-style card for this fact. Paste it into a Manual card on your dashboard.", el("label", {class: "l"}, "Style"), kind, opts, el("label", {class: "l"}, "Card YAML"), prev, el("div", {class: "row", style: "margin-top:10px"}, copy), msg);
+}
+async function copyCards(list, say2) {
+  const ys = list.map(it => cardYaml(Object.assign({}, it.state || {}, {name: (it.state && it.state.name) || it.name})));
+  const ok = await copyText(ys.length === 1 ? ys[0] : stackYaml(ys));
+  say2(ok ? (ys.length === 1 ? "Card copied." : ys.length + " cards copied as one stack.") + " Paste into a Manual card." : "Your browser blocked copying. Open a fact and use Copy dashboard card.", ok ? "ok" : "warn");
 }
 
 /* ---------- editor ---------- */
@@ -440,11 +536,11 @@ function sel(label, key, opts, o) {
 const card = (n, title, sub, ...kids) => el("section", {class: "card"}, el("div", {class: "ch"}, el("h2", {}, n ? el("span", {class: "n"}, n) : null, title), sub ? el("p", {}, sub) : null), kids);
 
 function drawForm() {
-  const f = $("#form"); f.replaceChildren();
+  const f = $("#form"); f.replaceChildren(); FORMCTX = null;
   const raw = rawMode();
   /* 1. name */
   const c1 = card(1, "Name");
-  const nm = tf(isAutoOnly(E) ? "Automation name" : "Script name", "name", {after: () => { if (raw) E.raw = setAlias(E.raw, E.name); if (isAutoOnly(E) && ownAuto(E)) E.autoRaw = setAlias(E.autoRaw, E.name); }});
+  const nm = tf(isAutoOnly(E) ? "Automation name" : "Script name", "name", {after: () => { if (FORMCTX) FORMCTX.setAlias(E.name); else if (raw) E.raw = setAlias(E.raw, E.name); }});
   add(c1, nm, el("p", {class: "help", id: "idhelp"}));
   if (cur.isNew && !raw && !isAutoOnly(E)) {
     const chips = el("div", {class: "chips"});
@@ -452,16 +548,11 @@ function drawForm() {
     add(c1, el("label", {class: "l"}, "Start from"), chips, el("p", {class: "msg warn", id: "pnote"}));
   }
   f.append(c1);
-  if (isAutoOnly(E)) { f.append(autoOnlyCard(2)); gen(); return; }
+  if (isAutoOnly(E)) { const k = autoOnlyCard(2); k.forEach(x => f.append(x)); f.append(dashCard(6)); gen(); return; }
   if (raw) {
-    const t = el("textarea", {class: "code", spellcheck: "false", style: "min-height:440px", value: E.raw});
-    t.oninput = () => { E.raw = t.value; const a = getAlias(t.value); if (a) { E.name = a; $("#form input").value = a; } changed(); };
-    const chk = el("button", {class: "btn sm", onclick: async () => {
-      say("Checking..."); const r = await api("ann/import", {yaml: E.raw});
-      say(r.ok ? "That is a valid script with " + (r.config.sequence || []).length + " top-level steps." : r.error, r.ok ? "ok" : "bad");
-    }}, "Check YAML");
-    f.append(card(2, "Your script", "Kept exactly as you wrote it. Edit the YAML here, then Save or Save and push.", t, el("div", {class: "row", style: "margin-top:10px"}, chk)));
-    f.append(autoCard(3));
+    formCards(2, "raw", true).forEach(x => f.append(x));
+    f.append(autoCard(4));
+    f.append(dashCard(5));
     gen();
     return;
   }
@@ -542,6 +633,7 @@ function drawForm() {
   }
   f.append(c5);
   f.append(autoCard(6));
+  f.append(dashCard(7));
   gen();
 }
 
