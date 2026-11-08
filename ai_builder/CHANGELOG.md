@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.10.1 - 2026-11-07
+
+- **Rotating list dashboard card: pick what it shows.** Each field of your items can be shown as a Title (bold), Text, Small (dim) or not at all, with seconds per item and card height. It starts from the fact's own fields (for example name and info) instead of the old birthdays-only layout
+- Fixed the list card reading nothing when the list was named `items` (it clashed with a built-in name). It now reads the list by key and survives a bad file
+
 ## 2.10.0 - 2026-11-07
 
 - **Facts are now ONE automation, not a script plus an automation.** A new fact is pushed as a single Home Assistant automation: its triggers (every N minutes or hours, when an entity changes, only when someone is home), then the steps that ask the AI and publish to MQTT. No script is created. With no schedule it has no triggers, and **Run now** starts it
