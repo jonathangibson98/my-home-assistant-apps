@@ -1,5 +1,5 @@
 /* Facts page: library of saved facts, editor, helper and settings.
-   Each fact is a Home Assistant script (ask the AI Task for one fact, publish it over MQTT) plus an optional schedule automation. */
+   Each fact is ONE Home Assistant automation (triggers, then ask the AI Task, then publish over MQTT). Older facts that were made as a script plus a schedule automation still work and can be switched over. */
 let S = {}, F = {}, ENT = [], LIB = [], mem = {};
 let cur = {id: null, isNew: true, pushed: false}, E = null, dirty = false, view = "lib", HEL = {entity: "", goal: "", idea: "", back: false};
 
@@ -33,13 +33,22 @@ const PRE = {
   "City fact": {name: "City Cool Fact", file: "location_fact.txt", types: ["locations"], obscure: false,
     task: "Pick one city or town from the places listed above at random and share one fascinating, obscure historical or cultural fact about it. Open with the place name, then give the fact. Talk ONLY about the place. Warm and a little playful in tone.",
     picks: []},
+  "Daily birthdays (JSON list)": {name: "Daily Birthdays", file: "notable_bday.txt", style: "json", listKey: "birthdays", count: 50, useDate: true, real: true, obscure: false, noPeople: false, avoidLast: false, seed: false,
+    task: "List notable real people (celebrities, historical figures, athletes, musicians, actors or public figures) who were born on today's date in history. Use real, verifiable birthdays only. Do not invent people. Use a very wide historical range, from the 2020s back through the 1900s, and mix well known and lesser known names.",
+    fields: [{key: "name", hint: "Full Name", type: "text"}, {key: "month", hint: "birth month number", type: "number"}, {key: "day", hint: "birth day of the month", type: "number"}, {key: "year", hint: "birth year", type: "number"}, {key: "known_for", hint: "brief description, 3-6 words", type: "text"}],
+    sortBy: "year", sortDir: "desc", keepIf: "p.month | int(0) == now().month and p.day | int(0) == now().day",
+    extra: "Every person MUST have been born on today's month and day. A person born on any other date is WRONG, even if they are a great match. Double check each birth month and day before adding them.",
+    picks: [], auto: {on: true, every: 12, unit: "hours", watch: "", watchAttr: "", watchFor: 10, home: []}},
+  "Blank list (JSON)": {name: "My list", style: "json", listKey: "items", count: 10, picks: [], task: "", obscure: false, noPeople: false, avoidLast: false,
+    fields: [{key: "name", hint: "short name", type: "text"}, {key: "detail", hint: "one short sentence", type: "text"}]},
   "Blank": {name: "My fact", picks: [], task: ""}
 };
 
 /* ---------- state ---------- */
 const defAuto = () => ({on: false, every: 10, unit: "minutes", watch: "", watchAttr: "", watchFor: 10, home: []});
 const blankState = () => ({name: "My fact", src: [], task: "", picks: [], seed: true, len: F.default_length || 180, style: "plain", titleHint: "", heading: "", count: 5,
-  file: "", swear: "none", real: true, obscure: true, skip: "", noPeople: true, avoidLast: true, lastEntity: "", lastAttr: "", extra: "", ai: "", auto: defAuto(), autoRaw: "", autoId: "", autoOnly: false});
+  file: "", swear: "none", real: true, obscure: true, skip: "", noPeople: true, avoidLast: true, lastEntity: "", lastAttr: "", extra: "", ai: "", auto: defAuto(), autoRaw: "", autoId: "", autoOnly: false,
+  asAuto: true, listKey: "items", fields: [], sortBy: "", sortDir: "desc", keepIf: "", useDate: false});
 const clone = o => JSON.parse(JSON.stringify(o));
 const full = s => Object.assign(blankState(), clone(s || {}), {auto: Object.assign(defAuto(), (s && s.auto) || {})});
 
@@ -52,28 +61,45 @@ function topicOf(s) {
   let pre = F.mqtt_prefix || ""; if (pre && !pre.endsWith("/")) pre += "/";
   return pre + f;
 }
+const fieldList = s => {
+  const seen = new Set();
+  const out = (s.fields || []).map(f => ({key: String(f.key || "").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, ""), hint: String(f.hint || "").trim(), type: ["text", "number", "yesno"].includes(f.type) ? f.type : "text"}))
+    .filter(f => f.key && !seen.has(f.key) && seen.add(f.key)).slice(0, 14);
+  return out.length ? out : [{key: "name", hint: "", type: "text"}];
+};
+const listKeyOf = s => String(s.listKey || "").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "items";
+const cleanExpr = t => String(t || "").trim().replace(/^\{\{\s*/, "").replace(/\s*\}\}$/, "").replace(/[\r\n]+/g, " ").replace(/%\}/g, "").replace(/\{%/g, "");
+const TYPE_WORDS = {text: "text", number: "whole number", yesno: "true or false"};
 const lastRef = s => ({entity: s.lastEntity || F.last_entity || "", attr: s.lastEntity ? s.lastAttr : (s.lastAttr || F.last_attribute || "")});
 const q1 = t => "'" + String(t).replace(/'/g, "''") + "'";  // single-quoted YAML string
 
 /* ---------- the script ---------- */
 function buildPrompt(s, chosen) {
-  const P = [], picks = pickList(s), lr = lastRef(s);
+  const P = [], picks = pickList(s), lr = lastRef(s), isJson = s.style === "json";
+  if (s.useDate) P.push("Today's date is {{ now().strftime('%B %-d') }}.");
   if (chosen.length) P.push("Current time: {{ current_time }}.");
   chosen.forEach(c => P.push(c.label.toUpperCase() + ":\n{{ src_" + c.id + " }}"));
   const L = picks.map(p => p.name.replace(/_/g, " ").toUpperCase() + " FOR THIS RUN: {{ " + p.name + " }}");
   if (s.seed) L.push("Random seed for variety: {{ seed }}.");
   if (L.length) P.push(L.join("\n"));
   P.push("YOUR TASK: " + ((s.task || "").trim() || "Share one surprising, true fact."));
-  if (s.real) P.push("The fact must be real public knowledge that can be verified. If you are not sure a detail is true, pick a different fact. Never invent anything: no made up names, dates or numbers.");
+  if (s.real) P.push(isJson ? "Every item must be real public knowledge that can be verified. If you are not sure about an item, leave it out. Never invent anything: no made up names, dates or numbers." : "The fact must be real public knowledge that can be verified. If you are not sure a detail is true, pick a different fact. Never invent anything: no made up names, dates or numbers.");
   if (s.obscure) P.push("Go obscure. Deep cuts only. Do NOT use famous, overused facts" + ((s.skip || "").trim() ? " (for example: " + s.skip.trim() + ")" : "") + ".");
   if (s.noPeople) P.push("The fact must NOT reference or be about any person in our household or friend group, or their pets, jobs or relationships. Do not say things like \"someone is in\" or \"our\".");
   const rules = [s.extra, F.extra_rules].map(x => (x || "").trim()).filter(Boolean); rules.forEach(r => P.push(r));
-  if (s.avoidLast && lr.entity) P.push("{% if old_fact %}Do not repeat or rephrase this previous fact" + (s.style === "titled" ? ", and do not reuse its subject (named in its heading)" : "") + ": {{ old_fact }}{% endif %}");
+  if (s.avoidLast && lr.entity && !isJson) P.push("{% if old_fact %}Do not repeat or rephrase this previous fact" + (s.style === "titled" ? ", and do not reuse its subject (named in its heading)" : "") + ": {{ old_fact }}{% endif %}");
   P.push({none: "Keep the language clean, no profanity.", mild: "Light language is fine, keep it PG-13.", rated: "Use profanity as needed."}[s.swear] || "");
   const n = +s.len || 180;
-  if (s.style === "list") P.push("Each line must be " + n + " characters or less.");
+  if (isJson) { /* no length rule: it is a data list */ }
+  else if (s.style === "list") P.push("Each line must be " + n + " characters or less.");
   else P.push("The fact part must be " + n + " characters or less.");
-  if (s.style === "titled") P.push("Return exactly ONE line in this format, with three pipe characters between the two parts:\nTitle ||| The fact text\nThe title part is: " + ((s.titleHint || "").trim() || "a short name for what the fact is about") + ".\nNo markdown, no quotes, no preamble, no explanation.");
+  if (isJson) {
+    const J = fieldList(s), key = listKeyOf(s), cnt = Math.max(1, +s.count || 10);
+    const ev = f => f.type === "number" ? "0" : f.type === "yesno" ? "true" : JSON.stringify(f.hint || f.key);
+    const row = J.map(f => JSON.stringify(f.key) + ": " + ev(f)).join(", ");
+    P.push("List " + cnt + " items.\nReturn ONLY valid JSON in exactly this structure, with no markdown code fences, no preamble, no explanation:\n{\"" + key + "\": [{" + row + "}, {" + row + "}]}\nFields: " +
+      J.map(f => f.key + " = " + TYPE_WORDS[f.type] + (f.hint ? " (" + f.hint + ")" : "")).join("; ") + ".\nNumbers must be plain JSON numbers, not text.");
+  } else if (s.style === "titled") P.push("Return exactly ONE line in this format, with three pipe characters between the two parts:\nTitle ||| The fact text\nThe title part is: " + ((s.titleHint || "").trim() || "a short name for what the fact is about") + ".\nNo markdown, no quotes, no preamble, no explanation.");
   else if (s.style === "list") P.push("Return exactly " + (+s.count || 5) + " lines, one item per line, with no numbering, bullets, markdown, quotes, preamble or explanation.");
   else P.push("Return ONLY the fact as plain text. No JSON, no markdown, no quotes, no preamble, no explanation.");
   return P.filter(x => x !== "").join("\n\n");
@@ -82,13 +108,19 @@ function buildPrompt(s, chosen) {
 function makeYaml(s0, o) {
   if (s0.autoOnly) return "";
   if (s0.raw != null) return s0.raw;  /* a pasted script is pushed exactly as written */
-  const s = full(s0), name = JSON.stringify(s.name || "Fact"), picks = pickList(s), lr = lastRef(s);
+  const s = full(s0);
+  return "alias: " + JSON.stringify(s.name || "Fact") + "\ndescription: " + FASK + "\nmode: restart\nsequence:\n" + stepsYaml(s, o);
+}
+
+/* the steps (load data, pick random details, ask the AI, clean up, publish). A script has them under sequence:, an automation under actions: */
+function stepsYaml(s, o) {
+  const name = JSON.stringify(s.name || "Fact"), picks = pickList(s), lr = lastRef(s), isJson = s.style === "json";
   const chosen = (s.src || []).map(id => usable().find(x => x.id === id)).filter(Boolean);
-  let y = "alias: " + name + "\ndescription: " + FASK + "\nmode: restart\nsequence:\n";
+  let y = "";
   if (chosen.length) y += "  - variables:\n      current_time: '{{ now().strftime(''%A, %B %-d %Y %-I:%M %p %Z'') }}'\n";
   chosen.forEach(c => { y += genPre(c) });
   if (chosen.length) y += "  - alias: Load data sources\n    variables:\n" + chosen.map(c => { const b = body(c).trim(); return b ? `      src_${c.id}: |-\n` + ind(b, 8) : `      src_${c.id}: ""` }).join("\n") + "\n";
-  const useLast = s.avoidLast && !!lr.entity, V = [];
+  const useLast = s.avoidLast && !!lr.entity && !isJson, V = [];
   if (useLast) V.push("      old_fact: |-\n" + ind(lr.attr
     ? `{{ state_attr('${lr.entity}', '${lr.attr}') | default('', true) }}`
     : `{% set v = states('${lr.entity}') %}{{ '' if v in ['unknown', 'unavailable'] else v }}`, 8));
@@ -97,6 +129,24 @@ function makeYaml(s0, o) {
   if (V.length) y += "  - alias: Pick random details\n    variables:\n" + V.join("\n") + "\n";
   const ai = s.ai || S.ai_task_entity || "ai_task.SET_ME";
   y += "  - alias: Ask the AI\n    action: ai_task.generate_data\n    data:\n      task_name: " + name + "\n      entity_id: " + ai + "\n      instructions: |-\n" + ind(buildPrompt(s, chosen), 8) + "\n    response_variable: fact_raw\n";
+  if (isJson) {
+    const J = fieldList(s), key = listKeyOf(s), cnt = Math.max(1, +s.count || 10);
+    const sortKeys = String(s.sortBy || "").split(",").map(x => x.trim()).filter(k => J.some(f => f.key === k));
+    const item = J.map(f => f.type === "number" ? `'${f.key}': (p.get('${f.key}') | int(0))`
+      : f.type === "yesno" ? `'${f.key}': (p.get('${f.key}') in [true, 'true', 'True', 'yes', 1])`
+      : `'${f.key}': ((p.get('${f.key}') or '') | string | trim)`).join(", ");
+    const keep = cleanExpr(s.keepIf) || "true";
+    const sorted = sortKeys.length ? `ns.items | sort(attribute='${sortKeys.join(",")}'${s.sortDir === "asc" ? "" : ", reverse=true"})` : "ns.items";
+    const tpl = "{% set raw = fact_raw.data %}\n" +
+      "{% set d = (raw | string | replace('```json', '') | replace('```', '') | trim | from_json(default={})) if raw is string else raw %}\n" +
+      `{% set src = d.get('${key}', []) if d is mapping else (d if d is list else []) %}\n` +
+      "{% set ns = namespace(items=[]) %}\n" +
+      `{% for p in src %}{% if p is mapping and (${keep}) %}{% set ns.items = ns.items + [{${item}}] %}{% endif %}{% endfor %}\n` +
+      `{{ (${sorted})[:${cnt}] | list }}`;
+    y += "  - alias: Clean up the answer\n    variables:\n      fact_items: |-\n" + ind(tpl, 8) + "\n";
+    if (!(o && o.test)) y += `  - alias: Publish\n    if:\n      - condition: template\n        value_template: "{{ fact_items | length > 0 }}"\n    then:\n      - action: mqtt.publish\n        data:\n          topic: ${JSON.stringify(topicOf(s))}\n          payload: '{{ {"${key}": fact_items} | tojson }}'\n`;
+    return y;
+  }
   const P = [];
   if (s.style === "titled") {
     P.push("      fact_parts: |-\n        {{ (fact_raw.data | string).split('|||') }}");
@@ -145,8 +195,30 @@ function makeAuto(s0, sid) {
   y += "actions:\n  - action: script." + sid + "\n";
   return y;
 }
-const pushBody = (s, id, extra) => Object.assign({id, yaml: makeYaml(s), auto_yaml: makeAuto(s, id), state: s,
-  auto_raw: ownAuto(s), auto_only: isAutoOnly(s), auto_id: isAutoOnly(s) ? id : ownAuto(s) ? (s.autoId || "") : ""}, extra || {});
+/* a generated fact as ONE automation: the schedule triggers, the presence conditions, and the steps as its actions */
+const isAsAuto = s => !!(s && s.asAuto && !s.autoOnly && s.raw == null);
+const viaAuto = s => isAutoOnly(s) || isAsAuto(s);
+function makeAutomation(s0, sid) {
+  const s = full(s0), a = s.auto, T = [];
+  if (a.on && +a.every > 0) {
+    if (a.unit === "hours") T.push(`  - trigger: time_pattern\n    hours: "/${Math.min(23, Math.max(1, Math.round(+a.every)))}"\n    minutes: 0\n`);
+    else T.push(`  - trigger: time_pattern\n    minutes: "/${Math.min(59, Math.max(1, Math.round(+a.every)))}"\n`);
+  }
+  if (a.on && a.watch) T.push(`  - trigger: state\n    entity_id: ${a.watch}\n` + (a.watchAttr ? `    attribute: ${a.watchAttr}\n` : "") + (+a.watchFor > 0 ? `    for:\n      seconds: ${Math.round(+a.watchFor)}\n` : ""));
+  let y = "alias: " + JSON.stringify(s.name || "Fact") + "\ndescription: " + FASK + "\nmode: restart\n" + (T.length ? "triggers:\n" + T.join("") : "triggers: []\n");
+  const C = (a.on ? (a.home || []) : []).map(e => {
+    const d = e.split(".")[0];
+    if (d === "zone") return `numeric_state\n        entity_id: ${e}\n        above: 0`;
+    if (d === "person" || d === "device_tracker") return `state\n        entity_id: ${e}\n        state: home`;
+    return `state\n        entity_id: ${e}\n        state: "on"`;
+  });
+  if (C.length === 1) y += "conditions:\n  - condition: " + C[0].replace(/\n        /g, "\n    ") + "\n";
+  else if (C.length) y += "conditions:\n  - condition: or\n    conditions:\n" + C.map(c => "      - condition: " + c + "\n").join("");
+  else y += "conditions: []\n";
+  return y + "actions:\n" + stepsYaml(s, {});
+}
+const pushBody = (s, id, extra) => Object.assign({id, yaml: viaAuto(s) ? "" : makeYaml(s), auto_yaml: isAsAuto(s) ? makeAutomation(s, id) : makeAuto(s, id), state: s,
+  auto_raw: ownAuto(s) && !isAsAuto(s), auto_only: viaAuto(s), cleanup_script: isAsAuto(s), auto_id: viaAuto(s) ? id : ownAuto(s) ? (s.autoId || "") : ""}, extra || {});
 const hasTrigger = s => !!(s.auto && ((+s.auto.every > 0) || s.auto.watch));
 
 /* ---------- DOM ---------- */
@@ -197,10 +269,10 @@ function libCard(it) {
   const status = !it.pushed_at && !it.in_ha ? ["warn", "Draft, not in Home Assistant"] : it.in_ha ? ["ok", "In Home Assistant"] : ["bad", "Missing in Home Assistant"];
   const msg = el("div", {class: "msg", style: "margin:0"});
   const del = el("button", {class: "btn danger sm"}, "Delete");
-  confirmTap(del, isAutoOnly(st) ? "Tap again: forgets it here (HA keeps it)" : it.in_ha ? "Tap again: removes the script too" : "Tap again to delete", () => removeFact(it.id, !isAutoOnly(st) && !!it.in_ha));
+  confirmTap(del, isAutoOnly(st) ? "Tap again: forgets it here (HA keeps it)" : it.in_ha ? (isAsAuto(st) ? "Tap again: removes the automation too" : "Tap again: removes the script too") : "Tap again to delete", () => removeFact(it.id, !isAutoOnly(st) && !!it.in_ha));
   const run = el("button", {class: "btn sm", disabled: !it.in_ha, title: it.in_ha ? "Run it now" : "Push it to Home Assistant first", onclick: async () => {
     run.disabled = true; msg.className = "msg"; msg.textContent = "Starting...";
-    const r = await fapi("run", {id: it.id, auto_only: isAutoOnly(st)}); msg.className = "msg " + (r.ok ? "ok" : "bad"); msg.textContent = r.ok ? "Started." : (r.detail || r.error); run.disabled = false;
+    const r = await fapi("run", {id: it.id, auto_only: viaAuto(st)}); msg.className = "msg " + (r.ok ? "ok" : "bad"); msg.textContent = r.ok ? "Started." : (r.detail || r.error); run.disabled = false;
   }}, "Run now");
   const dup = el("button", {class: "btn sm", onclick: async () => {
     const nm = (it.name || it.id) + " copy", id = uniqueId(fslug(nm));
@@ -214,6 +286,12 @@ function libCard(it) {
   else if (ownAuto(st)) {
     pills.push(el("span", {class: "pill plain"}, fileOf(Object.assign({}, st, {name: st.name || it.name}))));
     pills.push(autoPill());
+  } else if (isAsAuto(st)) {
+    pills.push(el("span", {class: "pill plain"}, fileOf(Object.assign({}, st, {name: st.name || it.name}))));
+    if (st.style === "json") pills.push(el("span", {class: "pill plain"}, "JSON list"));
+    if (!it.auto_in_ha) pills.push(el("span", {class: "pill warn"}, "Automation not pushed"));
+    else if (!it.auto_on) pills.push(el("span", {class: "pill warn"}, "Automation is off in HA"));
+    else pills.push(el("span", {class: "pill ok"}, a.on ? "Runs " + autoSummary(a) : "Manual only (use Run now)"));
   } else {
     pills.push(el("span", {class: "pill plain"}, fileOf(Object.assign({}, st, {name: st.name || it.name}))));
     if (a.on) pills.push(!it.auto_in_ha ? el("span", {class: "pill warn"}, "Schedule not pushed") : it.auto_on ? el("span", {class: "pill ok"}, "Runs " + autoSummary(a)) : el("span", {class: "pill warn"}, "Schedule is off in HA"));
@@ -221,14 +299,14 @@ function libCard(it) {
   }
   pills.push(el("span", {class: "pill plain"}, "Edited " + ago(it.updated)));
   return el("div", {class: "card ann"},
-    el("div", {class: "top"}, el("div", {style: "min-width:0"}, el("h3", {}, it.name || it.id), el("div", {class: "dim small mono"}, (isAutoOnly(st) ? "automation id: " : "script.") + it.id)), el("span", {class: "pill " + status[0]}, status[1])),
+    el("div", {class: "top"}, el("div", {style: "min-width:0"}, el("h3", {}, it.name || it.id), el("div", {class: "dim small mono"}, (viaAuto(st) ? "automation id: " : "script.") + it.id)), el("span", {class: "pill " + status[0]}, status[1])),
     el("div", {class: "clamp"}, isAutoOnly(st) ? "Your own automation, kept exactly as you wrote it." : raw ? "Your own script, kept exactly as you wrote it." : (st.task || "No instructions yet.")),
     el("div", {class: "meta"}, pills),
     el("div", {class: "acts"}, el("button", {class: "btn primary sm", onclick: () => openItem(it)}, "Edit"), run, el("button", {class: "btn sm", title: "Copy a dashboard card for this fact", onclick: () => copyCards([it], (t, c) => { msg.className = "msg " + (c || ""); msg.textContent = t; })}, "Copy card"), dup, del), msg);
 }
 async function removeFact(id, alsoScript) {
   const r = await fapi("library/delete", {id, delete_script: !!alsoScript});
-  if (r.ok) { flash(r.script_deleted ? "Deleted " + id + " and its script in Home Assistant." : "Deleted " + id + ".", "ok"); loadLib(); } else flash(r.error, "bad");
+  if (r.ok) { flash(r.script_deleted ? "Deleted " + id + " and removed it from Home Assistant." : "Deleted " + id + ".", "ok"); loadLib(); } else flash(r.error, "bad");
 }
 $("#updall").onclick = () => {
   const b = $("#updall");
@@ -431,8 +509,8 @@ async function copyText(t) {
 function defaultCard(s) {
   const f = isAutoOnly(s) ? ((topicsIn(s.autoRaw)[0] || {}).val || "") : fileOf(s);
   const base = (f.split("/").pop() || "").replace(/\.[^.]*$/, "");
-  const key = ((String(s.autoRaw || "").match(/\{\s*"(\w+)"\s*:/) || [])[1]) || "items";
-  const list = isAutoOnly(s) && /tojson/.test(s.autoRaw || "");
+  const key = isAsAuto(s) && s.style === "json" ? listKeyOf(s) : ((String(s.autoRaw || "").match(/\{\s*"(\w+)"\s*:/) || [])[1]) || "items";
+  const list = (isAutoOnly(s) && /tojson/.test(s.autoRaw || "")) || (isAsAuto(s) && s.style === "json");
   return {kind: list ? "list" : "text", sensor: s.lastEntity || (base ? "sensor.read_" + base : "sensor.read_fact"), emoji: list ? "📋" : "🎱", title: s.name || "Fact", key};
 }
 const cardOf = s => Object.assign(defaultCard(s), s.card || {});
@@ -540,12 +618,16 @@ function drawForm() {
   const raw = rawMode();
   /* 1. name */
   const c1 = card(1, "Name");
-  const nm = tf(isAutoOnly(E) ? "Automation name" : "Script name", "name", {after: () => { if (FORMCTX) FORMCTX.setAlias(E.name); else if (raw) E.raw = setAlias(E.raw, E.name); }});
+  const nm = tf(viaAuto(E) ? "Automation name" : "Script name", "name", {after: () => { if (FORMCTX) FORMCTX.setAlias(E.name); else if (raw) E.raw = setAlias(E.raw, E.name); }});
   add(c1, nm, el("p", {class: "help", id: "idhelp"}));
   if (cur.isNew && !raw && !isAutoOnly(E)) {
     const chips = el("div", {class: "chips"});
     Object.entries(PRE).forEach(([k, p]) => chips.append(el("button", {class: "chip", onclick: () => applyPreset(p)}, k)));
     add(c1, el("label", {class: "l"}, "Start from"), chips, el("p", {class: "msg warn", id: "pnote"}));
+  }
+  if (!cur.isNew && !raw && !viaAuto(E) && !ownAuto(E)) {
+    const sw = el("button", {class: "btn sm", onclick: () => { E.asAuto = true; changed(); drawForm(); $("#trycard").hidden = false; say("Switched. Push to replace the script and its schedule automation with one automation.", "ok"); }}, "Switch to a single automation");
+    add(c1, el("p", {class: "help"}, "This one is still a script plus a separate schedule automation."), el("div", {class: "row", style: "margin-top:6px"}, sw));
   }
   f.append(c1);
   if (isAutoOnly(E)) { const k = autoOnlyCard(2); k.forEach(x => f.append(x)); f.append(dashCard(6)); gen(); return; }
@@ -583,19 +665,42 @@ function drawForm() {
 
   /* 3. how it reads */
   const c3 = card(3, "How it reads");
-  add(c3, sel("Format", "style", [["plain", "Just the fact"], ["titled", "A title and the fact"], ["list", "A short list"]], {redraw: 1, style: "max-width:260px"}));
+  add(c3, sel("Format", "style", [["plain", "Just the fact"], ["titled", "A title and the fact"], ["list", "A short list"], ["json", "A data list (JSON), like birthdays"]], {redraw: 1, style: "max-width:260px"}));
   if (E.style === "titled") add(c3, tf("What is the title?", "titleHint", {ph: "e.g. the artist or band name", help: "The AI answers as \"Title ||| fact\" and the script splits it. Use it in the heading as {{ fact_title }}."}));
   if (E.style === "list") add(c3, tf("How many lines", "count", {num: 1, min: 1, step: 1, style: "max-width:120px"}));
-  add(c3, tf(E.style === "list" ? "Max length of each line (characters)" : "Max length (characters)", "len", {num: 1, min: 40, step: 20, style: "max-width:160px"}));
-  add(c3, tf("Heading above it (optional)", "heading", {area: 1, ph: "e.g. ## 🎶 MUSIC Fact About - {{ fact_title }}", style: "min-height:60px", help: "Saved in the file above the fact. You can use {{ fact_title }}" + (pickList(E).length ? ", " + pickList(E).map(p => "{{ " + p.name + " }}").join(", ") : "") + " and any Home Assistant template."}));
+  if (E.style === "json") {
+    if (!(E.fields || []).length) E.fields = [{key: "name", hint: "short name", type: "text"}];
+    add(c3, el("p", {class: "help"}, "The AI answers with JSON. The automation reads it, keeps and sorts the items, and saves {\"" + listKeyOf(E) + "\": [...]} to the file."));
+    add(c3, tf("List name in the JSON", "listKey", {ph: "items", style: "max-width:260px", help: "The key that holds the list in the saved file, for example birthdays. Letters, numbers and underscores."}));
+    add(c3, tf("How many items", "count", {num: 1, min: 1, step: 1, style: "max-width:120px"}));
+    add(c3, el("label", {class: "l"}, "What each item has"));
+    const fr = el("div", {});
+    E.fields.forEach((f, i) => {
+      const k = el("input", {value: f.key, placeholder: "name, e.g. year", style: "flex:1 1 120px;min-width:0"}), h = el("input", {value: f.hint || "", placeholder: "what it holds, e.g. birth year", style: "flex:2 1 160px;min-width:0"});
+      const t = el("select", {style: "flex:0 0 auto;width:auto"}, [["text", "Text"], ["number", "Number"], ["yesno", "Yes / no"]].map(([v, x]) => el("option", {value: v}, x)));
+      t.value = f.type || "text";
+      k.oninput = () => { f.key = k.value; changed(); }; k.onblur = () => { const c = String(k.value).toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, ""); if (c !== k.value) { k.value = c; f.key = c; changed(); } };
+      h.oninput = () => { f.hint = h.value; changed(); }; t.onchange = () => { f.type = t.value; changed(); };
+      const rm = el("button", {class: "btn danger sm"}, "Remove"); confirmTap(rm, "Tap again", () => { E.fields.splice(i, 1); changed(); drawForm(); });
+      fr.append(el("div", {class: "inline", style: "flex-wrap:wrap;gap:6px;margin-bottom:8px"}, k, h, t, rm));
+    });
+    add(c3, fr, el("div", {class: "row"}, el("button", {class: "btn sm", onclick: () => { E.fields.push({key: "field" + (E.fields.length + 1), hint: "", type: "text"}); changed(); drawForm(); }}, "Add a field")),
+      el("p", {class: "help"}, "Each field is one value per item. Text can hold words, Number is a whole number, Yes / no is true or false. The hint is shown to the AI as the example value."));
+    add(c3, tf("Sort by (optional)", "sortBy", {ph: "e.g. year", style: "max-width:260px", help: "A field name, or several separated by commas (the first one wins). Yes / no fields put the yes items first when the order is highest first."}));
+    add(c3, sel("Order", "sortDir", [["desc", "Highest or newest first"], ["asc", "Lowest or oldest first"]], {style: "max-width:260px"}));
+    add(c3, tf("Only keep items where (optional)", "keepIf", {area: 1, ph: "p.month | int(0) == now().month and p.day | int(0) == now().day", style: "min-height:60px", help: "A Home Assistant template test, without the curly braces. p is one item, so p.year is its year field. Items that fail it are dropped, which catches AI mistakes."}));
+    add(c3, cb("Tell the AI today's date", "useDate", {sub: "adds \"Today's date is ...\" to the instructions"}));
+  }
+  if (E.style !== "json") add(c3, tf(E.style === "list" ? "Max length of each line (characters)" : "Max length (characters)", "len", {num: 1, min: 40, step: 20, style: "max-width:160px"}));
+  if (E.style !== "json") add(c3, tf("Heading above it (optional)", "heading", {area: 1, ph: "e.g. ## 🎶 MUSIC Fact About - {{ fact_title }}", style: "min-height:60px", help: "Saved in the file above the fact. You can use {{ fact_title }}" + (pickList(E).length ? ", " + pickList(E).map(p => "{{ " + p.name + " }}").join(", ") : "") + " and any Home Assistant template."}));
   add(c3, sel("Language", "swear", [["none", "Clean"], ["mild", "Light (PG-13)"], ["rated", "Profanity as needed"]], {style: "max-width:260px"}));
   add(c3, el("label", {class: "l"}, "Rules"));
   add(c3, cb("Only real, verifiable facts", "real", {sub: "if unsure it picks a different one"}));
   add(c3, cb("Go obscure, skip the famous ones", "obscure", {redraw: 1}));
   if (E.obscure) add(c3, tf("Famous ones to skip (optional)", "skip", {ph: "e.g. honey never spoils, octopus hearts", style: "margin-bottom:4px"}));
   add(c3, cb("Keep our household, pets and jobs out of it", "noPeople"));
-  add(c3, cb("Don't repeat the last fact", "avoidLast", {redraw: 1, sub: "the AI is shown the previous one"}));
-  if (E.avoidLast) {
+  if (E.style !== "json") add(c3, cb("Don't repeat the last fact", "avoidLast", {redraw: 1, sub: "the AI is shown the previous one"}));
+  if (E.avoidLast && E.style !== "json") {
     const lr = lastRef(E);
     add(c3, el("label", {class: "l"}, "Where the last fact is read from"), picker(null, false, () => E.lastEntity ? [E.lastEntity] : [], a => { E.lastEntity = a[0] || ""; changed(); }),
       el("p", {class: "help"}, lr.entity ? "Reading " + lr.entity + (lr.attr ? " attribute " + lr.attr : " state") + (E.lastEntity ? "." : " (the default from Settings).") : "Nothing set. Pick the sensor that reads your fact file, or set a default in Settings."));
@@ -614,7 +719,7 @@ function drawForm() {
   f.append(c4);
 
   /* 5. schedule */
-  const A = E.auto, c5 = card(5, "Run it automatically", "Optional. Makes a Home Assistant automation that runs this script.");
+  const A = E.auto, asA = isAsAuto(E), c5 = card(5, asA ? "When it runs" : "Run it automatically", asA ? "This fact is one automation. Without a schedule it has no triggers, so run it by hand with Run now." : "Optional. Makes a Home Assistant automation that runs this script.");
   const on = el("input", {type: "checkbox", checked: !!A.on}); on.onchange = () => { A.on = on.checked; changed(); drawForm(); };
   add(c5, el("label", {class: "check"}, on, el("span", {}, "Run on a schedule")));
   if (A.on) {
@@ -632,8 +737,8 @@ function drawForm() {
     if ((F.home_entities || []).length && !(A.home || []).length) add(c5, el("button", {class: "btn sm", style: "margin-top:6px", onclick: () => { A.home = [...F.home_entities]; changed(); drawForm(); }}, "Use my default presence list"));
   }
   f.append(c5);
-  f.append(autoCard(6));
-  f.append(dashCard(7));
+  if (!asA) f.append(autoCard(6));
+  f.append(dashCard(asA ? 6 : 7));
   gen();
 }
 
@@ -658,7 +763,8 @@ function paintState() {
   if (!E) return;
   $("#etitle").textContent = (E.name || "").trim() || "New fact";
   const id = cur.id || fslug(E.name), h = $("#idhelp");
-  if (h && isAutoOnly(E)) h.textContent = cur.id ? "Automation id: " + cur.id + ". Pushing updates that automation in Home Assistant." : "";
+  if (h && isAsAuto(E)) h.textContent = cur.id ? "Automation id: " + cur.id + ". It stays the same if you rename this. Pushing updates that automation in Home Assistant." : "It will be created as one automation (id " + id + (takenIds().has(id) ? ", a number is added because that name is taken" : "") + ").";
+  else if (h && isAutoOnly(E)) h.textContent = cur.id ? "Automation id: " + cur.id + ". Pushing updates that automation in Home Assistant." : "";
   else if (h) h.textContent = cur.id ? "Script id: script." + cur.id + ". It stays the same if you rename this, so automations that call it keep working."
     : "It will be created as script." + id + (takenIds().has(id) ? " (a number is added because that name is taken)." : ".");
 }
@@ -667,12 +773,13 @@ function openEditor(state, c, note) {
   E = full(state);
   $("#msg").textContent = ""; $("#tres").replaceChildren();
   const n = $("#enote"); n.hidden = !note; if (note) n.firstElementChild.textContent = note;
-  $("#trycard").hidden = rawMode() || isAutoOnly(E); $("#ymldet").hidden = rawMode() || isAutoOnly(E); $("#autodet").hidden = isAutoOnly(E) || (rawMode() && !ownAuto(E));
+  $("#trycard").hidden = rawMode() || isAutoOnly(E); $("#ymldet").hidden = rawMode() || isAutoOnly(E); $("#autodet").hidden = isAutoOnly(E) || isAsAuto(E) || (rawMode() && !ownAuto(E));
   drawForm(); dirty = false; paintState(); showView("edit");
 }
 function openNew(over) { openEditor(Object.assign(blankState(), over || {}), {isNew: true}); }
 function openItem(it) {
   const s = Object.assign(blankState(), it.state || {}, {name: (it.state || {}).name || it.name});
+  if (!("asAuto" in (it.state || {}))) s.asAuto = false;  /* made before facts became one automation: stays a script until switched */
   openEditor(s, {id: it.id, isNew: false, pushed: !!(it.pushed_at || it.in_ha), saved: true});
 }
 function say(text, cls) { const m = $("#msg"); m.className = "msg " + (cls || ""); m.textContent = text; }
@@ -688,7 +795,7 @@ async function persist(push) {
   if (push) { const p = problems(); if (p) { say(p, "warn"); return; } }
   const s = clone(E);
   if (!cur.id) cur.id = uniqueId(fslug(s.name));
-  if (isAutoOnly(s)) s.autoId = cur.id;
+  if (viaAuto(s)) s.autoId = cur.id;
   const btns = [$("#save"), $("#push")]; btns.forEach(b => b.disabled = true);
   say(push ? "Pushing to Home Assistant..." : "Saving...");
   let r;
@@ -697,8 +804,8 @@ async function persist(push) {
   btns.forEach(b => b.disabled = false);
   if (!r.ok) { say(r.detail || r.error || "That failed.", "bad"); if (!cur.saved && !cur.pushed && !cur.fixedId) cur.id = null; paintState(); return; }
   cur.saved = true; cur.isNew = false; if (push) cur.pushed = true; dirty = false; paintState();
-  const am = push ? (ownAuto(s) ? " Your automation is pushed exactly as written." : s.raw == null && s.auto.on ? " The schedule (" + autoSummary(s.auto) + ") is on." : r.auto === "removed" ? " The old schedule was removed." : "") : "";
-  say(push ? "Done. " + (isAutoOnly(s) ? "The automation" : "script." + cur.id) + " is up to date in Home Assistant." + am : "Saved. Home Assistant still has the previous version." + (cur.pushed ? " Push to update it." : ""), "ok");
+  const am = push ? (isAsAuto(s) ? (s.auto.on ? " It runs " + autoSummary(s.auto) + "." : " It has no schedule, so use Run now.") + (r.cleaned ? " The old script and schedule automation were removed." : "") : ownAuto(s) ? " Your automation is pushed exactly as written." : s.raw == null && s.auto.on ? " The schedule (" + autoSummary(s.auto) + ") is on." : r.auto === "removed" ? " The old schedule was removed." : "") : "";
+  say(push ? "Done. " + (viaAuto(s) ? "The automation" : "script." + cur.id) + " is up to date in Home Assistant." + am : "Saved. Home Assistant still has the previous version." + (cur.pushed ? " Push to update it." : ""), "ok");
 }
 $("#save").onclick = () => persist(false);
 $("#push").onclick = () => persist(true);
@@ -716,8 +823,9 @@ $("#newfact").onclick = () => openNew();
 
 function gen() {
   if (!E) return;
-  $("#out").textContent = makeYaml(E);
-  $("#autodet").hidden = isAutoOnly(E) || (rawMode() && !ownAuto(E));
+  $("#out").textContent = isAsAuto(E) ? makeAutomation(E, cur.id || fslug(E.name)) : makeYaml(E);
+  const ys = $("#ymldet summary"); if (ys) ys.textContent = isAsAuto(E) ? "Show automation YAML" : "Show script YAML";
+  $("#autodet").hidden = isAutoOnly(E) || isAsAuto(E) || (rawMode() && !ownAuto(E));
   const a = makeAuto(E, cur.id || fslug(E.name));
   $("#autoout").textContent = a || (rawMode() && !ownAuto(E) ? "" : E.auto.on ? "Set a repeat time or an entity to watch to see the schedule." : "No schedule. Turn on \"Run it automatically\" to make one.");
   const t = $("#topicshow"); if (t) t.textContent = topicOf(E);
@@ -726,7 +834,7 @@ function gen() {
 $("#run").onclick = async () => {
   if (!cur.id) { say("Push it to Home Assistant first.", "warn"); return; }
   say("Starting...");
-  const r = await fapi("run", {id: cur.id, auto_only: isAutoOnly(E)}); say(r.ok ? "Started the saved " + (isAutoOnly(E) ? "automation." : "script.") : (r.detail || r.error), r.ok ? "ok" : "bad");
+  const r = await fapi("run", {id: cur.id, auto_only: viaAuto(E)}); say(r.ok ? "Started the saved " + (viaAuto(E) ? "automation." : "script.") : (r.detail || r.error), r.ok ? "ok" : "bad");
 };
 $("#copy").onclick = async () => {
   try { await navigator.clipboard.writeText($("#out").textContent); say("Copied.", "ok"); }
@@ -741,6 +849,11 @@ function showTest(r) {
   if (r.status === "error") { b.append(el("div", {class: "note bad"}, el("div", {}, el("b", {}, "Test failed"), pre(r.error)))); return; }
   const v = r.values || {};
   if (r.mode !== "data") {
+    if (v.fact_items !== undefined) {
+      const items = Array.isArray(v.fact_items) ? v.fact_items : [], key = listKeyOf(E || {});
+      b.append(el("b", {}, (r.mode === "full" ? "What it published" : "What it would publish") + " (" + items.length + " item" + (items.length === 1 ? "" : "s") + ")"),
+        pre(items.length ? JSON.stringify({[key]: items}, null, 1) : "(nothing: no items could be read, or none passed the filter. Check the raw answer below.)"));
+    } else
     b.append(el("b", {}, r.mode === "full" ? "What it published" : "What it would publish"), pre(v.fact_out != null && v.fact_out !== "" ? v.fact_out : "(nothing: the AI answer could not be read)"));
     if (r.ai_raw != null && String(r.ai_raw) !== String(v.fact_text)) b.append(el("details", {style: "margin-top:10px"}, el("summary", {}, "What the AI answered, raw"), pre(r.ai_raw)));
   }
@@ -776,13 +889,14 @@ function drawHelper() {
     if (!r.ok) { wr.textContent = r.error; return; }
     wr.replaceChildren();
     const nm = el("input", {value: r.name || ""}), tk = el("textarea", {value: r.task});
-    const fmt = {plain: "just the fact", titled: "a title and the fact", list: "a short list"}[r.style];
+    const fmt = {plain: "just the fact", titled: "a title and the fact", list: "a short list", json: "a JSON data list (" + (r.fields || []).map(f => f.key).join(", ") + ")"}[r.style];
     const ub = el("button", {class: "btn good", onclick: () => {
       const s = {name: nm.value || "My fact", task: tk.value, picks: r.picks, style: r.style, titleHint: r.title_hint, heading: r.heading, file: r.file, len: r.length, src: r.sources};
+      if (r.style === "json") Object.assign(s, {listKey: r.list_key || "items", fields: r.fields || [], count: r.count || 10, sortBy: r.sort_by || "", sortDir: r.sort_dir || "desc", useDate: !!r.uses_date, avoidLast: false});
       if (HEL.back && E) { Object.assign(E, s); HEL.back = false; $("#tabs").hidden = false; drawForm(); markDirty(); showView("edit"); }
       else openNew(s);
     }}, HEL.back ? "Use in this fact" : "Start a fact with this");
-    wr.append(el("label", {class: "l"}, "Script name"), nm, el("label", {class: "l"}, "Instructions (edit if you like)"), tk,
+    wr.append(el("label", {class: "l"}, "Name"), nm, el("label", {class: "l"}, "Instructions (edit if you like)"), tk,
       el("p", {class: "help"}, "Format: " + fmt + ". " + (r.picks.length ? "Random lists: " + r.picks.map(p => p.name + " (" + itemsOf(p).length + ")").join(", ") + "." : "No random lists.") + (r.file ? " File: " + r.file + "." : "")),
       el("div", {class: "row", style: "margin-top:10px"}, ub));
   };
