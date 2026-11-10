@@ -16,6 +16,7 @@ A collection of custom Home Assistant add-ons (apps). Add this repository once a
 | 🖼️ | [**Photo Hub**](photo_shuffle) | Folder shuffles and random Unsplash photos, all published as image entities. Manage everything from one web UI. | MQTT (Unsplash key for Unsplash collections) |
 | 🎬 | [**Release Tracker**](release-tracker) | Pick the TV shows and movies you care about and get sensors for what is coming out and when. | Free TMDB API key |
 | 🏈 | [**Team Tracker Lite**](team_tracker_lite) | One lightweight live sports sensor. Pick any team from a menu, with a calendar of every game for your saved teams. | MQTT |
+| 🚗 | [**Travel Times**](travel_times) | Live drive-time sensors (Waze) from each person to each destination, polled faster while someone is moving. Pick people and destinations in the web UI. | MQTT |
 | 🎙️ | [**Voice Chat**](voice_chat) | Hands-free voice conversation with any Home Assistant AI agent, answered out loud on the speaker you choose. | A conversation agent, a TTS engine and a media player |
 | ⏱️ | [**Work Hours Tracker**](work_hours) | Logs how long each person spends in the work zones you pick for them, saved as one file per person, with MQTT sensors. | Home Assistant zones (MQTT optional) |
 
