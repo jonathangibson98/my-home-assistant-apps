@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.1.0
+
+- **Idle place lookup.** When someone has stayed at one spot for the configured time, their entry on the
+  location sensor now shows what is at their GPS coordinates (a business name, else a street address)
+  instead of only `City, State`. It goes back to the city as soon as they move away.
+- New options `idle_minutes` (default 10, `0` turns it off) and `idle_radius_m` (default 100) in the
+  Configuration tab.
+- Named zones and Home are unchanged: the lookup only replaces the `City, State` result.
+
 ## 3.0.0
 
 - **Removed the map.** Live map, history, timeline, places, map settings, import/export/backfill, the read-only

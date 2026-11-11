@@ -16,7 +16,7 @@ The add-on opens on a **home page** with a tile for every section: the Location 
 ### Location
 
 - **Switches**: live on/off for `input_boolean.*` / `switch.*` entities. They appear when a Dashboard card person has such a tap entity, or a Sensor tracker has "Show as switch" on.
-- **Devices**: the sensor name, plus one row per person (label, entity, optional home-state override). The sensor state is the number of people home; each person is an attribute (`jon: Home`, `mj: Greenville, South Carolina`). Home is decided by `zone.home` for entities with GPS, or the entity's own state without GPS. Away cities come from OpenStreetMap Nominatim.
+- **Devices**: the sensor name, plus one row per person (label, entity, optional home-state override). The sensor state is the number of people home; each person is an attribute (`jon: Home`, `mj: Greenville, South Carolina`). Home is decided by `zone.home` for entities with GPS, or the entity's own state without GPS. Away cities come from OpenStreetMap Nominatim. After a person has stayed at one spot for `idle_minutes`, their entry becomes what is at those coordinates (for example `Starbucks` or `12 Oak Street`) until they move; named zones and Home are never replaced.
 - **Sensor trackers**: each row becomes a `device_tracker`. A matching home state means Home at your house coordinates, anything else is Away, unavailable/unknown is ignored. Deleting a row deletes the tracker.
 - **Dashboard card**: group, tap entity and picture per person, plus titles, columns and the separator. Save, then copy the YAML (needs Mushroom and Bubble Card from HACS). New people appear here after you save them on Devices.
 
@@ -36,6 +36,8 @@ Requirements for these pages: an MQTT broker (Mosquitto add-on or external) for 
 | `sensor_name` | The name of the location sensor in Home Assistant, for example `Household Locations`. Change it and restart the add-on to rename the sensor (see *Naming the location sensor* below). |
 | `sync_entity_id` | On by default. When the name changes, the entity ID is renamed to match. Turn off to keep your current entity ID. |
 | `unique_id` | Optional. Paste the Unique ID from an old Location Tracker / Location Hub to keep the same sensor. First run only. |
+| `idle_minutes` | Default 10. Once a person has stayed at one spot this many minutes, their entry on the location sensor shows what is there (a business name, else a street address) instead of `City, State`. `0` turns it off. |
+| `idle_radius_m` | Default 100. How far (in meters) a phone can drift and still count as staying at one spot. |
 | `log_level`, `log_location_updates` | Logging. |
 | `mqtt_host`, `mqtt_port`, `mqtt_username`, `mqtt_password` | For the location sensor and device trackers. Leave blank to use the Mosquitto add-on. |
 
@@ -81,5 +83,5 @@ Set the log level to `DEBUG` in the app's Configuration tab for more detail.
 
 ## What it does not do
 
-- It does not talk to Apple, Google or any cloud service for locations. It only reads Home Assistant. Away city names come from OpenStreetMap Nominatim.
+- It does not talk to Apple, Google or any cloud service for locations. It only reads Home Assistant. Away city names and idle place names come from OpenStreetMap Nominatim.
 - It does not record location history or draw a map.
