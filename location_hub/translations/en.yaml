@@ -14,6 +14,12 @@ configuration:
   log_location_updates:
     name: Log location updates
     description: Write a log line each time the location sensor changes.
+  idle_minutes:
+    name: Idle time (minutes)
+    description: After a person has stayed at one spot this long, their entry on the location sensor shows what is there (a business name or street address) instead of just the city. Set 0 to turn this off.
+  idle_radius_m:
+    name: Idle radius (meters)
+    description: How far a phone may drift and still count as staying at one spot. GPS jitter is usually under 50 m. Default 100.
   mqtt_host:
     name: MQTT host
     description: Leave blank to use the Mosquitto add-on.
