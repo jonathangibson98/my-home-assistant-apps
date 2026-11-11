@@ -118,6 +118,22 @@ _sync = {"next": 0.0, "warned": "", "error": ""}
 
 cache = {}
 
+# ---------------- Idle detection (what is at the spot a device has been sitting at) ----------------
+def _opt_int(name, default, lo, hi):
+    try:
+        v = int(opts.get(name, default))
+    except (TypeError, ValueError):
+        v = default
+    return max(lo, min(hi, v))
+
+IDLE_SECONDS = _opt_int("idle_minutes", 10, 0, 1440) * 60      # 0 turns the feature off
+IDLE_RADIUS = _opt_int("idle_radius_m", 100, 25, 2000)          # staying inside this circle counts as "one spot"
+IDLE_RETRY = 300                                                # seconds before retrying a failed lookup
+idle = {}          # person label -> {"lat", "lon", "since", "next"}: where they have been sitting, since when
+place_cache = {}   # (lat, lon) rounded -> what is there
+_geo = {"last": 0.0, "lock": asyncio.Lock()}
+POI_KEYS = ("amenity", "shop", "tourism", "leisure", "office", "healthcare", "craft", "historic", "man_made")
+
 # ---------------- Entity ID (renamed through Home Assistant's entity registry) ----------------
 async def _ws_call(ws, mid, payload):
     await ws.send_json({"id": mid, **payload})
@@ -400,7 +416,61 @@ async def city_state(s, lat, lon):
     cache[key] = out
     return out
 
-async def resolve(s, eid, home_state):
+async def place_name(s, lat, lon):
+    """What is at these coordinates: a business or place name, else a street address. None on failure.
+
+    Uses OpenStreetMap Nominatim at building level. Results are cached, and requests are spaced a
+    second apart as Nominatim's usage policy asks.
+    """
+    key = (round(lat, 4), round(lon, 4))
+    if key in place_cache:
+        return place_cache[key]
+    out = None
+    try:
+        async with _geo["lock"]:
+            wait = 1.1 - (time.time() - _geo["last"])
+            if wait > 0:
+                await asyncio.sleep(wait)
+            _geo["last"] = time.time()
+            async with s.get("https://nominatim.openstreetmap.org/reverse",
+                params={"lat": lat, "lon": lon, "format": "jsonv2", "zoom": 18, "addressdetails": 1},
+                headers={"User-Agent": "HA-LocationTracker"},
+                timeout=aiohttp.ClientTimeout(total=8)) as r:
+                if r.status != 200:
+                    raise RuntimeError(f"HTTP {r.status}")
+                j = await r.json()
+        a = j.get("address") or {}
+        name = ""
+        if j.get("category") not in ("highway", "boundary", "place") or j.get("type") in ("house", "building"):
+            name = (j.get("name") or "").strip()
+        if not name:
+            for k in POI_KEYS:
+                if a.get(k):
+                    name = str(a[k]).strip()
+                    break
+        if not name:
+            road = a.get("road") or a.get("pedestrian") or a.get("footway") or a.get("path")
+            if road:
+                num = a.get("house_number")
+                name = f"{num} {road}" if num else road
+        out = name or None
+    except Exception as e:  # noqa: BLE001
+        logging.error(f"Place lookup failed: {e}")
+    if out:
+        if len(place_cache) > 500:
+            place_cache.clear()
+        place_cache[key] = out
+    return out
+
+def idle_track(label, lat, lon):
+    """Note where `label` is. Returns the idle spot dict; its "since" restarts when they leave the circle."""
+    now = time.time()
+    spot = idle.get(label)
+    if spot is None or dist(lat, lon, spot["lat"], spot["lon"]) > IDLE_RADIUS:
+        spot = idle[label] = {"lat": lat, "lon": lon, "since": now, "next": 0.0}
+    return spot
+
+async def resolve(s, eid, home_state, label=None):
     d = await state(s, eid)
     if not d:
         return "unknown", False
@@ -408,6 +478,7 @@ async def resolve(s, eid, home_state):
 
     # Case-insensitive on both sides: Home / HOME / home all match
     if home_state and st.strip().lower() == home_state.lower():
+        idle.pop(label, None)
         return "Home", True
 
     lat, lon = at.get("latitude"), at.get("longitude")
@@ -417,11 +488,27 @@ async def resolve(s, eid, home_state):
             if z:
                 za = z["attributes"]
                 if dist(lat, lon, za["latitude"], za["longitude"]) <= za.get("radius", 100):
+                    idle.pop(label, None)
                     return "Home", True
         if st.lower() in ("home", "not_home"):
+            if IDLE_SECONDS and label:
+                spot = idle_track(label, lat, lon)
+                now = time.time()
+                if now - spot["since"] >= IDLE_SECONDS and now >= spot["next"]:
+                    place = await place_name(s, spot["lat"], spot["lon"])
+                    if place:
+                        if spot.get("place") != place:
+                            spot["place"] = place
+                            logging.info(f"{label} has been at one spot for {int((now - spot['since']) / 60)} min: {place}")
+                        return place, False
+                    spot["next"] = now + IDLE_RETRY
+                elif spot.get("place") and now - spot["since"] >= IDLE_SECONDS:
+                    return spot["place"], False
             return await city_state(s, lat, lon), False
+        idle.pop(label, None)
         return st, False
 
+    idle.pop(label, None)
     if not home_state and st.lower() == "home":
         return "Home", True
     if st.lower() == "not_home":
@@ -433,7 +520,7 @@ async def update(s):
     ENT = refresh_entities_map()
     attrs, count = {}, 0
     for label, (eid, home_state) in ENT.items():
-        val, home = await resolve(s, eid, home_state)
+        val, home = await resolve(s, eid, home_state, label)
         attrs[label] = val
         count += home
 
@@ -527,6 +614,19 @@ async def safe_update_all(s):
     await safe_update(s)
     await safe_update_trackers(s)
     await maybe_sync_entity(s)
+
+async def idle_watch(s):
+    """A phone that sits still sends no updates, so nothing would trigger the lookup. Check every 30 s
+    for anyone who has just passed the idle time and refresh the sensor for them."""
+    while True:
+        await asyncio.sleep(30)
+        if not IDLE_SECONDS:
+            return
+        now = time.time()
+        for spot in list(idle.values()):
+            if now - spot["since"] >= IDLE_SECONDS and now >= spot["next"] and not spot.get("place"):
+                await safe_update(s)
+                break
 
 async def backstop(s):
     while True:
@@ -892,6 +992,7 @@ def add_routes(app):
 
 async def run_background(s):
     asyncio.create_task(backstop(s))
+    asyncio.create_task(idle_watch(s))
     while True:
         try:
             await listen(s)
