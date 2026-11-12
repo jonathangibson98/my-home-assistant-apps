@@ -20,6 +20,12 @@ configuration:
   idle_radius_m:
     name: Idle radius (meters)
     description: How far a phone may drift and still count as staying at one spot. GPS jitter is usually under 50 m. Default 100.
+  backup_path:
+    name: Backup folder
+    description: Where the Backup page saves backups. Must be inside /share, which is kept when the add-on is uninstalled.
+  backup_keep:
+    name: Backups to keep
+    description: How many saved backups to keep. The oldest are deleted when you save a new one. Safety copies made before a restore are never deleted.
   mqtt_host:
     name: MQTT host
     description: Leave blank to use the Mosquitto add-on.
