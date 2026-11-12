@@ -64,12 +64,13 @@ const $=s=>document.querySelector(s);
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const DAYS=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const SECS={loc:["Location",[["switches","Switches"],["devices","Devices"],["trackers","Sensor trackers"],["card","Dashboard card"]]],
- alerts:["Alerts",[["places","Places"],["people","People & sensors"],["notify","Notifications"],["log","Activity"]]]};
-const SUBS={loc:"Where everyone is, what is switched on, and your dashboard card.",alerts:"Pick the places, pick who triggers them, pick how the message sounds."};
+ alerts:["Alerts",[["places","Places"],["people","People & sensors"],["notify","Notifications"],["log","Activity"]]],
+ backup:["Backup",[["backup","Backup & restore"]]]};
+const SUBS={loc:"Where everyone is, what is switched on, and your dashboard card.",alerts:"Pick the places, pick who triggers them, pick how the message sounds.",backup:"Save everything this add-on keeps, or restore it after a reinstall."};
 let cfg,loc={settings:{},devices:[],trackers:[],card:{rows:[]}},ent={zones:[],trackable:[],ai:[],notify:[],toggles:[],location_sensor:""};
 const hp=location.hash.slice(1).split("/");
 let sec=SECS[hp[0]]?hp[0]:"loc",tab=(SECS[sec][1].some(t=>t[0]===hp[1])?hp[1]:null)||"switches",open=new Set(),dirty=new Set(),busy=false;
-const mem={loc:"switches",alerts:"places"};
+const mem={loc:"switches",alerts:"places",backup:"backup"};
 if(!SECS[sec][1].some(t=>t[0]===tab))tab=mem[sec];
 mem[sec]=tab;
 const uid=()=>Math.random().toString(36).slice(2,9);
@@ -101,6 +102,8 @@ function render(){
   $("#seg").innerHTML=`<button data-nav="">Home</button>`+Object.entries(SECS).map(([k,v])=>`<button data-sec="${k}" class="${k===sec?"on":""}">${v[0]}</button>`).join("");
   $("#nav").innerHTML=SECS[sec][1].map(([k,l])=>`<button data-tab="${k}" class="${k===tab?"on":""}">${l}</button>`).join("");
   $("#view").innerHTML=VIEWS[tab]();
+  $(".bar").style.display=sec==="backup"?"none":"";
+  if(tab==="backup")loadBackup();
   if(tab==="log")loadLog();
   if(tab==="switches")loadSwitches();
 }
@@ -227,7 +230,51 @@ function cardV(){
     <textarea id="yaml" readonly style="min-height:260px;font:12px/1.4 ui-monospace,monospace;white-space:pre">${esc(c.yaml)}</textarea>
     <div class="btns"><button class="b pri" data-act="copy">Copy card YAML</button></div></div></div>`;
 }
-const VIEWS={switches:switchesV,devices:devicesV,trackers:trackersV,card:cardV,places:placesV,people:peopleV,notify:notifyV,log:logV};
+/* ---------- Backup ---------- */
+const bkLine=s=>`${s.devices} device${s.devices===1?"":"s"}, ${s.trackers} sensor tracker${s.trackers===1?"":"s"}, ${s.places} place${s.places===1?"":"s"}, ${s.people} ${s.people===1?"person":"people"}`;
+const backupV=()=>`<div id="bkres"></div>
+  <div class="card"><div class="bd" style="border:0">
+    <b style="display:block;margin-top:12px">Save a backup</b>
+    <div class="hint" id="bkwhere">Loading…</div>
+    <div class="hint">Includes your devices, sensor trackers, dashboard card, alert places and people, and the add-on options. The MQTT password is not saved.</div>
+    <div class="btns"><button class="b pri" data-act="bk-save">Save backup now</button><button class="b" data-act="bk-dl">Download a copy</button></div></div></div>
+  <div class="card"><div class="bd" style="border:0">
+    <b style="display:block;margin-top:12px">Restore</b>
+    <div class="hint">Replaces your current Location and Alerts settings. A safety copy of what you have now is saved first, and the add-on restarts.</div>
+    <div class="chips"><label class="chip"><input type="checkbox" id="bkopts" checked>Also restore the add-on options</label></div>
+    <div class="btns"><button class="b" data-act="bk-pick">Restore from a file…</button></div>
+    <input type="file" id="bkfile" accept=".json,application/json" hidden></div></div>
+  <div id="bkbox"></div>`;
+async function loadBackup(){
+  if(tab!=="backup"||!$("#bkbox"))return;
+  try{
+    const d=await api("api/hub/backup");
+    if(tab!=="backup"||!$("#bkbox"))return;
+    $("#bkwhere").innerHTML=`Saved to <code>${esc(d.path)}</code>, which is kept if you uninstall the add-on. The newest ${d.keep} backups are kept. Right now: ${esc(bkLine(d.current))}.`;
+    $("#bkbox").innerHTML=d.files.length?d.files.map(f=>`<div class="card"><div class="ev"><b>${esc(f.created||f.file)}</b> <small>${f.kind==="safety"?"safety copy made before a restore":"backup"}${f.version?" · v"+esc(f.version):""}</small><br><small>${esc(bkLine(f.summary))}</small>
+      <div class="btns" style="margin-top:8px"><button class="b del" data-act="bk-restore" data-file="${esc(f.file)}">Restore</button><button class="b" data-act="bk-get" data-file="${esc(f.file)}">Download</button></div></div></div>`).join(""):`<div class="card"><div class="ev">No saved backups yet.</div></div>`;
+  }catch(e){const w=$("#bkwhere");if(w)w.textContent="Could not load: "+e.message}
+}
+async function bkDownload(file){
+  const r=await fetch(BASE+"api/hub/backup/download"+(file?"?file="+encodeURIComponent(file):""));
+  if(!r.ok)throw new Error("HTTP "+r.status);
+  const b=await r.blob(),a=document.createElement("a");
+  a.href=URL.createObjectURL(b);a.download=file||("location_hub_backup_"+new Date().toISOString().slice(0,10)+".json");
+  document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+}
+async function bkRestore(body){
+  if(dirty.size&&!confirm("You have unsaved changes on other pages. They will be lost. Continue?"))return;
+  if(!confirm("Replace your current Location Hub settings with this backup? A safety copy of what you have now is saved first, and the add-on restarts."))return;
+  const show=(h,err)=>{const b=$("#bkres");if(b)b.innerHTML=`<div class="res${err?" err":""}">${h}</div>`};
+  show("Restoring…");
+  try{
+    const r=await api("api/hub/backup/restore",Object.assign({options:$("#bkopts")?$("#bkopts").checked:true},body));
+    dirty.clear();stat();
+    show(`Restored ${esc(bkLine(r.summary))}.\nAdd-on options: ${esc(r.options)}. Safety copy: ${esc(r.safety)}.\n${r.restarting?"The add-on is restarting. This page reloads in a few seconds.":"Restart the add-on to finish."}`);
+    if(r.restarting)setTimeout(()=>location.reload(),12000);
+  }catch(e){show(esc(e.message),true)}
+}
+const VIEWS={backup:backupV,switches:switchesV,devices:devicesV,trackers:trackersV,card:cardV,places:placesV,people:peopleV,notify:notifyV,log:logV};
 
 
 function setPath(path,val){
@@ -252,6 +299,10 @@ async function save(quiet){
 document.addEventListener("input",e=>{const t=e.target;if(t.dataset.k){setPath(t.dataset.k,t.type==="number"?Number(t.value):t.type==="checkbox"?t.checked:t.value)}});
 document.addEventListener("change",e=>{
   const t=e.target,d=t.dataset;
+  if(t.id==="bkfile"&&t.files[0]){
+    t.files[0].text().then(txt=>{let o;try{o=JSON.parse(txt)}catch(err){toast("That file is not valid JSON");return}bkRestore({data:o})});
+    t.value="";return;
+  }
   if(d.k&&t.type==="checkbox")setPath(d.k,t.checked);
   if(d.who!==undefined||d.day!==undefined){
     const i=d.who??d.day,f=d.who!==undefined?"who":"days",v=d.who!==undefined?t.value:Number(t.value),a=cfg.places[i][f];
@@ -272,6 +323,14 @@ document.addEventListener("click",async e=>{
     try{await api("api/hub/toggle",{entity_id:d.eid})}catch(err){toast("Could not toggle "+d.eid)}
     busy=false;setTimeout(loadSwitches,500);
   }
+  if(d.act==="bk-save"){
+    const b=$("#bkres");b.innerHTML='<div class="res">Saving…</div>';
+    try{const r=await api("api/hub/backup/save",{});b.innerHTML=`<div class="res">Saved <b>${esc(r.file)}</b> to ${esc(r.path)}\n${esc(bkLine(r.summary))}</div>`;loadBackup()}
+    catch(err){b.innerHTML=`<div class="res err">${esc(err.message)}</div>`}
+  }
+  if(d.act==="bk-dl"||d.act==="bk-get")bkDownload(d.file).catch(err=>toast("Download failed: "+err.message));
+  if(d.act==="bk-restore")bkRestore({file:d.file});
+  if(d.act==="bk-pick")$("#bkfile").click();
   if(d.act==="adddev"){loc.devices.push({label:"",entity_id:"",home_state:""});mark("devices");render()}
   if(d.act==="deld"&&confirm("Remove this device?")){loc.devices.splice(i,1);mark("devices");render()}
   if(d.act==="addtrk"){loc.trackers.push({id:"",label:"",entity_id:"",home_state:"",toggle:false,tracker_id:""});mark("trackers");render()}

@@ -41,7 +41,9 @@ const GROUPS=[
   ["🔔","Arrival places","Zones, who, timing and style","hub#alerts/places"],
   ["🧑‍🤝‍🧑","People & sensors","Who alerts track, notes for the writer","hub#alerts/people"],
   ["💬","Notifications","AI task, notify service and limits","hub#alerts/notify"],
-  ["📜","Activity","Last sent, skipped and previewed alerts","hub#alerts/log"]]]];
+  ["📜","Activity","Last sent, skipped and previewed alerts","hub#alerts/log"]]],
+ ["Backup",[
+  ["💾","Backup & restore","Save or restore all your settings","hub#backup/backup"]]]];
 document.getElementById("groups").innerHTML=GROUPS.map(([g,tiles])=>
  `<h2>${g}</h2><div class="grid">${tiles.map(([i,t,d,h,big])=>`<a class="tile${big?" big":""}" href="${h}"><span class="ic" aria-hidden="true">${i}</span><b>${esc(t)}</b><small>${esc(d)}</small></a>`).join("")}</div>`).join("");
 </script>
