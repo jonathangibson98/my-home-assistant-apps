@@ -11,7 +11,7 @@ from aiohttp import web
 
 import hub
 
-VERSION = os.environ.get("MT_VERSION") or "3.1.0"
+VERSION = os.environ.get("MT_VERSION") or "3.3.0"
 ADMIN_ALLOW = {"172.30.32.2", "127.0.0.1", "::1"} | set(filter(None, os.environ.get("MT_ADMIN_ALLOW", "").split(",")))
 
 
