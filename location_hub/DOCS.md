@@ -38,6 +38,8 @@ Requirements for these pages: an MQTT broker (Mosquitto add-on or external) for 
 | `unique_id` | Optional. Paste the Unique ID from an old Location Tracker / Location Hub to keep the same sensor. First run only. |
 | `idle_minutes` | Default 10. Once a person has stayed at one spot this many minutes, their entry on the location sensor shows what is there (a business name, else a street address) instead of `City, State`. `0` turns it off. |
 | `idle_radius_m` | Default 100. How far (in meters) a phone can drift and still count as staying at one spot. |
+| `backup_path` | Default `/share/location_hub_backups`. Where the Backup page saves backups. Must be inside `/share`. |
+| `backup_keep` | Default 20. How many saved backups to keep; the oldest are deleted when you save a new one. |
 | `log_level`, `log_location_updates` | Logging. |
 | `mqtt_host`, `mqtt_port`, `mqtt_username`, `mqtt_password` | For the location sensor and device trackers. Leave blank to use the Mosquitto add-on. |
 
@@ -70,7 +72,13 @@ The pages keep `devices.json`, `trackers.json`, `settings.json`, `card.json` and
 
 ## Backups
 
-Everything lives in the app's `/data`, which is included in Home Assistant backups.
+Two ways, and they work together:
+
+- **The Backup page** (home page tile, or the **Backup** button at the top of the page). **Save backup now** writes one JSON file with your devices, sensor trackers, dashboard card, sensor settings, alert places and people, and the add-on options. Files go to `backup_path` (default `/share/location_hub_backups`), which is **kept when you uninstall the add-on**. The newest `backup_keep` (default 20) are kept. **Download a copy** saves the same file to your phone or computer.
+- **Restore** picks a saved backup, or a file you upload. Before anything changes, a safety copy of your current data is saved (shown in the same list, never deleted automatically). Then the files are replaced, the add-on options are restored if you leave that ticked, and the add-on restarts. Your MQTT password is never put in a backup, and a restore keeps the one you have now.
+- **Home Assistant's own backups** also include the add-on's `/data`, and are the way to carry the add-on's options across an uninstall if you did not save a backup first.
+
+To move to a fresh install: save a backup, uninstall, reinstall, open the Backup page and restore it.
 
 ## Troubleshooting
 

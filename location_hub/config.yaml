@@ -1,5 +1,5 @@
 name: "Location Hub"
-version: "3.2.0"
+version: "3.3.0"
 slug: location_hub
 # Prebuilt images from your GitHub package (built by .github/workflows/create.yml when you push a new version to main).
 # Home Assistant fills in {arch}, then downloads this instead of building on the Pi.
@@ -27,6 +27,10 @@ homeassistant_api: true
 services:
   - mqtt:want
 
+# Backups are saved under /share, which is kept when the add-on is uninstalled.
+map:
+  - share:rw
+
 watchdog: "http://[HOST]:[PORT:8099]/health"
 
 options:
@@ -37,6 +41,8 @@ options:
   log_location_updates: true
   idle_minutes: 10
   idle_radius_m: 100
+  backup_path: "/share/location_hub_backups"
+  backup_keep: 20
   mqtt_host: ""
   mqtt_port: 1883
   mqtt_username: ""
@@ -49,6 +55,8 @@ schema:
   log_location_updates: bool
   idle_minutes: int(0,1440)
   idle_radius_m: int(25,2000)
+  backup_path: str
+  backup_keep: int(1,200)
   mqtt_host: str?
   mqtt_port: int?
   mqtt_username: str?

@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.3.0
+
+- **Backup & restore.** New Backup section (home page tile, or the Backup button at the top of the Location Hub
+  page). Save everything the add-on keeps (devices, sensor trackers, dashboard card, sensor settings, alert
+  places and people) plus the add-on options to a file in `/share/location_hub_backups`, which survives
+  uninstalling the add-on. Restore from a saved backup or an uploaded file; a safety copy of your current data
+  is saved first. The MQTT password is never written to a backup, and a restore keeps the one you have now.
+- New options `backup_path` and `backup_keep` in the Configuration tab.
+
 ## 3.1.0
 
 - **Idle place lookup.** When someone has stayed at one spot for the configured time, their entry on the
