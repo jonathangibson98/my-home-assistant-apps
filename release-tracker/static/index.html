@@ -56,6 +56,8 @@
   .chip { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--dim); font: inherit; font-size: 0.78rem; cursor: pointer; }
   .chip.on { background: var(--accent); border-color: var(--accent); color: #1a0f14; font-weight: 600; }
   .who { margin-bottom: 14px; }
+  .kind { margin: 0 0 12px; }
+  .kind .chip { padding: 7px 14px; font-size: 0.85rem; }
   .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ok); color: #08261a; padding: 10px 16px; border-radius: 10px; font-weight: 600; opacity: 0; transition: opacity .2s; pointer-events: none; }
   .toast.show { opacity: 1; }
   @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
@@ -76,6 +78,10 @@
   </section>
 
   <section id="tab-add" hidden>
+    <div class="chips kind" id="kind">
+      <button class="chip on" data-kind="video" aria-pressed="true">TV &amp; Movies</button>
+      <button class="chip" data-kind="games" aria-pressed="false">Games &amp; DLC</button>
+    </div>
     <div class="row">
       <input id="q" placeholder="Search a show or movie" enterkeyhint="search">
       <button class="btn" id="go">Search</button>
@@ -105,6 +111,12 @@
     <label for="s-window">Show releases coming in the next (days)</label>
     <input id="s-window" type="number" min="1">
 
+    <h2>Video games (IGDB)</h2>
+    <div class="hint">Free. Log in at dev.twitch.tv/console, register an app, and paste its Client ID and a new Client Secret here. Only needed for games and DLC.</div>
+    <label for="s-gid">Twitch Client ID</label><input id="s-gid" autocomplete="off">
+    <label for="s-gsec">Twitch Client Secret</label><input id="s-gsec" type="password" autocomplete="off">
+    <div class="hint" id="games-hint"></div>
+
     <h2>MQTT broker</h2>
     <div class="hint">Leave blank to use the Mosquitto add-on in Home Assistant. Fill in only if your broker is somewhere else.</div>
     <label for="s-mhost">Host</label><input id="s-mhost">
@@ -123,6 +135,7 @@ const $ = s => document.querySelector(s);
 const IMG = "https://image.tmdb.org/t/p/w154";
 let state = null;
 let chosen = new Set();
+let kind = "video";
 
 async function api(path, opts) {
   const r = await fetch("api/" + path, opts);
@@ -143,7 +156,7 @@ function el(tag, cls, text) {
 function poster(path) {
   const i = el("img", "poster");
   i.alt = ""; i.loading = "lazy";
-  if (path) i.src = IMG + path;
+  if (path) i.src = path.startsWith("http") ? path : IMG + path;
   return i;
 }
 function prettyDate(s) {
@@ -156,61 +169,77 @@ document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   ["tracking", "add", "settings"].forEach(t => $("#tab-" + t).hidden = (t !== b.dataset.tab));
 });
 
-function render() {
-  const list = $("#list"); list.replaceChildren();
-  const items = [...state.tracked].sort((a, b) => {
-    const da = a.days_until, db = b.days_until;
-    if (da === null && db === null) return (a.title || "").localeCompare(b.title || "");
-    if (da === null) return 1; if (db === null) return -1;
-    return da - db;
-  });
-  if (!items.length) {
-    list.append(el("div", "empty", "Nothing tracked yet. Head to Add and pick something."));
-    return;
-  }
-  for (const it of items) {
-    const info = it.info || {};
-    const card = el("div", "item");
-    card.append(poster(info.poster || it.poster));
-    const body = el("div", "body");
-    body.append(el("div", "title", info.title || it.title));
-    body.append(el("div", "sub", info.label || "Not checked yet"));
-    if (info.next_date) body.append(el("div", "sub", prettyDate(info.next_date)));
+function byDays(a, b) {
+  const da = a.days_until, db = b.days_until;
+  if (da === null && db === null) return (a.title || "").localeCompare(b.title || "");
+  if (da === null) return 1; if (db === null) return -1;
+  return da - db;
+}
+
+function card(it) {
+  const isGame = it.type === "game";
+  const info = it.info || {};
+  const c = el("div", "item");
+  c.append(poster(info.poster || it.poster));
+  const body = el("div", "body");
+  body.append(el("div", "title", info.title || it.title));
+  body.append(el("div", "sub", info.label || "Not checked yet"));
+  if (info.next_date) body.append(el("div", "sub", prettyDate(info.next_date)));
+  if (!isGame) {
     const chips = el("div", "chips");
     for (const name of state.settings.people) {
       const on = (it.people || []).includes(name);
-      const c = el("button", "chip" + (on ? " on" : ""), name);
-      c.setAttribute("aria-pressed", on);
-      c.onclick = async () => {
+      const b = el("button", "chip" + (on ? " on" : ""), name);
+      b.setAttribute("aria-pressed", on);
+      b.onclick = async () => {
         const next = on ? it.people.filter(p => p !== name) : [...(it.people || []), name];
         await api(`track/${it.type}/${it.id}/people`, { method: "PUT", body: JSON.stringify({ people: next }) });
         await load();
       };
-      chips.append(c);
+      chips.append(b);
     }
     body.append(chips);
-    if (it.error) body.append(el("div", "err", it.error));
-    card.append(body);
+  }
+  if (it.error) body.append(el("div", "err", it.error));
+  c.append(body);
 
-    const when = el("div", "when");
-    if (it.days_until === null || it.days_until === undefined) {
-      when.append(el("div", "quiet", it.type === "tv" ? "TV" : "Movie"));
-    } else if (it.days_until === 0) {
-      when.append(el("div", "big soon", "Today"));
-    } else if (it.days_until < 0) {
-      when.append(el("div", "quiet", "Out"));
-    } else {
-      when.append(el("div", "big" + (it.days_until <= 7 ? " soon" : ""), String(it.days_until)));
-      when.append(el("div", "unit", it.days_until === 1 ? "day" : "days"));
-    }
-    const rm = el("button", "x", "Remove");
-    rm.onclick = async () => {
-      await api(`track/${it.type}/${it.id}`, { method: "DELETE" });
-      await load();
-    };
-    when.append(rm);
-    card.append(when);
-    list.append(card);
+  const when = el("div", "when");
+  if (it.days_until === null || it.days_until === undefined) {
+    when.append(el("div", "quiet", it.type === "tv" ? "TV" : isGame ? "Game" : "Movie"));
+  } else if (it.days_until === 0) {
+    when.append(el("div", "big soon", "Today"));
+  } else if (it.days_until < 0) {
+    when.append(el("div", "quiet", "Out"));
+  } else {
+    when.append(el("div", "big" + (it.days_until <= 7 ? " soon" : ""), String(it.days_until)));
+    when.append(el("div", "unit", it.days_until === 1 ? "day" : "days"));
+  }
+  const rm = el("button", "x", "Remove");
+  rm.onclick = async () => {
+    await api(`track/${it.type}/${it.id}`, { method: "DELETE" });
+    await load();
+  };
+  when.append(rm);
+  c.append(when);
+  return c;
+}
+
+function render() {
+  const list = $("#list"); list.replaceChildren();
+  if (!state.tracked.length) {
+    list.append(el("div", "empty", "Nothing tracked yet. Head to Add and pick something."));
+    return;
+  }
+  const groups = [
+    ["TV & Movies", state.tracked.filter(t => t.type !== "game")],
+    ["Games & DLC", state.tracked.filter(t => t.type === "game")],
+  ];
+  for (const [name, items] of groups) {
+    if (!items.length) continue;
+    const h = el("h2", null, name);
+    h.style.marginTop = list.children.length ? "22px" : "4px";
+    list.append(h);
+    for (const it of [...items].sort(byDays)) list.append(card(it));
   }
 }
 
@@ -228,6 +257,8 @@ function renderSettings() {
   }
   $("#s-hours").value = s.refresh_hours;
   $("#s-window").value = s.window_days;
+  $("#s-gid").value = s.igdb_id || "";
+  $("#games-hint").textContent = s.has_games_key ? "Games are set up. Leave the secret blank to keep it." : "Not set up yet. Games search will not work until you add both.";
   $("#s-mhost").value = s.mqtt_host;
   $("#s-mport").value = s.mqtt_port;
   $("#s-muser").value = s.mqtt_user;
@@ -238,7 +269,7 @@ function renderSettings() {
 async function load() {
   state = await api("state");
   render(); renderSettings();
-  if (!state.settings.has_key) document.querySelector('[data-tab="settings"]').click();
+  if (!state.settings.has_key && !state.settings.has_games_key) document.querySelector('[data-tab="settings"]').click();
 }
 
 async function search() {
@@ -246,7 +277,7 @@ async function search() {
   if (!q) return;
   const box = $("#results"); box.replaceChildren(el("div", "quiet", "Searching..."));
   try {
-    const res = await api("search?q=" + encodeURIComponent(q));
+    const res = await api("search?q=" + encodeURIComponent(q) + (kind === "games" ? "&kind=games" : ""));
     box.replaceChildren();
     if (!res.length) { box.append(el("div", "empty", "No matches. Try different words.")); return; }
     for (const r of res) {
@@ -255,7 +286,7 @@ async function search() {
       card.append(poster(r.poster));
       const body = el("div", "body");
       body.append(el("div", "title", r.title));
-      body.append(el("div", "sub", (r.type === "tv" ? "TV" : "Movie") + (r.year ? " (" + r.year + ")" : "")));
+      body.append(el("div", "sub", (r.type === "tv" ? "TV" : r.type === "game" ? (r.kind || "Game") : "Movie") + (r.year ? " (" + r.year + ")" : "")));
       if (r.overview) body.append(el("div", "sub", r.overview));
       card.append(body);
       const when = el("div", "when");
@@ -263,7 +294,7 @@ async function search() {
       b.disabled = tracked;
       b.onclick = async () => {
         b.disabled = true; b.textContent = "Adding...";
-        try { await api("track", { method: "POST", body: JSON.stringify({ ...r, people: [...chosen] }) }); b.textContent = "Tracking"; await load(); toast("Added " + r.title); }
+        try { await api("track", { method: "POST", body: JSON.stringify({ ...r, people: r.type === "game" ? [] : [...chosen] }) }); b.textContent = "Tracking"; await load(); toast("Added " + r.title); }
         catch (e) { b.disabled = false; b.textContent = "Track"; toast(e.message); }
       };
       when.append(b); card.append(when); box.append(card);
@@ -272,6 +303,14 @@ async function search() {
     box.replaceChildren(el("div", "err", e.message));
   }
 }
+document.querySelectorAll("#kind .chip").forEach(b => b.onclick = () => {
+  kind = b.dataset.kind;
+  document.querySelectorAll("#kind .chip").forEach(x => { x.classList.toggle("on", x === b); x.setAttribute("aria-pressed", x === b); });
+  $("#q").placeholder = kind === "games" ? "Search a game or DLC" : "Search a show or movie";
+  document.querySelector(".who").hidden = kind === "games";
+  $("#results").replaceChildren();
+  if (kind === "games" && !state.settings.has_games_key) $("#results").append(el("div", "err", "Add your Twitch Client ID and Secret in Settings first."));
+});
 $("#go").onclick = search;
 $("#q").addEventListener("keydown", e => { if (e.key === "Enter") search(); });
 
@@ -288,10 +327,11 @@ $("#save").onclick = async () => {
     people: $("#s-people").value, refresh_hours: Number($("#s-hours").value) || 6, window_days: Number($("#s-window").value) || 60,
     mqtt_host: $("#s-mhost").value.trim(), mqtt_port: Number($("#s-mport").value) || 1883,
     mqtt_user: $("#s-muser").value.trim(), mqtt_pass: $("#s-mpass").value,
+    igdb_id: $("#s-gid").value.trim(), igdb_secret: $("#s-gsec").value,
   };
   try {
     await api("settings", { method: "POST", body: JSON.stringify(body) });
-    $("#s-key").value = ""; $("#s-mpass").value = "";
+    $("#s-key").value = ""; $("#s-mpass").value = ""; $("#s-gsec").value = "";
     toast("Saved");
     setTimeout(load, 2500);
   } catch (e) { toast(e.message); }
