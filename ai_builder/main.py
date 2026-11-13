@@ -1102,7 +1102,11 @@ ANN_DEFAULTS = {
     "hype_style": "Be funny and hype us up. Boost our confidence. PG-13 language, no insults.",
     "roast_style": "Roast us super aggressively. Rated-R, heavy profanity, funny not hurtful.",
     "sweet_style": "Be super sweet and warm to everyone. Playful teasing only, never mean.",
+    "personalities": None,  # list of {"name", "style"}; built from the three legacy styles above on first run
 }
+ANN_PERSONA_DEFAULT = "Default"
+ANN_PERSONA_DEFAULT_STYLE = "Sound natural and friendly. No special personality, character, jokes or slang. Just clear and helpful."
+ANN_PERSONA_LEGACY = [("Hype", "hype_style"), ("Roast", "roast_style"), ("Sweetie Pie", "sweet_style")]
 ANN_ID_RE = re.compile(r"^[a-z0-9_]{1,60}$")
 ANN_ENT_RE = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
 ANN_TEST_ID = "announcement_maker_test"
@@ -1110,10 +1114,36 @@ ANN_TEST = {"status": "idle"}
 ANN_TASKS = set()
 
 
+def clean_personalities(raw):
+    """A tidy list of {name, style}. Names are unique, "Default" always exists and always comes first."""
+    out, seen = [], set()
+    for p in raw if isinstance(raw, list) else []:
+        if not isinstance(p, dict):
+            continue
+        name = re.sub(r"\s+", " ", str(p.get("name") or "")).strip()[:40]
+        if not name or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        out.append({"name": name, "style": str(p.get("style") or "").strip()[:2000] or ANN_PERSONA_DEFAULT_STYLE})
+    base = next((p for p in out if p["name"].lower() == ANN_PERSONA_DEFAULT.lower()), None)
+    if base:
+        out.remove(base)
+        base["name"] = ANN_PERSONA_DEFAULT
+    else:
+        base = {"name": ANN_PERSONA_DEFAULT, "style": ANN_PERSONA_DEFAULT_STYLE}
+    return [base] + out
+
+
 def ann_settings():
     s = dict(ANN_DEFAULTS)
     s.update({k: v for k, v in OPTS.items() if k in ANN_DEFAULTS})
     s.update({k: v for k, v in load_json(ANN_SETTINGS, {}).items() if k in ANN_DEFAULTS})
+    raw = s.get("personalities")
+    if not isinstance(raw, list):  # older install: keep whatever Hype / Roast / Sweetie Pie text was saved
+        raw = [{"name": n, "style": s.get(k) or ANN_DEFAULTS[k]} for n, k in ANN_PERSONA_LEGACY]
+    s["personalities"] = clean_personalities(raw)
+    for _, k in ANN_PERSONA_LEGACY:
+        s.pop(k, None)
     if OPTS.get("helper_ai_task_entity"):  # set in the add-on Configuration tab
         s["helper_ai_task_entity"] = OPTS["helper_ai_task_entity"]
     if not s.get("ai_task_entity"):  # share the Builder's AI task entity unless one was picked in Settings
@@ -1273,8 +1303,62 @@ async def ann_entities(request):
 async def ann_save_settings(request):
     body = await ann_body(request)
     clean = {k: v for k, v in body.items() if k in ANN_DEFAULTS and k != "helper_ai_task_entity"}
+    if "personalities" in clean:
+        clean["personalities"] = clean_personalities(clean["personalities"])
     save_json(ANN_SETTINGS, clean)
     return web.json_response(ann_settings())
+
+
+async def ann_registry_entity(app, unique_id):
+    """entity_id of a freshly made helper, found by its storage id (it can differ from the name)."""
+    for _ in range(6):
+        r = await ws_call(app, {"type": "config/entity_registry/list"})
+        for e in (r.get("result") or []) if r.get("success") else []:
+            if e.get("platform") == "input_select" and e.get("unique_id") == unique_id:
+                return e["entity_id"]
+        await asyncio.sleep(0.5)
+    return "input_select." + unique_id
+
+
+async def ann_dropdown_sync(request):
+    """Create the personality dropdown (input_select) in Home Assistant, or make its options match the list."""
+    app = request.app
+    body = await ann_body(request)
+    s = ann_settings()
+    names = [p["name"] for p in s["personalities"]]
+    ent = str(s.get("personality_select") or "").strip()
+    try:
+        if not ent:
+            if not body.get("create"):
+                return web.json_response({"ok": False, "error": "No dropdown is picked yet. Use Create the dropdown for me."})
+            r = await ws_call(app, {"type": "input_select/create", "name": "Announcement Personality", "icon": "mdi:account-voice",
+                                    "options": names, "initial": ANN_PERSONA_DEFAULT})
+            if not r.get("success"):
+                return web.json_response({"ok": False, "error": (r.get("error") or {}).get("message", "Home Assistant would not create it.")})
+            ent = await ann_registry_entity(app, (r.get("result") or {}).get("id") or "announcement_personality")
+            saved = load_json(ANN_SETTINGS, {})
+            saved["personality_select"] = ent
+            save_json(ANN_SETTINGS, saved)
+            return web.json_response({"ok": True, "created": True, "entity": ent, "settings": ann_settings(),
+                                      "message": "Created %s with %d personalities. It is now your Personality dropdown." % (ent, len(names))})
+        if not ANN_ENT_RE.match(ent) or not ent.startswith("input_select."):
+            return web.json_response({"ok": False, "error": "%s is not an input_select." % ent})
+        st, state = await ha(app, "GET", "/states/" + ent)
+        if st != 200 or not isinstance(state, dict):
+            return web.json_response({"ok": False, "error": "Home Assistant has no %s. Pick another dropdown or create a new one." % ent})
+        if (state.get("attributes") or {}).get("options") == names:
+            return web.json_response({"ok": True, "unchanged": True, "entity": ent, "settings": ann_settings(), "message": "The dropdown already matches."})
+        r = await ws_call(app, {"type": "config/entity_registry/get", "entity_id": ent})
+        item = str(((r.get("result") or {}) if r.get("success") else {}).get("unique_id") or ent.split(".", 1)[1])
+        r = await ws_call(app, {"type": "input_select/update", "input_select_id": item, "options": names})
+        if not r.get("success"):
+            return web.json_response({"ok": False, "error": "I can't edit %s. It is probably written in configuration.yaml, and only dropdowns made in Settings -> Helpers can be edited from here. "
+                                      "Either use Create the dropdown for me, or set its options by hand to: %s" % (ent, ", ".join(names))})
+        if state.get("state") not in names:  # the one it was on is gone, so land on Default
+            await ha(app, "POST", "/services/input_select/select_option", {"entity_id": ent, "option": ANN_PERSONA_DEFAULT})
+        return web.json_response({"ok": True, "entity": ent, "settings": ann_settings(), "message": "Updated %s: %s." % (ent, ", ".join(names))})
+    except Exception as e:  # noqa: BLE001 - report anything that goes wrong talking to Home Assistant
+        return web.json_response({"ok": False, "error": "Could not reach Home Assistant: %s" % e})
 
 
 async def ann_test_status(request):
@@ -2198,6 +2282,7 @@ def main():
         web.post("/api/ann/library/save", ann_library_save),
         web.post("/api/ann/library/delete", ann_library_delete),
         web.post("/api/ann/settings", ann_save_settings),
+        web.post("/api/ann/personality_dropdown", ann_dropdown_sync),
         web.post("/api/ann/test", ann_test_start),
         web.post("/api/ann/helper", ann_helper),
         web.post("/api/ann/push", ann_push),

@@ -162,7 +162,9 @@ All announcement setup happens inside the app, on the **Settings** tab of Announ
 - **Info sources** cover anything else: label, entity, optional attribute (concerts, sports, PS5...), or a custom template.
 - **Export / Import** moves your settings as JSON. `examples/announcement-settings.json` is a filled-in example.
 - Required to generate: AI Task, text-to-speech engine, main speaker. The AI Task defaults to this add-on's `ai_task_entity`.
-- The personality dropdown (optional) needs an `input_select` with options `Hype`, `Roast`, `Sweetie Pie`.
+- **Personalities** (Settings -> Personalities): a list of voices. Add, rename, edit or remove them. `Default` has no special personality, is always first and can't be removed. New announcements start on it.
+- **Personality dropdown** (optional): an `input_select` that picks the personality from Home Assistant. Press **Create the dropdown for me** to have the add-on make one. Once one is set, saving settings keeps its options in step with your list. Only dropdowns made in Settings -> Helpers can be edited this way; for one in `configuration.yaml`, set its `options` by hand to match your list.
+- After adding, renaming or removing a personality, push your announcements again. Each script carries its own copy of the list, and falls back to Default if the dropdown is on a name it doesn't know.
 
 ## My announcements
 

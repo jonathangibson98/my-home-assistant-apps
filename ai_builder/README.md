@@ -23,7 +23,7 @@ Use the tab bar at the top of the sidebar panel to switch: **Build / Announcemen
 ## Announcements
 
 - Info sources: household, who is where, weather, news, calendars, to-do, trash, any entity or attribute, or a custom template
-- Personalities (Hype, Roast, Sweetie Pie), or follow an `input_select` in Home Assistant
+- Personalities you can add, edit and remove (a no-personality Default plus Hype, Roast and Sweetie Pie to start), or follow a Home Assistant dropdown the add-on can create and keep in sync
 - Speak on a main speaker (TTS), Alexa speakers, and phone notifications; pause and resume music
 - **Test before saving**: preview the data, test text only, or test with sound, using a temporary script that is deleted afterward
 - Helper tab: describe what you want and the AI writes the instructions and ticks the data it needs

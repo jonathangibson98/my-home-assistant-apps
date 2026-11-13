@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.11.0 - 2026-11-12
+
+- **Personalities are now a list you control.** In Announcements -> Settings -> Personalities you can add your own, edit the wording of any of them, and remove the ones you don't want. Hype, Roast and Sweetie Pie are still there to start with, and any wording you had already changed is kept
+- **New "Default" personality with no special voice.** It is always first in the list, can't be removed or renamed (you can still edit its wording), and is what new announcements start with
+- **The Home Assistant dropdown is made and kept up to date for you.** Press **Create the dropdown for me** and the add-on makes an `input_select` with your personalities and picks it. After that, saving settings keeps its options matched to your list. Only dropdowns made in Settings -> Helpers can be edited this way. One written in `configuration.yaml` shows you the options to type in by hand
+- Generated scripts now have a fallback: if the dropdown is ever on something the script doesn't know (a renamed or removed personality), it uses Default instead of saying nothing
+- A saved announcement that used a personality you later removed opens on Default instead of breaking
+- Push your announcements again after changing the list. Each script carries its own copy of the personalities
+
 ## 2.10.3 - 2026-11-07
 
 - **Scrolling is now a checkbox, not a style.** Style is back to Text or Rotating list, with **Scroll when it doesn't fit the box** underneath. On a rotating list, each item still fades in and out, and an item taller than the card scrolls while it is showing. On a text card, long text scrolls instead of shrinking. A "characters that fit on one line" setting tunes when it kicks in

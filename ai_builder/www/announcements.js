@@ -6,6 +6,8 @@ let editorReady = false, rawMode = false;
 const aiName = () => S.helper_ai_task_entity || S.ai_task_entity || "";
 const ann = (path, body) => api("ann/" + path, body);
 const ASK = "Made with Announcement Maker";  // marker the server uses to recognise scripts made here
+const DEF = "Default", DEF_STYLE = "Sound natural and friendly. No special personality, character, jokes or slang. Just clear and helpful.";
+const persList = () => (S.personalities && S.personalities.length ? S.personalities : [{name: DEF, style: DEF_STYLE}]);
 
 
 /* ---------- presets ---------- */
@@ -205,6 +207,7 @@ function applyState(s) {
   $$("[data-p]").forEach(t => { if (s.pers && s.pers[t.dataset.p] != null) t.value = s.pers[t.dataset.p] });
   if (s.usePers != null) $("#usePers").checked = !!s.usePers && !!O.personality_select;
   if (s.one) $("#one").value = s.one;
+  if (!$("#one").value) $("#one").value = DEF;  /* the one it used was removed in Settings */
   if (s.len) $("#len").value = s.len;
   $("#task").value = s.task ?? s.extra ?? "";
   if (s.vol != null) $("#vol").value = Math.round(s.vol * 100);
@@ -222,8 +225,9 @@ function build() {
   (O.alexa_targets || []).forEach(a => pickBox($("#outs"), "o", "a:" + a, "Alexa: " + a, 1));
   (O.notify_targets || []).forEach(a => pickBox($("#outs"), "o", "n:" + a, "Phone: " + a, 0));
   if (!$("#outs").children.length) $("#outs").append(el("p", {class: "dim small"}, "No speakers or phones yet. Add them in Settings."));
-  [["Hype", "hype_style"], ["Roast", "roast_style"], ["Sweetie Pie", "sweet_style"]].forEach(([k, o]) => {
-    const t = el("textarea", {value: O[o] || ""}); t.dataset.p = k; $("#persbox").append(el("label", {class: "l"}, k), t);
+  $("#one").replaceChildren(...persList().map(p => el("option", {value: p.name}, p.name)));
+  persList().forEach(p => {
+    const t = el("textarea", {value: p.style || ""}); t.dataset.p = p.name; $("#persbox").append(el("label", {class: "l"}, p.name), t);
   });
   const hasSel = !!O.personality_select;
   $("#selwrap").hidden = !hasSel; $("#usePers").checked = hasSel;
@@ -262,10 +266,12 @@ function makeYaml(s0, o) {
     if (s.json) L.push('Output ONLY a JSON object, no code fences, no other text, exactly like this:\n{"speech": "the full monologue", "notification": "one short sentence banner under 100 characters"}');
     return "- action: ai_task.generate_data\n  data:\n    task_name: " + n + "\n    entity_id: " + (O.ai_task_entity || "ai_task.SET_ME") + "\n    instructions: |-\n" + ind(L.join("\n\n"), 6) + "\n  response_variable: announcement";
   };
+  const styleFor = k => s.pers[k] ?? s.pers[DEF] ?? DEF_STYLE;
   if (s.usePers) {
     y += "  - alias: Generate announcement\n    choose:\n";
     Object.keys(s.pers).forEach(k => { y += `      - conditions:\n          - condition: state\n            entity_id: ${O.personality_select}\n            state: ${JSON.stringify(k)}\n        sequence:\n` + ind(task(s.pers[k]), 10) + "\n" });
-  } else y += ind(task(s.pers[s.one]), 2) + "\n";
+    y += "    default:\n" + ind(task(styleFor(DEF)), 6) + "\n";  /* dropdown on something unknown: use Default instead of saying nothing */
+  } else y += ind(task(styleFor(s.one)), 2) + "\n";
   const sp = s.json ? "{{ (announcement.data | from_json).speech }}" : "{{ announcement.data }}";
   y += `  - variables:\n      speech: '${sp}'\n  - alias: Deliver\n    parallel:\n`;
   if (sp_on) y += `      - action: tts.speak\n        target:\n          entity_id: ${O.tts_entity}\n        data:\n          message: '{{ speech }}'\n          media_player_entity_id: ${A}\n`;
@@ -284,7 +290,7 @@ function makeYaml(s0, o) {
 
 /* Read a script made by this tool back into form state. Used for scripts that predate the library. */
 function recover(cfg) {
-  const s = {name: cfg.alias || "", src: [], outs: [], json: false, pers: {}, usePers: false, one: "Hype", len: O.default_length || 1000, task: "", vol: (O.default_volume || 70) / 100, pause: false};
+  const s = {name: cfg.alias || "", src: [], outs: [], json: false, pers: {}, usePers: false, one: DEF, len: O.default_length || 1000, task: "", vol: (O.default_volume || 70) / 100, pause: false};
   const notes = [], acts = [];
   const walk = a => (Array.isArray(a) ? a : [a]).forEach(x => {
     if (!x || typeof x !== "object") return;
@@ -309,21 +315,22 @@ function recover(cfg) {
   const text = ai.length ? String((ai[0].data || {}).instructions || "") : "";
   const m = text.match(/YOUR TASK: ([\s\S]*?)\n\nSTYLE: /);
   if (m) s.task = m[1].trim();
-  else if (text) { s.task = text.trim(); s.pers = {Hype: "Follow the voice and tone given in the task."}; s.one = "Hype"; notes.push("Your own prompt was kept word for word as the instructions, and the style line only points back to it."); }
+  else if (text) { s.task = text.trim(); s.pers = {[DEF]: "Follow the voice and tone given in the task."}; s.one = DEF; notes.push("Your own prompt was kept word for word as the instructions, and the style line only points back to it."); }
   const l = text.match(/under (\d+) characters/); if (l) s.len = +l[1];
   s.json = text.includes("Output ONLY a JSON object");
   const styleOf = t => { const z = String(t || "").match(/STYLE: ([\s\S]*?)\nNo markdown/); return z ? z[1] : null };
   const ps = acts.find(x => Array.isArray(x.choose) && x.choose.some(c => JSON.stringify(c).includes("ai_task.generate_data")));
   if (ps && O.personality_select) {
     s.usePers = true;
+    const known = new Set(persList().map(p => p.name)), gone = [];
     ps.choose.forEach(c => {
       const cond = (c.conditions || [])[0] || {}, a = (c.sequence || []).find(z => z.action === "ai_task.generate_data");
-      if (cond.state && a) { const sy = styleOf((a.data || {}).instructions); if (sy != null) s.pers[cond.state] = sy; }
+      if (cond.state && a) { const sy = styleOf((a.data || {}).instructions); if (sy != null) s.pers[cond.state] = sy; if (!known.has(cond.state)) gone.push(cond.state); }
     });
+    if (gone.length) notes.push("These personalities are in the script but not in your list anymore, so they were dropped: " + gone.join(", ") + ".");
   } else if (text) {
-    const sy = styleOf(text), keys = {Hype: O.hype_style, Roast: O.roast_style, "Sweetie Pie": O.sweet_style};
-    const hit = Object.keys(keys).find(k => keys[k] === sy);
-    if (hit) s.one = hit; else if (sy != null) { s.pers = {Hype: sy}; s.one = "Hype"; notes.push("It used a custom personality style, which is now filed under Hype."); }
+    const sy = styleOf(text), hit = persList().find(p => p.style === sy);
+    if (hit) s.one = hit.name; else if (sy != null) { s.pers = {[DEF]: sy}; s.one = DEF; notes.push("It used a custom personality style, which is now filed under " + DEF + "."); }
   }
   if (!m && text) s.usePers = false;
   s.outs = [...new Set(s.outs)];
@@ -352,7 +359,7 @@ function openEditor(state, c, note) {
 }
 const blankState = () => ({name: "My announcement", src: usable().filter(x => x.type === "household").map(x => x.id),
   outs: $$("[data-o]").map(c => c.dataset.o).filter(o => !o.startsWith("n:")), task: "", len: O.default_length || 1000, vol: (O.default_volume || 70) / 100, pause: true,
-  usePers: !!O.personality_select, one: "Hype", pers: Object.fromEntries([["Hype", O.hype_style], ["Roast", O.roast_style], ["Sweetie Pie", O.sweet_style]])});
+  usePers: !!O.personality_select, one: DEF, pers: Object.fromEntries(persList().map(p => [p.name, p.style]))});
 function openNew(over) { openEditor(Object.assign(blankState(), over || {}), {isNew: true}); }
 function openItem(it) {
   const s = Object.assign(blankState(), it.state || {}, {name: (it.state || {}).name || it.name});
@@ -541,10 +548,35 @@ function drawHelper() {
 /* ---------- settings ---------- */
 const FIELDS = {
   core: [["ai_task_entity", "AI Task", ["ai_task"], 0, "Writes the announcement text"], ["tts_entity", "Text-to-speech engine", ["tts"], 0, "Turns the text into speech"], ["speaker", "Main speaker", ["media_player"], 0, "Where speech plays"]],
-  more: [["alexa_targets", "Extra Alexa speakers", ["media_player"], 1, "Spoken through the alexa_media integration"], ["music_players", "Music players to pause", ["media_player"], 1, "Paused while it talks, resumed after"], ["talking_flag", "Talking flag", ["input_boolean"], 0, "Optional. Turned on while it talks"], ["personality_select", "Personality dropdown", ["input_select"], 0, "Optional. An input_select with Hype, Roast, Sweetie Pie"]],
+  more: [["alexa_targets", "Extra Alexa speakers", ["media_player"], 1, "Spoken through the alexa_media integration"], ["music_players", "Music players to pause", ["media_player"], 1, "Paused while it talks, resumed after"], ["talking_flag", "Talking flag", ["input_boolean"], 0, "Optional. Turned on while it talks"], ["personality_select", "Personality dropdown", ["input_select"], 0, "Optional. The dropdown that picks the personality. Use the buttons under Personalities below to create or update it"]],
   phones: [["notify_targets", "Phone notifications", ["notify"], 1, 'Type or pick. Phones show as "service"']]
 };
-async function saveSettings() { const r = await ann("settings", S); if (r.error) { $("#smsg").className = "msg bad"; $("#smsg").textContent = r.error; return; } S = r; if (!Array.isArray(S.sources)) S.sources = []; build(); setupNote(); drawHelper(); drawSettings(); }
+async function saveSettings() {
+  S.personalities = persList().map(p => ({name: String(p.name || "").trim(), style: p.style || ""}));
+  const r = await ann("settings", S);
+  if (r.error) { $("#smsg").className = "msg bad"; $("#smsg").textContent = r.error; return false; }
+  S = r; if (!Array.isArray(S.sources)) S.sources = []; build(); setupNote(); drawHelper(); drawSettings(); return true;
+}
+/* Names must be filled in and different from each other (the dropdown can't hold duplicates). */
+function checkPers() {
+  const seen = new Set();
+  for (const p of persList()) {
+    const n = String(p.name || "").trim();
+    if (!n) return "Every personality needs a name.";
+    if (seen.has(n.toLowerCase())) return 'Two personalities are both called "' + n + '". Give each one its own name.';
+    seen.add(n.toLowerCase());
+  }
+  return "";
+}
+async function syncDropdown(create) {
+  const m = $("#smsg"), bad = checkPers();
+  if (bad) { m.className = "msg bad"; m.textContent = bad; return; }
+  m.className = "msg"; m.textContent = "Saving, then updating Home Assistant...";
+  if (!(await saveSettings())) return;
+  const r = await ann("personality_dropdown", {create: !!create});
+  if (r.settings) { S = r.settings; if (!Array.isArray(S.sources)) S.sources = []; build(); setupNote(); drawSettings(); }
+  m.className = "msg " + (r.ok ? "ok" : "bad"); m.textContent = r.ok ? r.message + " Push your announcements again so their scripts use the new list." : r.error;
+}
 const varNames = s => ({weather: "fc_" + s.id + " (forecast response)", calendar: "cal_" + s.id + " (events response)", todo: "todo_" + s.id + " (items response)"}[s.type] || "");
 
 function editor(s) {
@@ -597,10 +629,35 @@ function drawSettings() {
   const sel = el("select", {style: "width:auto"}); Object.entries(TYPES).forEach(([k, l]) => sel.append(el("option", {value: k}, l)));
   si.append(el("div", {class: "row", style: "margin-top:12px"}, sel, el("button", {class: "btn", onclick: () => { const n = mk(S.sources, sel.value); S.sources.push(n); OPEN = n.id; drawSettings() }}, "Add source")));
 
-  const s2 = card("Personalities and defaults");
-  [["hype_style", "Hype style", "t"], ["roast_style", "Roast style", "t"], ["sweet_style", "Sweetie Pie style", "t"], ["default_volume", "Default volume %", "n"], ["default_length", "Default length (characters)", "n"]].forEach(([k, l, t]) => {
-    const f = el(t === "t" ? "textarea" : "input", t === "n" ? {type: "number", value: S[k] ?? "", style: "max-width:160px"} : {value: S[k] ?? ""});
-    f.oninput = () => { S[k] = t === "n" ? +f.value : f.value };
+  const sp = card("Personalities", "Each one is a voice an announcement can use. Add your own, edit the wording, or remove the ones you don't want. Default has no special personality and always stays.");
+  const PL = el("div", {class: "stack"});
+  persList().forEach((p, i) => {
+    const isDef = p.name === DEF && i === 0, row = el("div", {class: "card sub"});
+    const nm = el("input", {value: p.name, maxlength: 40, placeholder: "Name, e.g. Pirate", disabled: isDef}); nm.oninput = () => { p.name = nm.value };
+    const tx = el("textarea", {value: p.style || "", placeholder: "How should it sound? e.g. Talk like a grumpy pirate. PG-13."}); tx.oninput = () => { p.style = tx.value };
+    row.append(el("label", {class: "l"}, isDef ? "Default (can't be renamed or removed)" : "Name"), nm, el("label", {class: "l"}, "How it sounds"), tx);
+    if (!isDef) { const rm = el("button", {class: "btn danger sm", style: "margin-top:8px"}, "Remove"); confirmTap(rm, "Tap again", () => { S.personalities.splice(i, 1); drawSettings() }); row.append(rm); }
+    PL.append(row);
+  });
+  const addName = el("input", {placeholder: "New personality name", maxlength: 40, style: "max-width:260px"});
+  const addBtn = el("button", {class: "btn", onclick: () => {
+    const n = addName.value.trim(); if (!n) { $("#smsg").className = "msg bad"; $("#smsg").textContent = "Type a name first."; return; }
+    S.personalities = persList().concat([{name: n, style: ""}]); drawSettings();
+  }}, "Add personality");
+  sp.append(PL, el("div", {class: "row", style: "margin-top:12px"}, addName, addBtn));
+  sp.append(el("h3", {style: "margin-top:18px"}, "Home Assistant dropdown"),
+    el("p", {class: "help"}, S.personality_select
+      ? "Using " + S.personality_select + ". Saving settings keeps its options matched to this list. Only dropdowns made in Settings -> Helpers can be edited from here."
+      : "Optional. Make a dropdown in Home Assistant so you can switch personality from a dashboard, an automation or your phone."),
+    el("div", {class: "row", style: "margin-top:8px"}, S.personality_select
+      ? el("button", {class: "btn", onclick: () => syncDropdown(false)}, "Update the dropdown now")
+      : el("button", {class: "btn good", onclick: () => syncDropdown(true)}, "Create the dropdown for me")),
+    el("p", {class: "help"}, "After you add, rename or remove a personality, push your announcements again. Each script carries its own copy of the personalities."));
+
+  const s2 = card("Defaults");
+  [["default_volume", "Default volume %"], ["default_length", "Default length (characters)"]].forEach(([k, l]) => {
+    const f = el("input", {type: "number", value: S[k] ?? "", style: "max-width:160px"});
+    f.oninput = () => { S[k] = +f.value };
     s2.append(el("label", {class: "l"}, l), f);
   });
 
@@ -608,11 +665,23 @@ function drawSettings() {
   const io = el("textarea", {class: "code", placeholder: "Export puts your settings here as JSON. Paste settings here and press Import."});
   s4.append(el("div", {class: "row"},
     el("button", {class: "btn sm", onclick: () => { io.value = JSON.stringify(S, null, 1) }}, "Export"),
-    el("button", {class: "btn sm", onclick: () => { try { const j = JSON.parse(io.value); S = Object.assign({}, S, j); if (!Array.isArray(j.sources)) S.sources = migrate(S); drawSettings(); $("#smsg").textContent = "Imported. Review, then save."; } catch (e) { $("#smsg").textContent = "That is not valid JSON." } }}, "Import")), io,
+    el("button", {class: "btn sm", onclick: () => { try { const j = JSON.parse(io.value); const keep = persList(); S = Object.assign({}, S, j); if (!Array.isArray(j.sources)) S.sources = migrate(S);
+            if (!Array.isArray(j.personalities)) { S.personalities = keep.map(p => Object.assign({}, p)); [["Hype", "hype_style"], ["Roast", "roast_style"], ["Sweetie Pie", "sweet_style"]].forEach(([n, k]) => { if (!j[k]) return; const f = S.personalities.find(p => p.name === n); if (f) f.style = j[k]; else S.personalities.push({name: n, style: j[k]}); }); } drawSettings(); $("#smsg").textContent = "Imported. Review, then save."; } catch (e) { $("#smsg").textContent = "That is not valid JSON." } }}, "Import")), io,
     el("p", {class: "help"}, "Your saved announcements are included when you use the Backup tab."));
   v.append(el("div", {style: "height:60px"}));
 }
-$("#setsave").onclick = async () => { await saveSettings(); $("#smsg").className = "msg ok"; $("#smsg").textContent = "Settings saved."; };
+$("#setsave").onclick = async () => {
+  const m = $("#smsg"), bad = checkPers();
+  if (bad) { m.className = "msg bad"; m.textContent = bad; return; }
+  if (!(await saveSettings())) return;
+  m.className = "msg ok"; m.textContent = "Settings saved.";
+  if (S.personality_select) {
+    const r = await ann("personality_dropdown", {});
+    if (r.settings) S = r.settings;
+    if (!r.ok) { m.className = "msg bad"; m.textContent = "Settings saved, but the dropdown was not updated: " + r.error; }
+    else if (!r.unchanged) m.textContent = "Settings saved. " + r.message + " Push your announcements again so their scripts use the new list.";
+  }
+};
 $("#setfill").onclick = () => {
   let n = 0; Object.values(FIELDS).flat().forEach(([k, , d, m]) => { if (m || S[k]) return; const c = ENT.filter(e => d.includes(e.id.split(".")[0])); if (c.length === 1) { S[k] = c[0].id; n++ } });
   drawSettings(); $("#smsg").className = "msg"; $("#smsg").textContent = "Filled " + n + " (only where there was one match). Save to keep.";
