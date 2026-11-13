@@ -1,0 +1,54 @@
+name: Person Profiles
+version: "0.1.0"
+slug: person_profiles
+description: Builds a profile sensor for each person from all their related entities, with optional AI summaries
+arch:
+  - aarch64
+  - amd64
+  - armv7
+init: false
+startup: application
+boot: auto
+homeassistant_api: true
+options:
+  people: []
+  update_interval_seconds: 60
+  name_matching: true
+  include_unavailable: false
+  max_entities_in_sensor: 60
+  max_entities_for_ai: 150
+  exclude_domains:
+    - update
+    - button
+    - scene
+    - event
+    - tts
+    - stt
+  exclude_entity_patterns: []
+  person_extras: []
+  ai_task_entity: ""
+  conversation_agent: ""
+  ai_interval_minutes: 60
+  ai_extra_prompt: ""
+  log_level: info
+schema:
+  people:
+    - str
+  update_interval_seconds: int(10,3600)
+  name_matching: bool
+  include_unavailable: bool
+  max_entities_in_sensor: int(5,300)
+  max_entities_for_ai: int(10,500)
+  exclude_domains:
+    - str
+  exclude_entity_patterns:
+    - str
+  person_extras:
+    - person: str
+      entities:
+        - str
+  ai_task_entity: str?
+  conversation_agent: str?
+  ai_interval_minutes: int(0,1440)
+  ai_extra_prompt: str?
+  log_level: list(debug|info|warning|error)
