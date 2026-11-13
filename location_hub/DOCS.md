@@ -11,7 +11,7 @@ Location Hub is the **Location** and **Alerts** pages for Home Assistant: who is
 
 ## Location and Alerts pages
 
-The add-on opens on a **home page** with a tile for every section: the Location pages (Switches, Devices, Sensor trackers, Dashboard card) and the Alerts pages (Arrival places, People & sensors, Notifications, Activity). Click a tile to open that part. On the Location and Alerts pages use the **Home** button at the top to return. **Save changes** at the bottom of a Hub page saves everything you edited there. Switches apply instantly and need no save.
+The add-on opens on a **home page** with a tile for every section: the Location pages (Switches, Devices, Sensor trackers, Dashboard card) the Alerts pages (Arrival places, People & sensors, Notifications, Activity) and the Arrivals pages (Arrival places, Arrival settings, Live arrivals). Click a tile to open that part. On the Location and Alerts pages use the **Home** button at the top to return. **Save changes** at the bottom of a Hub page saves everything you edited there. Switches apply instantly and need no save.
 
 ### Location
 
@@ -19,6 +19,20 @@ The add-on opens on a **home page** with a tile for every section: the Location 
 - **Devices**: the sensor name, plus one row per person (label, entity, optional home-state override). The sensor state is the number of people home; each person is an attribute (`jon: Home`, `mj: Greenville, South Carolina`). Home is decided by `zone.home` for entities with GPS, or the entity's own state without GPS. Away cities come from OpenStreetMap Nominatim. After a person has stayed at one spot for `idle_minutes`, their entry becomes what is at those coordinates (for example `Starbucks` or `12 Oak Street`) until they move; named zones and Home are never replaced.
 - **Sensor trackers**: each row becomes a `device_tracker`. A matching home state means Home at your house coordinates, anything else is Away, unavailable/unknown is ignored. Deleting a row deletes the tracker.
 - **Dashboard card**: group, tap entity and picture per person, plus titles, columns and the separator. Save, then copy the YAML (needs Mushroom and Bubble Card from HACS). New people appear here after you save them on Devices.
+
+### Arrivals
+
+The add-on version of the AppDaemon `PresenceSensors` app, for every zone instead of only home. It uses the people from **Location > Devices**.
+
+- Each zone gets a sensor named `sensor.arrived_<zone>` (Home is `sensor.arrived_home`, Work is `sensor.arrived_work`). With **Track every zone** off, only the zones you add on the Places tab get one.
+- The state says who arrived: `jon_home`, `aaron_jon_mj_work`, or a **group name**. To name a group, add the zone on the Places tab, add a group, tick the people and type the state you want (for example `jon_mj_home`). It is used when exactly those people arrive together within the **group window**.
+- After the **clear time** with no new arrival, the state returns to `no one arriving`. When nobody is at the place it is `nobody home` (Home) or `nobody here` (other zones).
+- Attributes: `place`, `zone`, `people` (who arrived), `arrived_at`, `count_here`, and a true/false `<person>_<zone>` for each person (for example `jon_home`).
+- `sensor.latest_arrival` is the newest arrival at any zone (turn it off in Settings if you do not want it).
+- Every arrival fires the event `location_hub_arrival` with `place`, `zone`, `place_slug`, `people`, `ids`, `key` and `test`. Use it as an automation trigger.
+- The Live tab shows each sensor and has a **Test arrival** button. A test shows on the sensor until the clear time.
+- Replacing the AppDaemon app: turn the app off first, then delete the old `sensor.arrived_home` it made with `set_state` (Developer tools > States has no delete, so restart Home Assistant). The add-on's sensor then takes the `sensor.arrived_home` ID. Recreate your combos as groups on the Home place.
+- A person is at a place when their entity's state is that zone's name. `home` always means `zone.home`, and a Devices **home state override** also counts as home. `unavailable` and `unknown` are ignored.
 
 ### Alerts
 

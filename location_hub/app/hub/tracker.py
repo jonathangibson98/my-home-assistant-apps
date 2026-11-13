@@ -244,6 +244,7 @@ CONFIG_T = f"homeassistant/sensor/{UID}/config"
 
 mq = None
 mq_ready = False
+MQ_HOOKS = []  # other hub parts (arrivals) add a function here; it runs each time MQTT connects
 mq_warned = False
 mq_last_try = 0
 last = {"count": 0, "attrs": {}}
@@ -306,6 +307,11 @@ def on_mq_connect(client, userdata, flags, reason_code, properties=None):
     mq_publish_discovery()
     mq_publish_state()
     conv_publish_all()
+    for hook in list(MQ_HOOKS):
+        try:
+            hook()
+        except Exception:
+            logging.exception("MQTT connect hook failed")
 
 def on_mq_disconnect(client, userdata, *args, **kwargs):
     global mq_ready

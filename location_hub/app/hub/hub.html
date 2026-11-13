@@ -65,12 +65,13 @@ const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&g
 const DAYS=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const SECS={loc:["Location",[["switches","Switches"],["devices","Devices"],["trackers","Sensor trackers"],["card","Dashboard card"]]],
  alerts:["Alerts",[["places","Places"],["people","People & sensors"],["notify","Notifications"],["log","Activity"]]],
+ arrivals:["Arrivals",[["arr_places","Places"],["arr_settings","Settings"],["arr_live","Live"]]],
  backup:["Backup",[["backup","Backup & restore"]]]};
-const SUBS={loc:"Where everyone is, what is switched on, and your dashboard card.",alerts:"Pick the places, pick who triggers them, pick how the message sounds.",backup:"Save everything this add-on keeps, or restore it after a reinstall."};
-let cfg,loc={settings:{},devices:[],trackers:[],card:{rows:[]}},ent={zones:[],trackable:[],ai:[],notify:[],toggles:[],location_sensor:""};
+const SUBS={loc:"Where everyone is, what is switched on, and your dashboard card.",alerts:"Pick the places, pick who triggers them, pick how the message sounds.",arrivals:"Sensors that show who just arrived at any zone, not only home.",backup:"Save everything this add-on keeps, or restore it after a reinstall."};
+let cfg,arr={settings:{},places:[],people:[],zones:[]},loc={settings:{},devices:[],trackers:[],card:{rows:[]}},ent={zones:[],trackable:[],ai:[],notify:[],toggles:[],location_sensor:""};
 const hp=location.hash.slice(1).split("/");
 let sec=SECS[hp[0]]?hp[0]:"loc",tab=(SECS[sec][1].some(t=>t[0]===hp[1])?hp[1]:null)||"switches",open=new Set(),dirty=new Set(),busy=false;
-const mem={loc:"switches",alerts:"places",backup:"backup"};
+const mem={loc:"switches",alerts:"places",arrivals:"arr_places",backup:"backup"};
 if(!SECS[sec][1].some(t=>t[0]===tab))tab=mem[sec];
 mem[sec]=tab;
 const uid=()=>Math.random().toString(36).slice(2,9);
@@ -91,8 +92,9 @@ async function loadLoc(){
   const r=await Promise.all(["api/hub/settings","api/hub/devices","api/hub/trackers","api/hub/card"].map(u=>api(u)));
   loc={settings:r[0],devices:r[1],trackers:r[2],card:r[3]};
 }
+async function loadArr(){arr=await api("api/hub/arrivals")}
 async function init(){
-  const r=await Promise.all([api("api/hub/config"),loadLoc()]);cfg=r[0];
+  const r=await Promise.all([api("api/hub/config"),loadLoc(),loadArr()]);cfg=r[0];
   try{ent=Object.assign(ent,await api("api/hub/entities"))}catch(e){}
   $("#trk").innerHTML=dl(ent.trackable);$("#tap").innerHTML=dl(ent.trackable.concat(ent.toggles||[]));
   dirty.clear();stat();render();
@@ -106,6 +108,7 @@ function render(){
   if(tab==="backup")loadBackup();
   if(tab==="log")loadLog();
   if(tab==="switches")loadSwitches();
+  if(tab==="arr_live")loadArrLive();
 }
 
 const fld=(l,inner,hint)=>`<label class="f">${l}${inner}${hint?`<div class="hint">${hint}</div>`:""}</label>`;
@@ -231,7 +234,7 @@ function cardV(){
     <div class="btns"><button class="b pri" data-act="copy">Copy card YAML</button></div></div></div>`;
 }
 /* ---------- Backup ---------- */
-const bkLine=s=>`${s.devices} device${s.devices===1?"":"s"}, ${s.trackers} sensor tracker${s.trackers===1?"":"s"}, ${s.places} place${s.places===1?"":"s"}, ${s.people} ${s.people===1?"person":"people"}`;
+const bkLine=s=>`${s.devices} device${s.devices===1?"":"s"}, ${s.trackers} sensor tracker${s.trackers===1?"":"s"}, ${s.places} place${s.places===1?"":"s"}, ${s.people} ${s.people===1?"person":"people"}, ${s.arrivals||0} arrival place${(s.arrivals||0)===1?"":"s"}`;
 const backupV=()=>`<div id="bkres"></div>
   <div class="card"><div class="bd" style="border:0">
     <b style="display:block;margin-top:12px">Save a backup</b>
@@ -274,13 +277,59 @@ async function bkRestore(body){
     if(r.restarting)setTimeout(()=>location.reload(),12000);
   }catch(e){show(esc(e.message),true)}
 }
-const VIEWS={backup:backupV,switches:switchesV,devices:devicesV,trackers:trackersV,card:cardV,places:placesV,people:peopleV,notify:notifyV,log:logV};
+/* ---------- Arrivals ---------- */
+const zoneSlug=z=>String(z||"").split(".").slice(1).join(".");
+const tgl=(k,v,t,h)=>`<div class="hd" style="padding:12px 0 0;cursor:default"><b>${t}<small>${h}</small></b>${sw(k,v)}</div>`;
+function arrPlacesV(){
+  const zn=arr.zones.map(z=>[z.id,z.name]),s=arr.settings;
+  const intro=`<p class="hint" style="margin:0 0 10px">${s.all_zones?"Every zone already gets a sensor (<b>sensor.arrived_</b> plus the zone name, so Home is <b>sensor.arrived_home</b>). Add a place here only to name groups of people, or to turn one zone off.":"Only the places below get a sensor. Turn on <b>Track every zone</b> in Settings to cover all zones."} A group name is the sensor state when exactly those people arrive together within the group window.`;
+  const cards=arr.places.map((p,i)=>{
+    const o=open.has(p.id),K=f=>`arr.places.${i}.${f}`;
+    const zname=(arr.zones.find(z=>z.id===p.zone)||{}).name||p.zone||"New place";
+    return `<div class="card"><div class="hd" data-tog="${esc(p.id)}"><b>${esc(zname)}<small>sensor.arrived_${esc(zoneSlug(p.zone))}${p.combos.length?` · ${p.combos.length} group${p.combos.length===1?"":"s"}`:""}</small></b>${sw(K("enabled"),p.enabled)}</div>
+    ${o?`<div class="bd">
+      ${fld("Zone",sel(K("zone"),zn,p.zone),"Zones come from Settings → Areas, labels &amp; zones → Zones. Each zone can be added once.")}
+      <label class="f">Group names (optional)</label>
+      ${p.combos.map((c,j)=>`<div class="card" style="margin-top:8px"><div class="bd" style="border:0">
+        ${fld("Sensor state for exactly these people",inp(`${K("combos")}.${j}.name`,c.name,"text",'autocapitalize="none" placeholder="jon_mj_home"'))}
+        <div class="chips">${arr.people.map(x=>`<label class="chip"><input type="checkbox" data-cp="${i}.${j}" value="${esc(x.id)}" ${c.people.includes(x.id)?"checked":""}>${esc(x.label)}</label>`).join("")||'<span class="hint">Add people on Location → Devices first.</span>'}</div>
+        <div class="btns"><button class="b del" data-act="arr-delcombo" data-i="${i}" data-j="${j}">Remove group</button></div></div></div>`).join("")}
+      <div class="btns"><button class="b" data-act="arr-addcombo" data-i="${i}">Add a group</button><button class="b del" data-act="arr-delplace" data-i="${i}">Remove place</button></div>
+    </div>`:""}</div>`}).join("");
+  return intro+cards+`<button class="b add" data-act="arr-addplace">Add a place</button>`;
+}
+function arrSettingsV(){
+  const s=arr.settings,K=f=>`arr.settings.${f}`;
+  return `<div class="card"><div class="bd" style="border:0">
+    ${tgl(K("enabled"),s.enabled,"Arrival tracking","Master switch. Off stops new arrivals.")}
+    ${tgl(K("all_zones"),s.all_zones,"Track every zone","Each zone in Home Assistant gets its own sensor. Off: only the places you add.")}
+    ${tgl(K("latest_sensor"),s.latest_sensor,"Latest arrival sensor","sensor.latest_arrival shows the newest arrival at any zone.")}
+    ${tgl(K("fire_events"),s.fire_events,"Fire an event on every arrival","Sends location_hub_arrival to Home Assistant, handy as an automation trigger.")}
+    ${fld("Group window (seconds)",inp(K("window_seconds"),s.window_seconds,"number",'min="5" inputmode="numeric"'),"People who arrive at the same place within this time count as one group.")}
+    ${fld("Clear after (seconds)",inp(K("reset_after_seconds"),s.reset_after_seconds,"number",'min="5" inputmode="numeric"'),"After this long with no new arrival, the sensor goes back to &quot;no one arriving&quot;.")}
+    <div class="hint">People come from Location → Devices. If the old AppDaemon app still runs, turn it off so it does not fight over sensor.arrived_home.</div>
+  </div></div>`;
+}
+const arrLiveV=()=>`<p class="hint" style="margin:0 0 10px">Current state of each arrival sensor. Test makes a pretend arrival for the people ticked (the first person if none) and shows it until the clear time.</p><div id="arrbox"><div class="card"><div class="ev">Loading…</div></div></div><div class="card" id="arrlog"></div>`;
+async function loadArrLive(){
+  if(tab!=="arr_live"||!$("#arrbox"))return;
+  try{
+    const d=await api("api/hub/arrivals/live");
+    if(tab!=="arr_live"||!$("#arrbox"))return;
+    const head=`<div class="card"><div class="ev"><b>Latest arrival</b> <small>sensor.latest_arrival</small><br>${esc(d.latest.state)}${(d.latest.attrs.place?` at ${esc(d.latest.attrs.place)}`:"")}${d.connected?"":'<br><small>Not connected to Home Assistant yet.</small>'}${d.mqtt?"":'<br><small>MQTT is not connected, so sensors use the plain fallback (no unique ID).</small>'}</div></div>`;
+    $("#arrbox").innerHTML=head+(d.live.length?d.live.map(x=>`<div class="card"><div class="ev"><b>${esc(x.name)}</b> <small>${esc(x.sensor)}</small><br>${esc(x.state)}<br><small>Here now: ${x.here.length?esc(x.here.join(", ")):"nobody"}</small>
+      <div class="chips">${d.people.map(pp=>`<label class="chip"><input type="checkbox" data-tp="${esc(x.zone)}" value="${esc(pp.id)}">${esc(pp.label)}</label>`).join("")}</div>
+      <div class="btns" style="margin-top:8px"><button class="b" data-act="arr-test" data-zone="${esc(x.zone)}">Test arrival</button></div></div></div>`).join(""):`<div class="card"><div class="ev">No zones tracked yet.</div></div>`);
+    $("#arrlog").innerHTML=d.log.length?d.log.map(e=>`<div class="ev"><b>${esc(e.place)}</b> <span class="k-${e.kind==="arrival"?"sent":"skipped"}">${esc(e.kind)}</span> <small>${esc(e.t)}</small><br>${esc(e.msg)}</div>`).join(""):`<div class="ev">Nothing yet. Arrivals show up here.</div>`;
+  }catch(e){const b=$("#arrbox");if(b)b.innerHTML=`<div class="card"><div class="ev">Could not load: ${esc(e.message)}</div></div>`}
+}
+const VIEWS={arr_places:arrPlacesV,arr_settings:arrSettingsV,arr_live:arrLiveV,backup:backupV,switches:switchesV,devices:devicesV,trackers:trackersV,card:cardV,places:placesV,people:peopleV,notify:notifyV,log:logV};
 
 
 function setPath(path,val){
-  const k=path.split("."),isLoc=k[0]==="loc",ks=isLoc?k.slice(1):k;let o=isLoc?loc:cfg;
+  const k=path.split("."),isLoc=k[0]==="loc",isArr=k[0]==="arr",ks=(isLoc||isArr)?k.slice(1):k;let o=isLoc?loc:isArr?arr:cfg;
   for(let i=0;i<ks.length-1;i++)o=o[ks[i]];
-  o[ks[ks.length-1]]=val;mark(isLoc?ks[0]:"alerts");
+  o[ks[ks.length-1]]=val;mark(isLoc?ks[0]:isArr?"arrivals":"alerts");
 }
 async function save(quiet){
   const had=new Set(dirty);
@@ -290,6 +339,7 @@ async function save(quiet){
     if(had.has("settings"))await api("api/hub/settings",{name:(loc.settings.name||"").trim(),entity_id:(loc.settings.entity_id||"").trim()});
     if(had.has("trackers"))await api("api/hub/trackers",{trackers:loc.trackers});
     if(had.has("card"))await api("api/hub/card",loc.card);
+    if(had.has("arrivals")){await api("api/hub/arrivals",{settings:arr.settings,places:arr.places});await loadArr()}
     dirty.clear();stat();
     if([...had].some(g=>g!=="alerts")){await loadLoc();render()}
     if(!quiet)toast("Saved");
@@ -304,6 +354,11 @@ document.addEventListener("change",e=>{
     t.value="";return;
   }
   if(d.k&&t.type==="checkbox")setPath(d.k,t.checked);
+  if(d.k&&/^arr\.places\.\d+\.zone$/.test(d.k))render();
+  if(d.cp!==undefined){
+    const [pi,pj]=d.cp.split(".").map(Number),c=arr.places[pi].combos[pj];
+    c.people=t.checked?[...new Set([...c.people,t.value])]:c.people.filter(x=>x!==t.value);mark("arrivals");
+  }
   if(d.who!==undefined||d.day!==undefined){
     const i=d.who??d.day,f=d.who!==undefined?"who":"days",v=d.who!==undefined?t.value:Number(t.value),a=cfg.places[i][f];
     cfg.places[i][f]=t.checked?[...a,v]:a.filter(x=>x!==v);mark("alerts");
@@ -331,6 +386,19 @@ document.addEventListener("click",async e=>{
   if(d.act==="bk-dl"||d.act==="bk-get")bkDownload(d.file).catch(err=>toast("Download failed: "+err.message));
   if(d.act==="bk-restore")bkRestore({file:d.file});
   if(d.act==="bk-pick")$("#bkfile").click();
+  if(d.act==="arr-addplace"){
+    const used=new Set(arr.places.map(p=>p.zone)),z=arr.zones.find(z=>!used.has(z.id));
+    if(!z){toast("Every zone is already added");return}
+    const np={id:uid(),zone:z.id,enabled:true,combos:[]};arr.places.push(np);open.add(np.id);mark("arrivals");render();
+  }
+  if(d.act==="arr-delplace"&&confirm(arr.settings.all_zones?"Remove this place? Its group names are lost. The zone keeps its sensor because Track every zone is on.":"Remove this place? Its sensor is deleted from Home Assistant when you save.")){arr.places.splice(i,1);mark("arrivals");render()}
+  if(d.act==="arr-addcombo"){arr.places[i].combos.push({name:"",people:[]});mark("arrivals");render()}
+  if(d.act==="arr-delcombo"){arr.places[i].combos.splice(+d.j,1);mark("arrivals");render()}
+  if(d.act==="arr-test"){
+    const ids=[...document.querySelectorAll('input[data-tp]:checked')].filter(x=>x.dataset.tp===d.zone).map(x=>x.value);
+    try{const r=await api("api/hub/arrivals/test",{zone:d.zone,people:ids});toast("Test arrival: "+r.state);loadArrLive()}
+    catch(err){toast("Test failed: "+err.message)}
+  }
   if(d.act==="adddev"){loc.devices.push({label:"",entity_id:"",home_state:""});mark("devices");render()}
   if(d.act==="deld"&&confirm("Remove this device?")){loc.devices.splice(i,1);mark("devices");render()}
   if(d.act==="addtrk"){loc.trackers.push({id:"",label:"",entity_id:"",home_state:"",toggle:false,tracker_id:""});mark("trackers");render()}

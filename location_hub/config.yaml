@@ -1,10 +1,10 @@
 name: "Location Hub"
-version: "3.3.1"
+version: "3.4.0"
 slug: location_hub
 # Prebuilt images from your GitHub package (built by .github/workflows/create.yml when you push a new version to main).
 # Home Assistant fills in {arch}, then downloads this instead of building on the Pi.
 image: "ghcr.io/jonathangibson98/{arch}-addon-location_hub"
-description: "Everyone's location sensor, switches, device trackers, a dashboard card and AI arrival alerts. One add-on, one sidebar entry."
+description: "Everyone's location sensor, switches, device trackers, a dashboard card, arrival sensors for any zone and AI arrival alerts. One add-on, one sidebar entry."
 arch:
   - aarch64
   - amd64

@@ -1,5 +1,21 @@
 # Changelog
 
+## 3.4.0
+
+- **New Arrivals section** (home page tiles, or the Arrivals button at the top of the Location Hub page). It does
+  what the AppDaemon `PresenceSensors` app did (`sensor.arrived_home`), inside the add-on, and for **any zone**,
+  not only home.
+- Every zone gets a sensor, `sensor.arrived_<zone>` (Home is `sensor.arrived_home`). The state is who arrived:
+  `jon_home`, `jon_mj_work`, or a **group name** you set for an exact set of people. People who arrive at the
+  same place within the **group window** count as one group.
+- After the **clear time** the sensor returns to `no one arriving`. With nobody at the place it shows `nobody home`
+  (Home) or `nobody here` (any other zone). Each sensor has a `<person>_<zone>` true/false attribute per person.
+- `sensor.latest_arrival` shows the newest arrival at any zone, and each arrival fires a `location_hub_arrival`
+  event (place, zone, people, key) for automations.
+- People come from **Location > Devices**, so there is nothing to enter twice. A **Live** tab shows every sensor,
+  has a Test arrival button, and keeps an activity list.
+- Arrival settings are included in Backup & restore.
+
 ## 3.3.1
 
 - Fix: background watchers (backstop, idle watch, restart after restore) are now kept referenced so Python cannot garbage-collect them mid-run.

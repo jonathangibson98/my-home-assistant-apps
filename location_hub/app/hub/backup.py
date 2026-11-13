@@ -1,7 +1,7 @@
 """Location Hub backup: save and restore everything this add-on keeps, as one JSON file.
 
 A backup holds the hub's own files (devices, sensor trackers, dashboard card, sensor settings,
-alert places and people) plus the add-on options from the Configuration tab. The MQTT password is
+alert places and people, arrival settings) plus the add-on options from the Configuration tab. The MQTT password is
 never written to a backup, and a restore keeps the one you have now.
 
 Backups are written to a folder under /share (see the backup_path option), which is not deleted when
@@ -43,7 +43,7 @@ SAFETY = "location_hub_safety_"
 NAME_RE = re.compile(r"^location_hub_(backup|safety)_[A-Za-z0-9_.-]+\.json$")
 
 # Everything the hub keeps in its data folder.
-FILES = ("devices.json", "settings.json", "trackers.json", "card.json", "config.json")
+FILES = ("devices.json", "settings.json", "trackers.json", "card.json", "config.json", "arrivals.json")
 # Add-on options worth carrying over. mqtt_password is left out on purpose, and so are the backup
 # options themselves, so a restore never moves where backups are kept.
 OPTION_KEYS = ("sensor_name", "sync_entity_id", "unique_id", "log_level", "log_location_updates",
@@ -98,6 +98,7 @@ def summarize(d: dict) -> dict:
     f = d.get("files") or {}
     return {"devices": _count(f.get("devices.json"), "entities"), "trackers": _count(f.get("trackers.json"), "trackers"),
             "places": _count(f.get("config.json"), "places"), "people": _count(f.get("config.json"), "people"),
+            "arrivals": _count(f.get("arrivals.json"), "places"),
             "options": len(d.get("options") or {})}
 
 

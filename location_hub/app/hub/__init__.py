@@ -82,20 +82,25 @@ def setup(app: web.Application, session):
     aiohttp.ClientSession for Home Assistant, MQTT discovery lookups and reverse geocoding.
     """
     migrate_legacy_data()
-    from . import alerts, backup, tracker  # imported late: they read their data files at import time
+    from . import alerts, arrivals, backup, tracker  # imported late: they read their data files at import time
 
     app["session"] = session
     alerts_app = alerts.App(tracker.entity_id)
     alerts_app.http = session
     app["hub_alerts"] = alerts_app
+    arrivals_app = arrivals.App()
+    arrivals_app.http = session
+    app["hub_arrivals"] = arrivals_app
     tracker.add_routes(app)
     backup.add_routes(app)
     app.router.add_get("/", home)
     app.router.add_get("/hub", page)
     app.router.add_get("/hub/", page)
     app.router.add_routes(alerts_app.routes())
+    app.router.add_routes(arrivals_app.routes())
 
     return [
         asyncio.create_task(_forever("tracker", lambda: tracker.run_background(session)), name="hub-tracker"),
         asyncio.create_task(_forever("alerts", alerts_app.ws_loop), name="hub-alerts"),
+        asyncio.create_task(_forever("arrivals", arrivals_app.run), name="hub-arrivals"),
     ]

@@ -42,6 +42,10 @@ const GROUPS=[
   ["🧑‍🤝‍🧑","People & sensors","Who alerts track, notes for the writer","hub#alerts/people"],
   ["💬","Notifications","AI task, notify service and limits","hub#alerts/notify"],
   ["📜","Activity","Last sent, skipped and previewed alerts","hub#alerts/log"]]],
+ ["Arrivals",[
+  ["📍","Arrival places","Any zone, with optional group names","hub#arrivals/arr_places"],
+  ["⚙️","Arrival settings","Zones to track, group window, reset time","hub#arrivals/arr_settings"],
+  ["🛰️","Live arrivals","Current sensor states, test, activity","hub#arrivals/arr_live"]]],
  ["Backup",[
   ["💾","Backup & restore","Save or restore all your settings","hub#backup/backup"]]]];
 document.getElementById("groups").innerHTML=GROUPS.map(([g,tiles])=>

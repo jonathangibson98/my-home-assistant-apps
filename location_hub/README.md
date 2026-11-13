@@ -8,6 +8,9 @@ Everyone's location sensor for Home Assistant, clickable switches, device tracke
 - Sensors to Device Trackers: turn any sensor into a real `device_tracker`
 - Dashboard card: generates a Mushroom card (with Bubble separator) to paste into a dashboard
 
+**Arrivals**
+- A sensor per zone (`sensor.arrived_home`, `sensor.arrived_work`, ...) that shows who just arrived, with optional group names, plus `sensor.latest_arrival` and a `location_hub_arrival` event for automations
+
 **Alerts**
 - Per-place arrival notifications with an AI-written message, dwell time, days, time windows and cooldown
 - Preview or send a test from the UI, and an Activity log
