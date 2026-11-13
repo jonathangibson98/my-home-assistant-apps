@@ -3,7 +3,7 @@ version: "1.4.0"
 slug: work_hours
 image: "ghcr.io/jonathangibson98/{arch}-addon-work_hours"
 description: Logs time spent in chosen zones, one file per person, with MQTT sensors
-url: https://github.com/jonathangibson98/ha-work-hours
+url: https://github.com/jonathangibson98/my-home-assistant-apps
 arch:
   - aarch64
   - amd64
