@@ -1,78 +1,77 @@
-# Creator & AI Builder
+# Jon's Home Assistant Apps
 
-Type what you want in plain English. Your Home Assistant `ai_task` entity builds it. One add-on, four tools:
+A collection of custom Home Assistant add-ons (apps). Add this repository once and every app below shows up in the Add-on Store.
 
-- **Build**: automations, scenes, scripts, template sensors, helpers, AppDaemon apps, pyscripts, blueprints and whole add-ons.
-- **Announcements**: tap checkboxes to make AI-written voice announcements (weather, news, welcome home, roasts, whatever). It writes the Home Assistant script and pushes it in.
-- **Facts**: AI-written facts for a dashboard. Pick random topics and angles, a format and a file, optionally run on a schedule. It writes the Home Assistant script (and automation) and pushes it in.
-- **Backup**: save this add-on's data to a path you choose in the options, and import it back.
+---
 
-Use the tab bar at the top of the sidebar panel to switch: **Build / Announcements / Facts / Backup**.
+## 🚀 Included Apps
 
-## Build
+| | App | What it does | Needs |
+|---|---|---|---|
+| 🤖 | [**Creator & AI Builder**](ai_builder) | Describe what you want in plain English and your `ai_task` entity builds automations, scenes, scripts, template sensors, helpers, AppDaemon apps, pyscripts, blueprints and even add-ons. Also makes AI voice announcements, turns photos into SVG icons, and backs up its own data. | An `ai_task` entity (a TTS engine and speaker for announcements) |
+| 📄 | [**File Reader**](file_reader) | Web UI and MQTT file manager. Every text file in your folder becomes a Home Assistant sensor (last line as the state), plus an optional REST API for automations and logging. | MQTT |
+| ☁️ | [**iCloud Lite**](ha-icloud-lite) | Track Apple devices from multiple iCloud accounts. Each device becomes a `device_tracker` with a battery sensor. | MQTT |
+| 📍 | [**Location Hub**](location_hub) | A location history map (trails, playback, stops, places, heatmap) plus everyone's location sensor (**you choose its name**), switches, device trackers, a dashboard card generator and AI arrival alerts. One add-on, one sidebar entry. | MQTT; an `ai_task` entity and a `notify.*` service for alerts |
+| 👤 | [**Personalized Info**](personalized_info) | Edit everyone's info and music preferences from a phone-friendly UI. Saved to one readable YAML file with automatic backups. | none (MQTT optional) |
+| 🖼️ | [**Photo Hub**](photo_shuffle) | Folder shuffles and random Unsplash photos, all published as image entities. Manage everything from one web UI. | MQTT (Unsplash key for Unsplash collections) |
+| 🎬 | [**Release Tracker**](release-tracker) | Pick the TV shows and movies you care about and get sensors for what is coming out and when. | Free TMDB API key |
+| 🏈 | [**Team Tracker Lite**](team_tracker_lite) | One lightweight live sports sensor. Pick any team from a menu, with a calendar of every game for your saved teams. | MQTT |
+| 🚗 | [**Travel Times**](travel_times) | Live drive-time sensors (Waze) from each person to each destination, polled faster while someone is moving. Pick people and destinations in the web UI. | MQTT |
+| 🎙️ | [**Voice Chat**](voice_chat) | Hands-free voice conversation with any Home Assistant AI agent, answered out loud on the speaker you choose. | A conversation agent, a TTS engine and a media player |
+| ⏱️ | [**Work Hours Tracker**](work_hours) | Logs how long each person spends in the work zones you pick for them, saved as one file per person, with MQTT sensors. | Home Assistant zones (MQTT optional) |
 
-- Automations and scenes, new or edits to ones you already have
-- Template sensors and binary sensors, test-rendered against your live data before you create them
-- Scripts, and helpers (input_boolean, input_number, input_select, input_text, input_datetime, counter, timer)
-- AppDaemon apps, pyscripts and blueprints, with syntax checks before anything is written
-- Whole add-ons: config, Dockerfile, run.sh and docs, written to `/addons`, auto-repaired for this system
-- Multi-part requests, such as helpers + a template sensor + an automation from one sentence
-- Flags entities the AI used that don't exist, "Revise" box, "Ask AI to fix it" when HA rejects something
-- Never overwrites a file without asking, and backs up what it replaces
+Each app has its own **Documentation** tab in Home Assistant, and a `DOCS.md` / `README.md` in its folder with setup details.
 
-## Announcements
+---
 
-- Info sources: household, who is where, weather, news, calendars, to-do, trash, any entity or attribute, or a custom template
-- Personalities you can add, edit and remove (a no-personality Default plus Hype, Roast and Sweetie Pie to start), or follow a Home Assistant dropdown the add-on can create and keep in sync
-- Speak on a main speaker (TTS), Alexa speakers, and phone notifications; pause and resume music
-- **Test before saving**: preview the data, test text only, or test with sound, using a temporary script that is deleted afterward
-- Helper tab: describe what you want and the AI writes the instructions and ticks the data it needs
-- Settings with searchable entity pickers, Auto-fill, and Export/Import as JSON
+## 🛠️ Installation in Home Assistant
 
-## Facts
+1. Open **Home Assistant**.
+2. Go to **Settings** -> **Add-ons** -> **Add-on Store**.
+3. Click the three dots in the upper right corner and select **Repositories**.
+4. Add the URL of this repository:
 
-- Random lists (topic, angle, genre...) so every fact is different, plus a random seed
-- Formats: just the fact, a title and the fact, or a short list, with an optional heading
-- Rules: real and verifiable, go obscure, keep the household out, don't repeat the last fact
-- Saved over MQTT (default `file_reader/overwrite/`), with an optional schedule and "someone is home" condition
-- Edit imported automations and scripts as fields, and copy a ready-made dashboard card for any fact
-- Import a whole automation (like a daily birthdays one) and edit its YAML and save path here
-- Keep your own automations with a fact: load an existing automation, or import a script and its automation together
-- Test before saving, Helper tab, import your own script, and everything is included in Backup
+   ```text
+   https://github.com/jonathangibson98/my-home-assistant-apps
+   ```
 
-## Backup
+5. Close the dialog, refresh the page, and the apps appear in the store.
+6. Pick one, click **Install**, then **Start**. Turn on **Show in sidebar** for apps that have a web UI.
 
-- **Save backup now** writes a JSON file to the `backup_path` option (a folder, or one `.json` file)
-- **Import** lists the backups found at that path and restores one. A safety copy of your current data is saved first
-- Covers template sensors this add-on manages, "Made so far" history and announcement settings
+### Apps that use MQTT
 
-## How the parts work together
+Install the **Mosquitto broker** add-on and set up the **MQTT** integration first. The apps detect the broker automatically, so you normally don't need to enter any MQTT details.
 
-- One AI task entity is shared. Announcements use it unless you pick a different one in Announcements > Settings
-- Announcements you push show up in Build's **Made so far** history
-- Announcement scripts are normal scripts, so you can pick one in Build's **Change something that already exists** and have the AI edit it
-- One connection to Home Assistant, one entity list, one sidebar entry
+---
 
-## Install
+## 📦 Prebuilt images (GitHub packages)
 
-1. Copy the `ai_builder` folder into `/addons/` on your Home Assistant (replace the old one if you are upgrading).
-2. Settings -> Add-ons -> Add-on Store -> menu (three dots) -> **Check for updates**.
-3. Open **Creator & AI Builder** under Local add-ons, then **Install** (or **Rebuild** if upgrading) and **Start**.
-4. Turn on **Show in sidebar**.
+An add-on whose `config.yaml` has an `image:` line (Location Hub does) is downloaded by Home Assistant as a finished image from GitHub's container registry instead of being built on your Pi. Add-ons without that line are still built locally on install.
 
-Template sensors need a one-time `configuration.yaml` change. See [DOCS.md](DOCS.md).
+Publishing an image:
 
-## Requirements
+1. Bump `version` in the add-on's `config.yaml` and commit.
+2. Push a tag that matches it, for example `git tag v2.4.0 && git push origin v2.4.0`. The **Publish prebuilt images to GHCR** action (`.github/workflows/create.yml`) builds every add-on for `aarch64` and `amd64` and pushes them to `ghcr.io/jonathangibson98/<arch>-addon-<slug>`, tagged with the version and `latest`. You can also start it by hand from the **Actions** tab.
+3. On GitHub open your profile, **Packages**, the new package, **Package settings**, and set it to **Public**. Home Assistant cannot pull a private package.
 
-- Home Assistant OS or Supervised (needs the add-on system)
-- Home Assistant 2025.8 or newer (for `ai_task`)
-- A working `ai_task` entity. The default is `ai_task.gemini_pro_ai_task`
-- For announcements: a text-to-speech engine and a speaker. Alexa speakers need the `alexa_media` custom integration
+The tag must match the add-on version, or Home Assistant will look for an image tag that was never built.
 
-## Support
+---
 
-AI output can be wrong. Always read the config or script before you create or push it.
+## 📂 Repository layout
 
-## SVG Maker moved
-
-The SVG Maker tab was split out into its own add-on, **SVG Maker** (`svg_maker`), because the tracer crashed inside this add-on. Install it separately. The `svg_*` options were removed from this add-on.
+```text
+my-home-assistant-apps/
+├── .github/workflows/create.yml
+├── ai_builder/
+├── file_reader/
+├── ha-icloud-lite/
+├── location_hub/
+├── personalized_info/
+├── photo_shuffle/        (Photo Hub)
+├── release-tracker/
+├── team_tracker_lite/
+├── voice_chat/
+├── work_hours/
+└── repository.yaml
+```
