@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.4
+
+- Start script quotes the options path and no longer masks `jq` errors.
+
 ## 1.2.3
 
 ### Changed

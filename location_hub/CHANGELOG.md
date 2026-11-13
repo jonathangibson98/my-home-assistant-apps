@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.3.1
+
+- Fix: background watchers (backstop, idle watch, restart after restore) are now kept referenced so Python cannot garbage-collect them mid-run.
+- Health check uses the exec form, which the Dockerfile linter requires.
+- Added a logo and fixed a typo in the README.
+
 ## 3.3.0
 
 - **Backup & restore.** New Backup section (home page tile, or the Backup button at the top of the Location Hub

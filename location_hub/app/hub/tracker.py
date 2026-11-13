@@ -990,9 +990,19 @@ def add_routes(app):
     r.add_get('/api/hub/settings', handle_get_settings)
     r.add_post('/api/hub/settings', handle_post_settings)
 
+_BG_TASKS: set = set()  # keep references so background tasks are not garbage-collected mid-run
+
+
+def _spawn(coro):
+    task = asyncio.create_task(coro)
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+    return task
+
+
 async def run_background(s):
-    asyncio.create_task(backstop(s))
-    asyncio.create_task(idle_watch(s))
+    _spawn(backstop(s))
+    _spawn(idle_watch(s))
     while True:
         try:
             await listen(s)

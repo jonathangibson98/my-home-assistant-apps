@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.7
+
+- Fix: the periodic MQTT republish loop is kept referenced so it cannot be garbage-collected.
+- Added option labels (`translations/en.yaml`) so the Configuration tab shows names and descriptions.
+
 ## 0.3.6
 - Changed Backup files it keeps to 5 not 20
 

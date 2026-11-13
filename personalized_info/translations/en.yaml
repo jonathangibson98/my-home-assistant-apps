@@ -1,0 +1,16 @@
+configuration:
+  core_people:
+    name: Household people
+    description: Household member keys (for example jon, mj, nova) whose info is combined into the core_text attribute of the info sensor.
+  mqtt_host:
+    name: MQTT host (optional)
+    description: Leave empty to use the Mosquitto add-on automatically.
+  mqtt_port:
+    name: MQTT port (optional)
+    description: Only used with an MQTT host. Defaults to 1883.
+  mqtt_username:
+    name: MQTT username (optional)
+    description: Only used with an MQTT host.
+  mqtt_password:
+    name: MQTT password (optional)
+    description: Only used with an MQTT host.

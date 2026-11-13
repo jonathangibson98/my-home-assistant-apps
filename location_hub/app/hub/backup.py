@@ -21,6 +21,16 @@ from aiohttp import web
 
 log = logging.getLogger("hub.backup")
 
+_BG_TASKS: set = set()  # keep references so background tasks are not garbage-collected mid-run
+
+
+def _spawn(coro):
+    task = asyncio.create_task(coro)
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+    return task
+
+
 DATA_DIR = os.environ.get("MT_HUB_DATA", "/data/hub")
 OPTIONS_PATH = os.environ.get("MT_OPTIONS", "/data/options.json")
 ROOT = os.environ.get("MT_BACKUP_ROOT", "/share")
@@ -257,7 +267,7 @@ async def handle_restore(request: web.Request) -> web.Response:
         options = await apply_options(request.app["session"], d["options"])
     restarting = bool(os.environ.get("SUPERVISOR_TOKEN"))
     if restarting:
-        asyncio.create_task(_restart_soon(request.app["session"]))
+        _spawn(_restart_soon(request.app["session"]))
     log.info("Restored %s (safety copy %s)", name, safety)
     return web.json_response({"ok": True, "restored": sorted(d["files"]), "safety": safety, "options": options,
                               "restarting": restarting, "summary": summarize(d)})

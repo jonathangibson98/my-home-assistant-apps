@@ -20,6 +20,16 @@ logging.basicConfig(
 )
 log = logging.getLogger("person_profiles")
 
+_BG_TASKS: set = set()  # keep references so background tasks are not garbage-collected mid-run
+
+
+def _spawn(coro):
+    task = asyncio.create_task(coro)
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+    return task
+
+
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -69,7 +79,7 @@ class HA:
                 if fut and not fut.done():
                     fut.set_result(data)
             elif data.get("type") == "event" and self.on_event:
-                asyncio.create_task(self.on_event(data["event"]))
+                _spawn(self.on_event(data["event"]))
 
     async def call(self, payload, timeout=60):
         self.msg_id += 1
@@ -258,7 +268,6 @@ class App:
         save_cache(self.cache)
 
     def simple_summary(self, p):
-        a = p["attrs"]
         parts = [f"{p['name']}: {p['state']}"]
         battery = self.battery(p)
         if battery is not None:

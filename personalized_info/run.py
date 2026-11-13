@@ -499,7 +499,17 @@ async def start_bg(app):
                 await loop.run_in_executor(None, start_mqtt)
             if n % 10 == 0:
                 await loop.run_in_executor(None, publish_all)
-    asyncio.create_task(tick())
+    _spawn(tick())
+
+_BG_TASKS: set = set()  # keep references so background tasks are not garbage-collected mid-run
+
+
+def _spawn(coro):
+    task = asyncio.create_task(coro)
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+    return task
+
 
 app = web.Application()
 app.router.add_get("/", index)

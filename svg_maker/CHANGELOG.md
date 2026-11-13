@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1 - 2026-11-13
+
+- Now published as a prebuilt image (`ghcr.io/jonathangibson98/{arch}-addon-svg_maker`), so it installs without building on the Pi.
+- The add-on page link now points at this repository.
+
 ## 1.0.0 - 2026-11-05
 
 SVG Maker is now its own add-on, split out of Creator & AI Builder, where it failed to convert photos.

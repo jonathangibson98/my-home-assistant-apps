@@ -19,7 +19,7 @@ from aiohttp import web
 
 try:  # heavy imports are optional so the rest of the add-on still starts if they are missing
     from PIL import Image, ImageEnhance, ImageFilter, ImageOps
-    import vtracer
+    import vtracer  # noqa: F401  (availability probe; the tracer itself runs in a subprocess)
     IMPORT_ERROR = None
 except Exception as e:  # pragma: no cover
     IMPORT_ERROR = str(e)
