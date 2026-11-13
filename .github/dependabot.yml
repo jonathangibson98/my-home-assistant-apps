@@ -4,3 +4,13 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+
+  - package-ecosystem: pip
+    directory: "/release-tracker"
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: pip
+    directory: "/ha-icloud-lite"
+    schedule:
+      interval: weekly
