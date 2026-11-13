@@ -6,10 +6,7 @@ description: Builds a profile sensor for each person from all their related enti
 arch:
   - aarch64
   - amd64
-  - armv7
 init: false
-startup: application
-boot: auto
 homeassistant_api: true
 options:
   people: []
