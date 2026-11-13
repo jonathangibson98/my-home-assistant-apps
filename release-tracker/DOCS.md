@@ -1,6 +1,6 @@
 # Release Tracker
 
-Track only the TV shows and movies you care about, and get told when they drop.
+Track only the TV shows, movies, games, and DLC you care about, and get told when they drop.
 
 ## Setup
 
@@ -29,6 +29,42 @@ Rename someone in Settings and the old sensors are removed and new ones are crea
 | `sensor.release_tracker_next_release` | Title of the next thing coming out. Attributes: `date`, `days_until`, `label`, `type`. |
 | `sensor.release_tracker_upcoming` | Count of releases inside the window. List is in `items`. |
 | `binary_sensor.release_tracker_releasing_today` | On when anything tracked releases today. `by_person` shows who it is for. |
+
+## Games and DLC
+
+Games use a different free service (IGDB, run by Twitch), so it needs its own keys.
+
+1. Go to [dev.twitch.tv/console](https://dev.twitch.tv/console) and log in. Twitch makes you turn on two-factor login first if you have not.
+2. Tap **Register Your Application**. Name it anything, set OAuth Redirect URL to `http://localhost`, pick **Application Integration** as the category, and create it.
+3. Open **Manage** on the new app. Copy the **Client ID**, then tap **New Secret** and copy that too.
+4. In this add-on go to **Settings**, paste both under **Video games (IGDB)**, and save.
+5. On the **Add** tab flip the switch to **Games & DLC**, search, and tap **Track**.
+
+Track the main game and any DLC or expansion IGDB knows about shows up on its own. The card shows whichever thing drops next, like `DLC: Skin Pack`. You can also search a DLC by name and track it alone.
+
+Games get one sensor, no per-person ones:
+
+| Entity | What it is |
+|---|---|
+| `sensor.release_tracker_upcoming_games` | How many games or DLC release inside the window. Full list in `items`. Also `next_title`, `next_date`, `next_days_until`, `next_label`. |
+
+Notify when something drops today:
+
+```yaml
+alias: Game drops today
+trigger:
+  - platform: time
+    at: "08:00:00"
+condition:
+  - condition: template
+    value_template: >
+      {{ state_attr('sensor.release_tracker_upcoming_games','next_days_until') == 0 }}
+action:
+  - service: notify.notify
+    data:
+      title: Dropping today
+      message: "{{ state_attr('sensor.release_tracker_upcoming_games','next_title') }}: {{ state_attr('sensor.release_tracker_upcoming_games','next_label') }}"
+```
 
 ## Settings
 
@@ -67,6 +103,7 @@ Swap `notify.notify` for the notify service of whoever should get it.
 
 ## Things to know
 
+- Game dates come from IGDB, also crowd-sourced. Dates are the earliest across all platforms. If only a month or year is known it says "expected" and gets no sensor date.
 - Dates come from TMDB, which is crowd-sourced. TV air dates can be wrong or late, and streaming shows often have no date until shortly before release.
 - Shows with no announced next episode say "No date announced yet" and get no sensor date.
 - A movie that is already out stays in your list, but it will not show up as upcoming.
@@ -76,4 +113,5 @@ Swap `notify.notify` for the notify service of whoever should get it.
 
 - **No entities show up**: check that MQTT is set up in Home Assistant. On the add-on's Settings tab, it should say "Connected to a broker."
 - **Search says add your key**: paste the TMDB key in Settings and save.
+- **Games search says add your Twitch keys**: paste both the Client ID and Secret in Settings and save.
 - **Wrong or missing date**: hit **Refresh now**. If TMDB itself is wrong, there is nothing to fix on this end.

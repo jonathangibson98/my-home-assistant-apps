@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0
+
+- Added **video games and DLC**. Pick the **Games & DLC** switch on the Add tab and search by name.
+- Track a game and its DLC and expansions show up automatically under it. Track a DLC directly if you only care about that.
+- Games get **one** sensor: `sensor.release_tracker_upcoming_games`. No per-person game sensors, and games never touch the TV and movie sensors.
+- Games data comes from IGDB (free). You need a free Twitch Client ID and Secret in Settings.
+- Dates that are only a month or a year show as "expected" instead of a fake exact date.
+
 ## 1.1.0
 
 - Added **people**. Tag each show or movie with who cares about it (you, MJ, anybody you add in Settings).
