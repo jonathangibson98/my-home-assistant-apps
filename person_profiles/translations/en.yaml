@@ -1,1 +1,43 @@
-y
+configuration:
+  people:
+    name: People
+    description: Person entities to build profiles for (example person.jon). Leave empty to use every person.
+  update_interval_seconds:
+    name: Update interval (seconds)
+    description: How often the sensors are refreshed.
+  name_matching:
+    name: Match entities by name
+    description: Also link entities whose id or name contains the person's name.
+  include_unavailable:
+    name: Include unavailable entities
+    description: Keep entities that are unavailable or unknown.
+  max_entities_in_sensor:
+    name: Max entities in sensor
+    description: How many related entities are listed in the sensor attributes.
+  max_entities_for_ai:
+    name: Max entities sent to AI
+    description: How many related entities are sent to the AI for summaries and questions.
+  exclude_domains:
+    name: Excluded domains
+    description: Entity domains to ignore (update, button, scene, and so on).
+  exclude_entity_patterns:
+    name: Excluded entity patterns
+    description: Glob patterns to ignore, for example sensor.*_uptime.
+  person_extras:
+    name: Manual extra entities
+    description: Entities to always link to a person, even if nothing else connects them.
+  ai_task_entity:
+    name: AI Task entity
+    description: ai_task entity used for summaries and questions (preferred).
+  conversation_agent:
+    name: Conversation agent
+    description: Used only if no AI Task entity is set.
+  ai_interval_minutes:
+    name: AI summary interval (minutes)
+    description: How often AI rebuilds each summary. 0 means only when you ask.
+  ai_extra_prompt:
+    name: Extra AI instructions
+    description: Added to every AI request, for example "Keep it casual".
+  log_level:
+    name: Log level
+    description: How much the add-on writes to its log.
