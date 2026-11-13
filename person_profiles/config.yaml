@@ -1,7 +1,7 @@
 name: Person Profiles
 version: "0.1.2"
 slug: person_profiles
-image: "ghcr.io/jonathangibson98/{arch}-addon-person-profiles"
+image: "ghcr.io/jonathangibson98/{arch}-addon-person_profiles"
 description: Builds a profile sensor for each person from all their related entities, with optional AI summaries
 arch:
   - aarch64
