@@ -647,7 +647,7 @@ function drawSettings() {
   sp.append(PL, el("div", {class: "row", style: "margin-top:12px"}, addName, addBtn));
   sp.append(el("h3", {style: "margin-top:18px"}, "Home Assistant dropdown"),
     el("p", {class: "help"}, S.personality_select
-      ? "Using " + S.personality_select + ". Saving settings keeps its options matched to this list. Only dropdowns made in Settings -> Helpers can be edited from here."
+      ? "Using " + S.personality_select + ". Saving settings keeps its options matched to this list. If it can\'t be edited (for example it is written in configuration.yaml), a new one is made for you automatically."
       : "Optional. Make a dropdown in Home Assistant so you can switch personality from a dashboard, an automation or your phone."),
     el("div", {class: "row", style: "margin-top:8px"}, S.personality_select
       ? el("button", {class: "btn", onclick: () => syncDropdown(false)}, "Update the dropdown now")

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.11.1 - 2026-11-12
+
+- **No more "it was written in configuration.yaml so I can't edit it" error.** The Personality dropdown now fixes itself. If the dropdown you picked is written in `configuration.yaml` (or was deleted), the add-on makes its own editable dropdown (`input_select.ai_builder_personality`) through Home Assistant, switches your settings to it and keeps its options matched from then on. If that one already exists it is reused instead of making a copy
+- After it switches, push your announcements again so their scripts use the new dropdown, and point any dashboard card that used the old one at the new one
+
 ## 2.11.0 - 2026-11-12
 
 - **Personalities are now a list you control.** In Announcements -> Settings -> Personalities you can add your own, edit the wording of any of them, and remove the ones you don't want. Hype, Roast and Sweetie Pie are still there to start with, and any wording you had already changed is kept

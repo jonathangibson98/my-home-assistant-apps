@@ -1320,43 +1320,79 @@ async def ann_registry_entity(app, unique_id):
     return "input_select." + unique_id
 
 
+ANN_DROPDOWN_NAME = "AI Builder Personality"
+ANN_DROPDOWN_ID = "input_select.ai_builder_personality"
+
+
+async def ann_update_dropdown(app, ent, names):
+    """Set the options of a dropdown made in Settings -> Helpers. Returns (ok, error)."""
+    r = await ws_call(app, {"type": "config/entity_registry/get", "entity_id": ent})
+    item = str(((r.get("result") or {}) if r.get("success") else {}).get("unique_id") or ent.split(".", 1)[1])
+    r = await ws_call(app, {"type": "input_select/update", "input_select_id": item, "options": names})
+    if r.get("success"):
+        return True, ""
+    return False, (r.get("error") or {}).get("message", "Home Assistant would not update it.")
+
+
+async def ann_make_dropdown(app, names):
+    """Make the personality dropdown by itself (a real UI helper, always editable). Returns (entity_id, error)."""
+    st, state = await ha(app, "GET", "/states/" + ANN_DROPDOWN_ID)
+    if st == 200 and isinstance(state, dict):  # one we made earlier: reuse it if it can still be edited
+        ok, _err = await ann_update_dropdown(app, ANN_DROPDOWN_ID, names)
+        if ok:
+            return ANN_DROPDOWN_ID, ""
+    r = await ws_call(app, {"type": "input_select/create", "name": ANN_DROPDOWN_NAME, "icon": "mdi:account-voice",
+                            "options": names, "initial": ANN_PERSONA_DEFAULT})
+    if not r.get("success"):
+        return "", (r.get("error") or {}).get("message", "Home Assistant would not create it.")
+    return await ann_registry_entity(app, (r.get("result") or {}).get("id") or "ai_builder_personality"), ""
+
+
 async def ann_dropdown_sync(request):
-    """Create the personality dropdown (input_select) in Home Assistant, or make its options match the list."""
+    """Create the personality dropdown (input_select) in Home Assistant, or make its options match the list.
+    If the picked dropdown is written in configuration.yaml (so it can't be edited) or is gone, a new editable one is made
+    and used instead, so there is never an error to fix by hand."""
     app = request.app
     body = await ann_body(request)
     s = ann_settings()
     names = [p["name"] for p in s["personalities"]]
     ent = str(s.get("personality_select") or "").strip()
+
+    def switch(new_ent):
+        saved = load_json(ANN_SETTINGS, {})
+        saved["personality_select"] = new_ent
+        save_json(ANN_SETTINGS, saved)
+
     try:
         if not ent:
             if not body.get("create"):
                 return web.json_response({"ok": False, "error": "No dropdown is picked yet. Use Create the dropdown for me."})
-            r = await ws_call(app, {"type": "input_select/create", "name": "Announcement Personality", "icon": "mdi:account-voice",
-                                    "options": names, "initial": ANN_PERSONA_DEFAULT})
-            if not r.get("success"):
-                return web.json_response({"ok": False, "error": (r.get("error") or {}).get("message", "Home Assistant would not create it.")})
-            ent = await ann_registry_entity(app, (r.get("result") or {}).get("id") or "announcement_personality")
-            saved = load_json(ANN_SETTINGS, {})
-            saved["personality_select"] = ent
-            save_json(ANN_SETTINGS, saved)
-            return web.json_response({"ok": True, "created": True, "entity": ent, "settings": ann_settings(),
-                                      "message": "Created %s with %d personalities. It is now your Personality dropdown." % (ent, len(names))})
+            new_ent, err = await ann_make_dropdown(app, names)
+            if not new_ent:
+                return web.json_response({"ok": False, "error": err})
+            switch(new_ent)
+            return web.json_response({"ok": True, "created": True, "entity": new_ent, "settings": ann_settings(),
+                                      "message": "Created %s with %d personalities. It is now your Personality dropdown." % (new_ent, len(names))})
         if not ANN_ENT_RE.match(ent) or not ent.startswith("input_select."):
             return web.json_response({"ok": False, "error": "%s is not an input_select." % ent})
         st, state = await ha(app, "GET", "/states/" + ent)
-        if st != 200 or not isinstance(state, dict):
-            return web.json_response({"ok": False, "error": "Home Assistant has no %s. Pick another dropdown or create a new one." % ent})
-        if (state.get("attributes") or {}).get("options") == names:
+        gone = st != 200 or not isinstance(state, dict)
+        if not gone and (state.get("attributes") or {}).get("options") == names:
             return web.json_response({"ok": True, "unchanged": True, "entity": ent, "settings": ann_settings(), "message": "The dropdown already matches."})
-        r = await ws_call(app, {"type": "config/entity_registry/get", "entity_id": ent})
-        item = str(((r.get("result") or {}) if r.get("success") else {}).get("unique_id") or ent.split(".", 1)[1])
-        r = await ws_call(app, {"type": "input_select/update", "input_select_id": item, "options": names})
-        if not r.get("success"):
-            return web.json_response({"ok": False, "error": "I can't edit %s. It is probably written in configuration.yaml, and only dropdowns made in Settings -> Helpers can be edited from here. "
-                                      "Either use Create the dropdown for me, or set its options by hand to: %s" % (ent, ", ".join(names))})
-        if state.get("state") not in names:  # the one it was on is gone, so land on Default
-            await ha(app, "POST", "/services/input_select/select_option", {"entity_id": ent, "option": ANN_PERSONA_DEFAULT})
-        return web.json_response({"ok": True, "entity": ent, "settings": ann_settings(), "message": "Updated %s: %s." % (ent, ", ".join(names))})
+        if not gone:
+            ok, err = await ann_update_dropdown(app, ent, names)
+            if ok:
+                if state.get("state") not in names:  # the one it was on is gone, so land on Default
+                    await ha(app, "POST", "/services/input_select/select_option", {"entity_id": ent, "option": ANN_PERSONA_DEFAULT})
+                return web.json_response({"ok": True, "entity": ent, "settings": ann_settings(), "message": "Updated %s: %s." % (ent, ", ".join(names))})
+        # Missing, or written in configuration.yaml so it can't be edited: make a new editable one and use it.
+        new_ent, err2 = await ann_make_dropdown(app, names)
+        if not new_ent:
+            return web.json_response({"ok": False, "error": err2})
+        switch(new_ent)
+        why = "%s no longer exists" % ent if gone else "%s was written in configuration.yaml, so it can't be edited" % ent
+        return web.json_response({"ok": True, "created": True, "entity": new_ent, "settings": ann_settings(),
+                                  "message": "%s. I made %s for you (it updates by itself) and switched to it. If a dashboard card or automation used %s, point it at %s." % (why, new_ent, ent, new_ent)})
     except Exception as e:  # noqa: BLE001 - report anything that goes wrong talking to Home Assistant
         return web.json_response({"ok": False, "error": "Could not reach Home Assistant: %s" % e})
 
