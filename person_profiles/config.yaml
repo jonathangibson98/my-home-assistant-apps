@@ -1,5 +1,5 @@
 name: Person Profiles
-version: "0.1.0"
+version: "0.1.1"
 slug: person_profiles
 description: Builds a profile sensor for each person from all their related entities, with optional AI summaries
 arch:
