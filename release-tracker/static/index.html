@@ -23,7 +23,7 @@
     color: var(--dim); border-radius: 10px; font: inherit; cursor: pointer;
   }
   nav button.on { background: var(--accent); color: #1a0f14; border-color: var(--accent); font-weight: 600; }
-  nav button:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  nav button:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .item {
     display: flex; gap: 12px; background: var(--card); border: 1px solid var(--line);
     border-radius: 12px; padding: 10px; margin-bottom: 10px; align-items: stretch;
@@ -31,7 +31,9 @@
   .poster { width: 56px; height: 84px; border-radius: 6px; object-fit: cover; background: #14142a; flex: none; }
   .body { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 3px; }
   .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  a.title { color: var(--text); text-decoration: underline dotted var(--dim); text-underline-offset: 3px; }
   .sub { color: var(--dim); font-size: 0.85rem; }
+  .note { color: var(--dim); font-size: 0.82rem; font-style: italic; }
   .err { color: var(--accent); font-size: 0.8rem; }
   .when { text-align: right; display: flex; flex-direction: column; justify-content: center; align-items: flex-end; min-width: 74px; gap: 6px; }
   .big { font-size: 1.9rem; font-weight: 700; line-height: 1; }
@@ -45,6 +47,7 @@
     width: 100%; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--line);
     background: #14142a; color: var(--text); font: inherit;
   }
+  input[type="date"] { color-scheme: dark; }
   input[type="checkbox"] { width: auto; margin: 0; accent-color: var(--accent); }
   .btn { padding: 11px 16px; border-radius: 10px; border: none; background: var(--accent); color: #1a0f14; font: inherit; font-weight: 600; cursor: pointer; white-space: nowrap; }
   .btn.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); }
@@ -59,9 +62,15 @@
   .chip.on { background: var(--accent); border-color: var(--accent); color: #1a0f14; font-weight: 600; }
   .who { margin-bottom: 14px; }
   .kind { margin: 0 0 12px; }
-  .kind .chip { padding: 7px 14px; font-size: 0.85rem; }
+  .kind .chip, .filters .chip { padding: 7px 14px; font-size: 0.85rem; }
+  .filters { margin: 0 0 14px; }
   .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ok); color: #08261a; padding: 10px 16px; border-radius: 10px; font-weight: 600; opacity: 0; transition: opacity .2s; pointer-events: none; }
   .toast.show { opacity: 1; }
+
+  /* add-anything form and inline editor */
+  .formcard { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 4px 14px 14px; margin-bottom: 14px; }
+  .formcard > :first-child { margin-top: 12px; }
+  .formcard .actions { margin-top: 14px; }
 
   /* settings cards */
   details.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; }
@@ -113,6 +122,7 @@
   </nav>
 
   <section id="tab-tracking">
+    <div class="chips filters" id="filters" hidden></div>
     <div id="list"></div>
     <button class="btn ghost" id="refresh">Refresh now</button>
   </section>
@@ -121,11 +131,37 @@
     <div class="chips kind" id="kind">
       <button class="chip on" data-kind="video" aria-pressed="true">TV &amp; Movies</button>
       <button class="chip" data-kind="games" aria-pressed="false">Games &amp; DLC</button>
+      <button class="chip" data-kind="music" aria-pressed="false">Music</button>
+      <button class="chip" data-kind="people" aria-pressed="false">Celebrities</button>
+      <button class="chip" data-kind="custom" aria-pressed="false">Anything else</button>
     </div>
-    <div class="row">
-      <input id="q" placeholder="Search a show or movie" enterkeyhint="search">
-      <button class="btn" id="go">Search</button>
+
+    <div id="search-box">
+      <div class="row">
+        <input id="q" placeholder="Search a show or movie" enterkeyhint="search" aria-label="Search">
+        <button class="btn" id="go">Search</button>
+      </div>
     </div>
+
+    <div class="formcard" id="custom-form" hidden>
+      <div class="hint">For anything that does not come from a search: a tech launch, a merch drop, a tour, a sale. Leave the date empty if it has not been announced. You can edit it later.</div>
+      <label for="c-cat">What kind of thing is it?</label>
+      <select id="c-cat"></select>
+      <label for="c-title">Name</label>
+      <input id="c-title" maxlength="100" placeholder="Example: Pixel 11 launch" autocomplete="off">
+      <div class="grid2">
+        <div><label for="c-date">Date</label><input id="c-date" type="date"></div>
+        <div><label for="c-time">Time (optional)</label><input id="c-time" maxlength="20" placeholder="10 AM ET" autocomplete="off"></div>
+      </div>
+      <label for="c-notes">Note (optional)</label>
+      <input id="c-notes" maxlength="300" placeholder="Where to buy, drop code, anything you want to remember" autocomplete="off">
+      <label for="c-url">Link (optional)</label>
+      <input id="c-url" type="url" maxlength="500" placeholder="https://" autocomplete="off">
+      <label for="c-image">Picture link (optional)</label>
+      <input id="c-image" type="url" maxlength="500" placeholder="https://" autocomplete="off">
+      <div class="actions"><button class="btn" id="c-add">Track it</button></div>
+    </div>
+
     <div class="who">
       <div class="quiet">Who is tracking it?</div>
       <div class="chips" id="who"></div>
@@ -138,7 +174,7 @@
     <details class="card" id="c-people" open>
       <summary><span class="ct">People</span><span class="badge" id="bd-people"></span></summary>
       <div class="cbody">
-        <div class="hint">Everyone here can be tagged on shows, movies, and games. Home Assistant sees who tracks what in the <code>by_person</code> attribute of the release sensor. Changes here save right away.</div>
+        <div class="hint">Everyone here can be tagged on anything you track. Home Assistant sees who tracks what in the <code>by_person</code> attribute of the release sensor. Changes here save right away.</div>
         <div id="people-list"></div>
         <div class="addrow">
           <input id="p-new" placeholder="Add a person" maxlength="30" autocomplete="off" aria-label="Name of the person to add">
@@ -148,8 +184,9 @@
     </details>
 
     <details class="card" id="c-tmdb">
-      <summary><span class="ct">Movies &amp; TV</span><span class="badge" id="bd-tmdb"></span></summary>
+      <summary><span class="ct">Movies, TV &amp; Celebrities</span><span class="badge" id="bd-tmdb"></span></summary>
       <div class="cbody">
+        <div class="hint">One TMDB key covers shows, movies, and celebrity searches.</div>
         <label for="s-key">TMDB API key or read access token</label>
         <input id="s-key" type="password" autocomplete="off">
         <div class="hint" id="key-hint"></div>
@@ -170,6 +207,14 @@
         <input id="s-gsec" type="password" autocomplete="off">
         <div class="hint" id="games-hint"></div>
         <div class="actions"><button class="btn" id="save-games">Save</button></div>
+      </div>
+    </details>
+
+    <details class="card" id="c-more">
+      <summary><span class="ct">Music &amp; custom items</span><span class="badge" id="bd-more"></span></summary>
+      <div class="cbody">
+        <div class="hint">Nothing to set up. Music comes from MusicBrainz, which is free and needs no key. Follow an artist to see their next announced album, EP, or single, or track one album. Custom items (tech, merch drops, events, sales) use the dates you type in.</div>
+        <div class="hint">MusicBrainz only lists releases once someone has added them, so a brand new announcement can take a while to show up. For those, add it under Anything else.</div>
       </div>
     </details>
 
@@ -247,10 +292,20 @@
 <script>
 const $ = s => document.querySelector(s);
 const IMG = "https://image.tmdb.org/t/p/w154";
+const GROUPS = ["TV & Movies", "Games & DLC", "Music", "Celebrities", "Tech releases", "Merch drops", "Events", "Sales & deals", "Other"];
+const CUSTOM_GROUP = { "Tech release": "Tech releases", "Merch drop": "Merch drops", "Music": "Music", "Celebrity": "Celebrities", "Event": "Events", "Sale / deal": "Sales & deals", "Other": "Other" };
+const PLACEHOLDER = {
+  video: "Search a show or movie",
+  games: "Search a game or DLC",
+  music: "Search an artist or album",
+  people: "Search an actor, musician, or other celebrity",
+};
 let state = null;
 let backups = null;
 let chosen = new Set();
 let kind = "video";
+let filter = "all";     // group shown on the Tracking tab
+let editingItem = null; // custom item being edited
 let editing = null;     // person being renamed
 let removing = null;    // person awaiting remove confirmation
 let restoring = null;   // backup file awaiting restore confirmation
@@ -276,6 +331,7 @@ function el(tag, cls, text) {
 function poster(path) {
   const i = el("img", "poster");
   i.alt = ""; i.loading = "lazy";
+  i.onerror = () => { i.style.visibility = "hidden"; };
   if (path) i.src = path.startsWith("http") ? path : IMG + path;
   return i;
 }
@@ -290,6 +346,17 @@ function kb(n) { return n < 1024 ? n + " B" : (n / 1024).toFixed(1) + " KB"; }
 function badge(id, text, cls) {
   const b = $(id); b.textContent = text; b.className = "badge" + (cls ? " " + cls : "");
 }
+function groupOf(it) {
+  if (it.type === "game") return "Games & DLC";
+  if (it.type === "album" || it.type === "artist") return "Music";
+  if (it.type === "person") return "Celebrities";
+  if (it.type === "custom") return CUSTOM_GROUP[it.category] || "Other";
+  return "TV & Movies";
+}
+function typeLabel(it) {
+  return { tv: "TV", game: "Game", movie: "Movie", album: "Album", artist: "Artist", person: "Celebrity", custom: it.category || "Other" }[it.type] || "Item";
+}
+function groupRank(g) { const i = GROUPS.indexOf(g); return i < 0 ? 99 : i; }
 
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
@@ -304,15 +371,60 @@ function byDays(a, b) {
 }
 
 // ---------- tracking ----------
+function editCard(it) {
+  const c = el("div", "item");
+  const f = el("div", "body");
+  const field = (id, label, type, val, max) => {
+    const l = el("label", null, label); l.htmlFor = id;
+    const i = el("input"); i.id = id; i.type = type; i.value = val || "";
+    if (max) i.maxLength = max;
+    f.append(l, i);
+    return i;
+  };
+  const lc = el("label", null, "Kind"); lc.htmlFor = "e-cat";
+  const cat = el("select"); cat.id = "e-cat";
+  for (const name of state.cats) { const o = el("option", null, name); o.value = name; cat.append(o); }
+  cat.value = it.category || "Other";
+  f.append(lc, cat);
+  const title = field("e-title", "Name", "text", it.title, 100);
+  const date = field("e-date", "Date (empty if not announced)", "date", it.date);
+  const time = field("e-time", "Time (optional)", "text", it.time, 20);
+  const notes = field("e-notes", "Note (optional)", "text", it.notes, 300);
+  const url = field("e-url", "Link (optional)", "url", it.url, 500);
+  const image = field("e-image", "Picture link (optional)", "url", it.poster, 500);
+  const actions = el("div", "actions");
+  const ok = el("button", "btn small", "Save");
+  const no = el("button", "btn ghost small", "Cancel");
+  ok.onclick = async () => {
+    ok.disabled = true;
+    try {
+      await send(`custom/${it.id}`, "PUT", { category: cat.value, title: title.value, date: date.value, time: time.value, notes: notes.value, url: url.value, image: image.value });
+      editingItem = null; await load(); toast("Saved");
+    } catch (e) { toast(e.message); ok.disabled = false; }
+  };
+  no.onclick = () => { editingItem = null; render(); };
+  actions.append(ok, no);
+  f.append(actions);
+  c.append(f);
+  return c;
+}
+
 function card(it) {
-  const isGame = it.type === "game";
+  if (editingItem === it.id && it.type === "custom") return editCard(it);
   const info = it.info || {};
   const c = el("div", "item");
   c.append(poster(info.poster || it.poster));
   const body = el("div", "body");
-  body.append(el("div", "title", info.title || it.title));
+  if (it.type === "custom" && it.url) {
+    const a = el("a", "title", info.title || it.title);
+    a.href = it.url; a.target = "_blank"; a.rel = "noopener noreferrer";
+    body.append(a);
+  } else {
+    body.append(el("div", "title", info.title || it.title));
+  }
   body.append(el("div", "sub", info.label || "Not checked yet"));
-  if (info.next_date) body.append(el("div", "sub", prettyDate(info.next_date)));
+  if (info.next_date) body.append(el("div", "sub", prettyDate(info.next_date) + (info.time ? " at " + info.time : "")));
+  if (it.notes) body.append(el("div", "note", it.notes));
   if (state.settings.people.length) {
     const chips = el("div", "chips");
     for (const name of state.settings.people) {
@@ -333,7 +445,7 @@ function card(it) {
 
   const when = el("div", "when");
   if (it.days_until === null || it.days_until === undefined) {
-    when.append(el("div", "quiet", it.type === "tv" ? "TV" : isGame ? "Game" : "Movie"));
+    when.append(el("div", "quiet", it.type === "custom" ? "TBA" : typeLabel(it)));
   } else if (it.days_until === 0) {
     when.append(el("div", "big soon", "Today"));
   } else if (it.days_until < 0) {
@@ -341,6 +453,11 @@ function card(it) {
   } else {
     when.append(el("div", "big" + (it.days_until <= 7 ? " soon" : ""), String(it.days_until)));
     when.append(el("div", "unit", it.days_until === 1 ? "day" : "days"));
+  }
+  if (it.type === "custom") {
+    const ed = el("button", "x", "Edit");
+    ed.onclick = () => { editingItem = it.id; render(); };
+    when.append(ed);
   }
   const rm = el("button", "x", "Remove");
   rm.onclick = async () => {
@@ -354,20 +471,37 @@ function card(it) {
 
 function render() {
   const list = $("#list"); list.replaceChildren();
+  const bar = $("#filters"); bar.replaceChildren();
   if (!state.tracked.length) {
+    bar.hidden = true;
     list.append(el("div", "empty", "Nothing tracked yet. Head to Add and pick something."));
     return;
   }
-  const groups = [
-    ["TV & Movies", state.tracked.filter(t => t.type !== "game")],
-    ["Games & DLC", state.tracked.filter(t => t.type === "game")],
-  ];
-  for (const [name, items] of groups) {
-    if (!items.length) continue;
-    const h = el("h2", null, name);
+  const buckets = new Map();
+  for (const it of state.tracked) {
+    const g = groupOf(it);
+    if (!buckets.has(g)) buckets.set(g, []);
+    buckets.get(g).push(it);
+  }
+  const names = [...buckets.keys()].sort((a, b) => groupRank(a) - groupRank(b));
+  if (filter !== "all" && !buckets.has(filter)) filter = "all";
+  bar.hidden = names.length < 2;
+  if (names.length >= 2) {
+    const mk = (key, text) => {
+      const b = el("button", "chip" + (filter === key ? " on" : ""), text);
+      b.setAttribute("aria-pressed", filter === key);
+      b.onclick = () => { filter = key; render(); };
+      bar.append(b);
+    };
+    mk("all", "All (" + state.tracked.length + ")");
+    for (const g of names) mk(g, g + " (" + buckets.get(g).length + ")");
+  }
+  for (const g of names) {
+    if (filter !== "all" && filter !== g) continue;
+    const h = el("h2", null, g);
     h.style.marginTop = list.children.length ? "22px" : "4px";
     list.append(h);
-    for (const it of [...items].sort(byDays)) list.append(card(it));
+    for (const it of [...buckets.get(g)].sort(byDays)) list.append(card(it));
   }
 }
 
@@ -437,7 +571,7 @@ function renderPeople() {
     box.append(row);
   }
   if (removing) {
-    const h = el("div", "hint", "Removing someone also takes their tag off tracked items and deletes their sensors.");
+    const h = el("div", "hint", "Removing someone also takes their tag off tracked items.");
     box.append(h);
   }
 }
@@ -470,6 +604,7 @@ function renderSettingsStatus() {
   $("#key-hint").textContent = s.has_key ? "A key is saved. Leave blank to keep it." : "Free at themoviedb.org: Settings, then API.";
   badge("#bd-games", s.has_games_key ? "Ready" : "Not set up", s.has_games_key ? "ok" : "");
   $("#games-hint").textContent = s.has_games_key ? "Games are set up. Leave the secret blank to keep it." : "Not set up yet. Games search will not work until you add both.";
+  badge("#bd-more", "No setup needed", "ok");
   badge("#bd-updates", "Every " + s.refresh_hours + "h");
   badge("#bd-mqtt", state.mqtt ? "Connected" : "Not connected", state.mqtt ? "ok" : "warn");
   $("#mqtt-hint").textContent = state.mqtt ? "Connected to a broker." : "Not connected to a broker yet.";
@@ -559,27 +694,37 @@ $("#backup-now").onclick = async e => {
 };
 
 // ---------- loading ----------
+function fillCategories() {
+  const sel = $("#c-cat");
+  if (sel.options.length) return;
+  for (const name of state.cats) { const o = el("option", null, name); o.value = name; sel.append(o); }
+}
 async function load(fillForm) {
   state = await api("state");
+  fillCategories();
   render(); renderWho(); renderPeople(); renderSettingsStatus();
   if (fillForm || firstLoad) fillSettings();
   await loadBackups();
-  if (firstLoad) {
-    firstLoad = false;
-    if (!state.settings.has_key && !state.settings.has_games_key) {
-      document.querySelector('[data-tab="settings"]').click();
-      $("#c-tmdb").open = true;
-    }
-  }
+  firstLoad = false;
 }
 
 // ---------- search / add ----------
+function resultLabel(r) {
+  if (r.type === "tv") return "TV";
+  if (r.type === "movie") return "Movie";
+  return r.kind || r.type;
+}
+function needsKey(k) {
+  if ((k === "video" || k === "people") && !state.settings.has_key) return "Add your TMDB key in Settings first.";
+  if (k === "games" && !state.settings.has_games_key) return "Add your Twitch Client ID and Secret in Settings first.";
+  return "";
+}
 async function search() {
   const q = $("#q").value.trim();
   if (!q) return;
   const box = $("#results"); box.replaceChildren(el("div", "quiet", "Searching..."));
   try {
-    const res = await api("search?q=" + encodeURIComponent(q) + (kind === "games" ? "&kind=games" : ""));
+    const res = await api("search?q=" + encodeURIComponent(q) + (kind === "video" ? "" : "&kind=" + kind));
     box.replaceChildren();
     if (!res.length) { box.append(el("div", "empty", "No matches. Try different words.")); return; }
     for (const r of res) {
@@ -588,7 +733,7 @@ async function search() {
       card.append(poster(r.poster));
       const body = el("div", "body");
       body.append(el("div", "title", r.title));
-      body.append(el("div", "sub", (r.type === "tv" ? "TV" : r.type === "game" ? (r.kind || "Game") : "Movie") + (r.year ? " (" + r.year + ")" : "")));
+      body.append(el("div", "sub", resultLabel(r) + (r.year ? " (" + r.year + ")" : "")));
       if (r.overview) body.append(el("div", "sub", r.overview));
       card.append(body);
       const when = el("div", "when");
@@ -605,13 +750,35 @@ async function search() {
     box.replaceChildren(el("div", "err", e.message));
   }
 }
-document.querySelectorAll("#kind .chip").forEach(b => b.onclick = () => {
-  kind = b.dataset.kind;
-  document.querySelectorAll("#kind .chip").forEach(x => { x.classList.toggle("on", x === b); x.setAttribute("aria-pressed", x === b); });
-  $("#q").placeholder = kind === "games" ? "Search a game or DLC" : "Search a show or movie";
-  $("#results").replaceChildren();
-  if (kind === "games" && !state.settings.has_games_key) $("#results").append(el("div", "err", "Add your Twitch Client ID and Secret in Settings first."));
-});
+function setKind(k) {
+  kind = k;
+  document.querySelectorAll("#kind .chip").forEach(x => { const on = x.dataset.kind === k; x.classList.toggle("on", on); x.setAttribute("aria-pressed", on); });
+  const custom = k === "custom";
+  $("#search-box").hidden = custom;
+  $("#custom-form").hidden = !custom;
+  $("#q").placeholder = PLACEHOLDER[k] || "";
+  const box = $("#results"); box.replaceChildren();
+  const msg = custom ? "" : needsKey(k);
+  if (msg) box.append(el("div", "err", msg));
+}
+document.querySelectorAll("#kind .chip").forEach(b => b.onclick = () => setKind(b.dataset.kind));
+
+async function addCustom() {
+  const btn = $("#c-add"); btn.disabled = true;
+  const body = {
+    category: $("#c-cat").value, title: $("#c-title").value, date: $("#c-date").value, time: $("#c-time").value,
+    notes: $("#c-notes").value, url: $("#c-url").value, image: $("#c-image").value, people: [...chosen],
+  };
+  try {
+    await send("custom", "POST", body);
+    ["#c-title", "#c-date", "#c-time", "#c-notes", "#c-url", "#c-image"].forEach(i => $(i).value = "");
+    await load(); toast("Added " + body.title.trim());
+    $("#c-title").focus();
+  } catch (e) { toast(e.message); }
+  btn.disabled = false;
+}
+$("#c-add").onclick = addCustom;
+$("#c-title").addEventListener("keydown", e => { if (e.key === "Enter") addCustom(); });
 $("#go").onclick = search;
 $("#q").addEventListener("keydown", e => { if (e.key === "Enter") search(); });
 
