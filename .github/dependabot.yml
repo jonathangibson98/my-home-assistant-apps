@@ -1,16 +1,32 @@
 version: 2
 updates:
+  # Workflow files in .github/workflows
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
 
+  # Add-ons with a requirements.txt
   - package-ecosystem: pip
-    directory: "/release-tracker"
+    directories:
+      - "/release-tracker"
+      - "/ha-icloud-lite"
     schedule:
       interval: weekly
 
-  - package-ecosystem: pip
-    directory: "/ha-icloud-lite"
+  # Base images in every add-on's Dockerfile
+  - package-ecosystem: docker
+    directories:
+      - "/ai_builder"
+      - "/file_reader"
+      - "/ha-icloud-lite"
+      - "/location_hub"
+      - "/person_profiles"
+      - "/personalized_info"
+      - "/photo_shuffle"
+      - "/release-tracker"
+      - "/svg_maker"
+      - "/team_tracker_lite"
+      - "/work_hours"
     schedule:
       interval: weekly
