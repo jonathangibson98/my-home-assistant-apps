@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.0.3
+
+- Fix: Photo Hub could lose its MQTT connection and never get it back, leaving every image entity unavailable until the add-on was restarted by hand. It now watches its own connection and, if it is down for more than a minute or stops answering, throws the connection away and rebuilds it with freshly fetched broker settings (this also covers a changed Mosquitto login).
+- An error while announcing entities can no longer kill the MQTT network loop.
+- Each connection uses a unique client id, so two copies of the add-on can no longer kick each other off the broker.
+- Photos are no longer downloaded from Unsplash while MQTT is down (that wasted your hourly request limit). They are fetched again as soon as MQTT is back.
+- A folder shuffle photo that could not be delivered is retried within 10 seconds instead of waiting a full interval.
+
 ## 4.0.2
 
 - Now published as a prebuilt image (`ghcr.io/jonathangibson98/{arch}-addon-photo_shuffle`), so it installs without building on the Pi.

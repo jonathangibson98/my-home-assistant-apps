@@ -103,7 +103,12 @@ UKEY_RE = re.compile(r"^[a-z0-9_]+_(landscape|portrait)$")
 
 stop = threading.Event()
 CONNECTED = threading.Event()
+REFRESH = threading.Event()  # set when the broker settings probably changed and must be fetched again
 mq_state = {"status": "starting", "detail": ""}
+
+ERR_MQTT = "MQTT is not connected"
+MQTT_DOWN_LIMIT = 60  # seconds without a connection before the MQTT client is rebuilt from scratch
+MQTT_BEAT_EVERY = 60  # seconds between connection health checks
 
 
 def slugify(text):
@@ -246,7 +251,9 @@ class Shuffle:
             except Exception as e:
                 log.warning("%s: skipping %s (%s)", self.name, path, e)
                 continue
-            mgr.publish(self.image_topic, full)
+            if not mgr.publish(self.image_topic, full):
+                self.error = ERR_MQTT
+                return False
             self.thumb = thumb
             self.changed_at = time.time()
             self.error = None
@@ -280,19 +287,23 @@ class Shuffle:
                     self.seq += 1
                     self.cond.notify_all()
                 continue
+            retry = False
             if self.enabled or forced:
                 try:
                     self.publish_next()
                 except Exception:
                     log.exception("%s: unexpected error", self.name)
+                # the connection dropped right as the photo was sent: try again soon, not after a full interval
+                retry = self.error == ERR_MQTT
                 with self.cond:
                     self.seq += 1
                     self.cond.notify_all()
             if self.stop_ev.is_set():
                 break
             if self.enabled:
-                self.next_at = time.time() + self.interval
-                self.trigger.wait(self.interval)
+                wait = min(self.interval, 10) if retry else self.interval
+                self.next_at = time.time() + wait
+                self.trigger.wait(wait)
             else:
                 self.next_at = None
                 self.trigger.wait(3600)
@@ -379,10 +390,19 @@ class Manager:
 
     # mqtt helpers (shared with the Unsplash side)
     def publish(self, topic, payload, retain=True):
-        if self.client is not None and CONNECTED.is_set():
-            self.client.publish(topic, payload, qos=1, retain=retain)
-            return True
-        return False
+        """Send a message. Returns True only if it was really handed to a live connection."""
+        client = self.client
+        if client is None or not CONNECTED.is_set() or not client.is_connected():
+            return False
+        try:
+            info = client.publish(topic, payload, qos=1, retain=retain)
+        except Exception as e:
+            log.warning("MQTT publish to %s failed: %s", topic, e)
+            return False
+        if info.rc != mqtt.MQTT_ERR_SUCCESS:
+            log.warning("MQTT publish to %s failed (code %s)", topic, info.rc)
+            return False
+        return True
 
     def purge_removed(self):
         if self.client is None or not CONNECTED.is_set():
@@ -619,6 +639,8 @@ class Unsplash:
     # fetching
     def fetch(self, j):
         """Get one random photo for a job and publish it. Returns None on success or an error message."""
+        if not CONNECTED.is_set():
+            return ERR_MQTT  # do not burn an Unsplash request on a photo that cannot be delivered
         headers = {"Authorization": f"Client-ID {UNSPLASH_KEY}"}
         term = random.choice(j["terms"])
         log.info("%s: fetching '%s' from Unsplash", j["label"], term)
@@ -652,7 +674,7 @@ class Unsplash:
         # attributes first so they are already in place when the new picture arrives
         mgr.publish(attr_topic, json.dumps({k: meta[k] for k in ("photographer", "photo_url", "search_term")}))
         if not mgr.publish(image_topic, full):
-            return "MQTT is not connected"
+            return ERR_MQTT
         with open(self.thumb_path(j["key"]), "wb") as f:
             f.write(thumb)
         with self.lock:
@@ -708,6 +730,13 @@ class Unsplash:
                     except Exception as e:
                         log.warning("%s: %s", j["label"], e)
                         err = "Error: %s" % e
+                    if err == ERR_MQTT:
+                        # nothing is lost: these photos are fetched again as soon as MQTT is back
+                        with self.lock:
+                            self.pending.update(r["key"] for r in todo[n:])
+                        log.warning("MQTT is down, the photos will be fetched again once it is back")
+                        stop.wait(5)
+                        break
                     if err:
                         log.warning("%s: %s", j["label"], err)
                         self.errors[j["key"]] = err
@@ -881,65 +910,169 @@ def migrate_devices(c):
     log.info("Device move finished")
 
 
-def mqtt_worker():
-    cfg = None
-    while not stop.is_set():
-        try:
-            cfg = mqtt_settings()
-            break
-        except Exception as e:
-            mq_state.update(status="error", detail="No MQTT broker found. Is the Mosquitto add-on running?")
-            log.error("Could not get MQTT settings (%s). Retrying in 15s", e)
-            stop.wait(15)
-    if cfg is None:
-        return
-    log.info("Using MQTT broker %s:%s", cfg["host"], cfg["port"])
-    mq_state.update(status="connecting", detail="%s:%s" % (cfg["host"], cfg["port"]))
+def mqtt_explain(rc):
+    return {
+        1: "wrong protocol version",
+        2: "client id rejected",
+        3: "broker unavailable",
+        4: "bad username or password",
+        5: "not authorised",
+    }.get(rc, "code %s" % rc)
 
+
+def new_client(cfg):
+    # a fresh random id every time, so two copies of the add-on can never kick each other off the broker
+    cid = "photo_hub_%s" % os.urandom(3).hex()
     try:
-        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id="photo_shuffle_addon")
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id=cid)
     except AttributeError:
-        client = mqtt.Client(client_id="photo_shuffle_addon")
+        client = mqtt.Client(client_id=cid)
     if cfg.get("username"):
         client.username_pw_set(cfg["username"], cfg.get("password"))
     if cfg.get("ssl"):
         client.tls_set()
     client.will_set(STATUS_TOPIC, "offline", qos=1, retain=True)
     client.reconnect_delay_set(min_delay=2, max_delay=30)
+    where = "%s:%s" % (cfg["host"], cfg["port"])
+
+    def after_connect(c):
+        # runs in its own thread: an error here must never be able to kill the MQTT network loop
+        try:
+            if mgr.device_rev < DEVICE_REV:
+                threading.Thread(target=migrate_devices, args=(c,), daemon=True).start()
+            else:
+                for s in mgr.all():
+                    s.discovery(c)
+            mgr.purge_removed()
+            unsplash.sync_discovery(c)
+            unsplash.wake.set()
+        except Exception:
+            log.exception("Could not announce the entities to Home Assistant")
 
     def on_connect(c, userdata, flags, rc):
-        if rc != 0:
-            mq_state.update(status="error", detail="Broker refused the connection (code %s)" % rc)
-            log.error("MQTT connect failed: %s", rc)
-            return
-        log.info("Connected to MQTT")
-        mq_state.update(status="connected", detail="%s:%s" % (cfg["host"], cfg["port"]))
-        c.publish(STATUS_TOPIC, "online", qos=1, retain=True)
-        CONNECTED.set()
-        if mgr.device_rev < DEVICE_REV:
-            threading.Thread(target=migrate_devices, args=(c,), daemon=True).start()
-        else:
-            for s in mgr.all():
-                s.discovery(c)
-        mgr.purge_removed()
-        unsplash.sync_discovery(c)
-        unsplash.wake.set()
+        try:
+            if c is not mgr.client:
+                return
+            if rc != 0:
+                why = mqtt_explain(rc)
+                mq_state.update(status="error", detail="Broker refused the connection (%s)" % why)
+                log.error("MQTT connect failed: %s", why)
+                if rc in (4, 5):
+                    REFRESH.set()  # the login probably changed, fetch the broker settings again
+                return
+            log.info("Connected to MQTT")
+            mq_state.update(status="connected", detail=where)
+            c.publish(STATUS_TOPIC, "online", qos=1, retain=True)
+            CONNECTED.set()
+            threading.Thread(target=after_connect, args=(c,), daemon=True).start()
+        except Exception:
+            log.exception("MQTT on_connect failed")
 
     def on_disconnect(c, userdata, rc):
-        CONNECTED.clear()
-        mq_state.update(status="connecting", detail="Reconnecting to %s:%s" % (cfg["host"], cfg["port"]))
-        if not stop.is_set():
-            log.warning("Lost MQTT connection, reconnecting")
+        try:
+            if c is not mgr.client:
+                return  # an old client that was replaced on purpose
+            CONNECTED.clear()
+            mq_state.update(status="connecting", detail="Reconnecting to %s" % where)
+            if rc != 0 and not stop.is_set():
+                log.warning("Lost MQTT connection (code %s), reconnecting", rc)
+        except Exception:
+            log.exception("MQTT on_disconnect failed")
 
     client.on_connect = on_connect
     client.on_disconnect = on_disconnect
+    return client
+
+
+def stop_client(old):
+    def _stop():
+        try:
+            old.disconnect()
+        except Exception:
+            pass
+        try:
+            old.loop_stop()
+        except Exception:
+            pass
+
+    # in a thread so a stuck old connection can never block the new one
+    threading.Thread(target=_stop, daemon=True).start()
+
+
+def start_client(cfg):
+    old = mgr.client
+    CONNECTED.clear()
+    mgr.client = None
+    if old is not None:
+        stop_client(old)
+    client = new_client(cfg)
     mgr.client = client
+    log.info("Using MQTT broker %s:%s", cfg["host"], cfg["port"])
+    mq_state.update(status="connecting", detail="%s:%s" % (cfg["host"], cfg["port"]))
+    client.connect_async(cfg["host"], int(cfg["port"]), 60)
+    client.loop_start()
+    return client
+
+
+def heartbeat(client):
+    """Send a message and make sure the broker really acknowledges it. Also keeps the entities 'available'."""
     try:
-        client.connect_async(cfg["host"], int(cfg["port"]), 60)
-        client.loop_start()
-    except Exception as e:
-        mq_state.update(status="error", detail=str(e))
-        log.error("MQTT start failed: %s", e)
+        info = client.publish(STATUS_TOPIC, "online", qos=1, retain=True)
+        info.wait_for_publish(15)
+        return info.is_published()
+    except Exception:
+        return False
+
+
+def mqtt_worker():
+    """Starts the MQTT client and keeps it alive. If the connection is lost and does not come back,
+    the whole client is thrown away and rebuilt with freshly fetched broker settings, so the add-on
+    never needs a manual restart."""
+    client = None
+    down_since = None
+    last_beat = time.time()
+    beat_fail = 0
+    while not stop.is_set():
+        need_new = client is None
+        if client is not None:
+            thread = getattr(client, "_thread", None)
+            if thread is not None and not thread.is_alive() and not stop.is_set():
+                log.warning("The MQTT network thread stopped, starting a fresh connection")
+                need_new = True
+            elif REFRESH.is_set():
+                REFRESH.clear()
+                log.info("Fetching the MQTT broker settings again")
+                need_new = True
+            elif client.is_connected():
+                down_since = None
+                if time.time() - last_beat >= MQTT_BEAT_EVERY:
+                    last_beat = time.time()
+                    if heartbeat(client):
+                        beat_fail = 0
+                    else:
+                        beat_fail += 1
+                        log.warning("The MQTT broker did not answer a health check (%d)", beat_fail)
+                        if beat_fail >= 2:
+                            need_new = True
+            else:
+                if down_since is None:
+                    down_since = time.time()
+                elif time.time() - down_since > MQTT_DOWN_LIMIT:
+                    log.warning("MQTT has been down for %d seconds, starting a fresh connection", MQTT_DOWN_LIMIT)
+                    need_new = True
+        if need_new:
+            try:
+                cfg = mqtt_settings()
+                client = start_client(cfg)
+                down_since = None
+                beat_fail = 0
+                last_beat = time.time()
+            except Exception as e:
+                mq_state.update(status="error", detail="No MQTT broker found. Is the Mosquitto add-on running?")
+                log.error("Could not get MQTT settings (%s). Retrying in 15s", e)
+                stop.wait(15)
+                continue
+        stop.wait(5)
 
 
 # ---------------------------------------------------------------- web ui
