@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.0
+
+- **Track anything, not just shows and games.** The Add tab now has five choices: **TV & Movies**, **Games & DLC**, **Music**, **Celebrities**, and **Anything else**.
+- **Music**: follow an artist to see their next announced album, EP, or single, or track one album. Data comes from MusicBrainz, which is free and needs no key.
+- **Celebrities**: follow an actor, musician, or other public figure and see their upcoming movie and TV credits. Uses your existing TMDB key.
+- **Anything else**: add tech launches, merch drops, events, sales and deals, or any other date by typing it in. Each item has a kind, name, date, optional time, note, link, and picture link. Leave the date empty if it is not announced yet, and edit it later from the card.
+- The Tracking tab is now grouped by kind (TV & Movies, Games & DLC, Music, Celebrities, Tech releases, Merch drops, Events, Sales & deals, Other) with filter buttons at the top.
+- Settings has a new **Music & custom items** card. Celebrities share the **Movies, TV & Celebrities** card with your TMDB key.
+- The release sensor now has `by_type`, a count of upcoming releases for each kind. Each item in `items` also has `time` and `note`, and `type` can be any of the new kinds.
+- Backups and restores include all the new kinds.
+
 ## 1.4.0
 
 - **One sensor for everything**: `sensor.release_tracker_releases`. Shows, movies, games, and DLC are all in it.
