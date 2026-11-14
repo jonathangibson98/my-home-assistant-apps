@@ -4,6 +4,7 @@ import os
 import re
 import threading
 import time
+import uuid
 from zoneinfo import ZoneInfo
 
 import paho.mqtt.client as mqtt
@@ -17,6 +18,15 @@ DISC_FILE = f"{DATA}/discovered_people.json"
 SUP = "http://supervisor"
 SUP_HEADERS = {"Authorization": "Bearer " + os.environ.get("SUPERVISOR_TOKEN", "")}
 TMDB = "https://api.themoviedb.org/3"
+
+# Everything that can be tracked. TMDB, IGDB and custom ids are stored as given; MusicBrainz ids are text.
+TYPES = ("movie", "tv", "game", "album", "artist", "person", "custom")
+INT_TYPES = ("movie", "tv", "game", "person")
+CATS = ["Tech release", "Merch drop", "Music", "Celebrity", "Event", "Sale / deal", "Other"]
+TYPE_LABEL = {
+    "movie": "Movie", "tv": "TV", "game": "Game",
+    "album": "Album", "artist": "Artist", "person": "Celebrity",
+}
 
 DEFAULTS = {
     "tmdb_key": "",
@@ -79,6 +89,14 @@ TZ = get_tz()
 
 def today():
     return dt.datetime.now(TZ).date()
+
+
+def norm_id(kind, v):
+    return int(v) if kind in INT_TYPES else str(v)
+
+
+def same(t, kind, tid):
+    return t.get("type") == kind and str(t.get("id")) == str(tid)
 
 
 # ---------- TMDB ----------
@@ -237,15 +255,259 @@ def search_games(q):
     return out
 
 
+# ---------- MusicBrainz (albums and artists, free, no key) ----------
+MB = "https://musicbrainz.org/ws/2"
+MB_UA = "ReleaseTrackerHA/1.5 (Home Assistant add-on; https://github.com/jonathangibson98/my-home-assistant-apps)"
+CAA = "https://coverartarchive.org/release-group/{}/front-250"
+_mb_gate = threading.Lock()
+_mb_last = [0.0]
+
+
+def mb(path, **params):
+    """One MusicBrainz call. They allow about one request per second, so calls wait their turn."""
+    params["fmt"] = "json"
+    with _mb_gate:
+        wait = 1.1 - (time.time() - _mb_last[0])
+        if wait > 0:
+            time.sleep(wait)
+        try:
+            r = requests.get(f"{MB}{path}", params=params, headers={"User-Agent": MB_UA, "Accept": "application/json"}, timeout=20)
+        finally:
+            _mb_last[0] = time.time()
+    if r.status_code in (429, 503):
+        raise RuntimeError("MusicBrainz is busy right now. Try again in a minute.")
+    r.raise_for_status()
+    return r.json()
+
+
+def lucene(q, fields):
+    """Turn what the person typed into a safe MusicBrainz search: every word must match one of the fields."""
+    words = re.sub(r"[^\w\s]|_", " ", q.lower()).split()[:8]
+    return " AND ".join("(" + " OR ".join(f"{f}:{w}" for f in fields) + ")" for w in words)
+
+
+def mb_when(d, now):
+    """Sort a MusicBrainz date (full, month only, or year only) into exact / vague / past."""
+    d = (d or "").strip()
+    if len(d) == 10:
+        return ("exact", d) if d >= now else ("past", d)
+    if len(d) == 7:
+        return ("vague", d) if d >= now[:7] else ("past", d)
+    if len(d) == 4:
+        return ("vague", d) if d > now[:4] else ("past", d)
+    return None
+
+
+def pretty_vague(d):
+    if len(d) == 7:
+        try:
+            return dt.date(int(d[:4]), int(d[5:7]), 1).strftime("%B %Y")
+        except ValueError:
+            return d
+    return d
+
+
+def credit_name(rec):
+    return "".join((a.get("name") or "") + (a.get("joinphrase") or "") for a in rec.get("artist-credit") or [])
+
+
+def fetch_album(item):
+    d = mb(f"/release-group/{item['id']}", inc="artist-credits")
+    artist = credit_name(d)
+    kind = d.get("primary-type") or "Album"
+    now = today().isoformat()
+    info = {
+        "title": f"{artist} - {d.get('title')}" if artist else d.get("title"),
+        "poster": CAA.format(item["id"]), "status": kind, "all_dates": [],
+    }
+    w = mb_when(d.get("first-release-date"), now)
+    if w and w[0] == "exact":
+        info["next_date"], info["label"] = w[1], f"{kind} release"
+        info["all_dates"] = [{"date": w[1], "label": f"{kind} release"}]
+    elif w and w[0] == "vague":
+        info["next_date"], info["label"] = None, f"{kind} - expected {pretty_vague(w[1])}"
+    elif w:
+        info["next_date"], info["label"] = None, f"Already out ({w[1]})"
+    else:
+        info["next_date"], info["label"] = None, "No date announced yet"
+    return info
+
+
+def artist_groups(mbid):
+    out, offset = [], 0
+    while offset < 300:
+        d = mb("/release-group", artist=mbid, limit=100, offset=offset)
+        out += d.get("release-groups") or []
+        offset += 100
+        if offset >= int(d.get("release-group-count") or 0):
+            break
+    return out
+
+
+def fetch_artist(item):
+    now = today().isoformat()
+    exact, vague = [], []
+    for rg in artist_groups(item["id"]):
+        if rg.get("primary-type") in ("Broadcast", "Other"):
+            continue
+        w = mb_when(rg.get("first-release-date"), now)
+        if not w or w[0] == "past":
+            continue
+        label = f"{rg.get('primary-type') or 'Release'}: {rg.get('title')}"
+        (exact if w[0] == "exact" else vague).append((w[1], label))
+    exact.sort()
+    vague.sort()
+    info = {
+        "title": item.get("title"), "poster": item.get("poster"), "status": "Artist",
+        "all_dates": [{"date": d, "label": l} for d, l in exact[:10]],
+    }
+    if exact:
+        info["next_date"], info["label"] = exact[0]
+    elif vague:
+        info["next_date"], info["label"] = None, f"{vague[0][1]} - expected {pretty_vague(vague[0][0])}"
+    else:
+        info["next_date"], info["label"] = None, "Nothing announced yet"
+    return info
+
+
+def search_music(q):
+    qa = lucene(q, ["artist"])
+    if not qa:
+        return []
+    out = []
+    for a in mb("/artist", query=qa, limit=5).get("artists") or []:
+        bits = [a.get("disambiguation"), a.get("type"), a.get("country")]
+        out.append({
+            "id": a["id"], "type": "artist", "title": a.get("name"), "kind": "Artist", "year": "",
+            "poster": None, "overview": (" - ".join(b for b in bits if b) + ". Follow for new releases.")[:140],
+        })
+    for r in mb("/release-group", query=lucene(q, ["releasegroup", "artist"]), limit=10).get("release-groups") or []:
+        artist = credit_name(r)
+        out.append({
+            "id": r["id"], "type": "album", "kind": r.get("primary-type") or "Album",
+            "title": f"{artist} - {r.get('title')}" if artist else r.get("title"),
+            "year": (r.get("first-release-date") or "")[:4], "poster": CAA.format(r["id"]), "overview": "",
+        })
+    return out
+
+
+# ---------- celebrities (TMDB people) ----------
+def search_people(q):
+    res = tmdb("/search/person", query=q, include_adult="false")
+    out = []
+    for r in res.get("results", [])[:12]:
+        known = [k.get("title") or k.get("name") for k in r.get("known_for") or []]
+        known = [k for k in known if k][:3]
+        text = r.get("known_for_department") or ""
+        if known:
+            text += (". " if text else "") + "Known for " + ", ".join(known)
+        out.append({
+            "id": r["id"], "type": "person", "title": r.get("name"), "kind": "Celebrity",
+            "year": "", "poster": r.get("profile_path"), "overview": text[:140],
+        })
+    return out
+
+
+def fetch_person(item):
+    d = tmdb(f"/person/{item['id']}", append_to_response="combined_credits")
+    now = today().isoformat()
+    cred = d.get("combined_credits") or {}
+    seen, events = set(), []
+    for c in (cred.get("cast") or []) + (cred.get("crew") or []):
+        mt = c.get("media_type")
+        if mt not in ("movie", "tv"):
+            continue
+        day = (c.get("release_date") or c.get("first_air_date") or "")[:10]
+        if len(day) != 10 or day < now:
+            continue
+        key = (mt, c.get("id"))
+        if key in seen:
+            continue
+        seen.add(key)
+        name = c.get("title") or c.get("name") or "Untitled"
+        role = c.get("character") or c.get("job")
+        label = ("Movie: " if mt == "movie" else "TV: ") + name + (f" ({role})" if role else "")
+        events.append((day, label))
+    events.sort()
+    info = {
+        "title": d.get("name") or item.get("title"), "poster": d.get("profile_path") or item.get("poster"),
+        "status": d.get("known_for_department"),
+        "all_dates": [{"date": a, "label": b} for a, b in events[:15]],
+    }
+    if events:
+        info["next_date"], info["label"] = events[0]
+    else:
+        info["next_date"], info["label"] = None, "Nothing announced yet"
+    return info
+
+
+# ---------- custom items (tech, merch drops, events, anything) ----------
+def fetch_custom(item):
+    cat = item.get("category") or "Other"
+    day = item.get("date") or ""
+    info = {
+        "title": item.get("title"), "poster": item.get("poster"), "status": cat,
+        "time": item.get("time") or "", "all_dates": [],
+    }
+    if not day:
+        info["next_date"], info["label"] = None, "Date not announced yet"
+    elif day >= today().isoformat():
+        info["next_date"], info["label"] = day, cat
+        info["all_dates"] = [{"date": day, "label": cat}]
+    else:
+        info["next_date"], info["label"] = None, f"Date passed ({day})"
+    return info
+
+
+def clean_url(v):
+    v = str(v or "").strip()
+    if not v:
+        return ""
+    if not re.match(r"^https?://", v, re.I) or len(v) > 500:
+        raise RuntimeError("Links have to start with http:// or https://")
+    return v
+
+
+def clean_custom(b):
+    title = " ".join(str(b.get("title") or "").split())[:100]
+    if not title:
+        raise RuntimeError("Type a name first")
+    cat = b.get("category")
+    day = str(b.get("date") or "").strip()
+    if day:
+        try:
+            dt.date.fromisoformat(day)
+        except ValueError:
+            raise RuntimeError("That date does not look right")
+    return {
+        "title": title,
+        "category": cat if cat in CATS else "Other",
+        "date": day,
+        "time": " ".join(str(b.get("time") or "").split())[:20],
+        "notes": " ".join(str(b.get("notes") or "").split())[:300],
+        "url": clean_url(b.get("url")),
+        "poster": clean_url(b.get("image")) or None,
+    }
+
+
 MOVIE_TYPES = {2: "In theaters", 3: "In theaters", 4: "Digital release", 5: "Physical release"}
 
 
 def fetch_info(item):
-    if item["type"] == "game":
+    kind = item["type"]
+    if kind == "game":
         return fetch_game(item)
+    if kind == "custom":
+        return fetch_custom(item)
+    if kind == "album":
+        return fetch_album(item)
+    if kind == "artist":
+        return fetch_artist(item)
+    if kind == "person":
+        return fetch_person(item)
     s = settings()
     now = today().isoformat()
-    if item["type"] == "movie":
+    if kind == "movie":
         d = tmdb(f"/movie/{item['id']}", append_to_response="release_dates")
         found = {}
         for c in d.get("release_dates", {}).get("results", []):
@@ -302,13 +564,13 @@ def refresh_all():
     results = {}
     for it in tracked:
         try:
-            results[(it["type"], it["id"])] = (fetch_info(it), None)
+            results[(it["type"], str(it["id"]))] = (fetch_info(it), None)
         except Exception as e:
-            results[(it["type"], it["id"])] = (None, str(e))
+            results[(it["type"], str(it["id"]))] = (None, str(e))
     with lock:
         current = load(TRACK_FILE, [])
         for it in current:
-            res = results.get((it["type"], it["id"]))
+            res = results.get((it["type"], str(it["id"])))
             if res:
                 if res[0]:
                     it["info"] = res[0]
@@ -335,10 +597,12 @@ def upcoming():
         rows.append(
             {
                 "title": info.get("title") or it["title"],
-                "type": {"movie": "Movie", "game": "Game"}.get(it["type"], "TV"),
+                "type": it.get("category") or "Other" if it["type"] == "custom" else TYPE_LABEL.get(it["type"], "TV"),
                 "date": nd,
                 "days_until": d,
                 "label": info.get("label"),
+                "time": info.get("time") or "",
+                "note": it.get("notes") or "",
                 "people": it.get("people", []),
             }
         )
@@ -444,6 +708,7 @@ def publish():
         "next_title": n.get("title"), "next_date": n.get("date"), "next_days_until": n.get("days_until"),
         "next_label": n.get("label"), "next_type": n.get("type"),
         "today_count": len(now), "today": [r["title"] for r in now],
+        "by_type": {t: sum(1 for r in soon if r["type"] == t) for t in sorted({r["type"] for r in soon})},
         "by_person": {name: [r["title"] for r in soon if name in r["people"]] for name in people.values()}}})
 
 
@@ -591,7 +856,7 @@ def restore_backup(name):
     tracked = data.get("tracked") if isinstance(data, dict) else None
     if data.get("app") != "release_tracker" or not isinstance(tracked, list):
         raise RuntimeError("That file is not a Release Tracker backup")
-    clean = [t for t in tracked if isinstance(t, dict) and t.get("id") is not None and t.get("type") in ("movie", "tv", "game")]
+    clean = [t for t in tracked if isinstance(t, dict) and t.get("id") is not None and t.get("type") in TYPES]
     run_backup("prerestore")  # safety copy of what is there now
     with lock:
         s = settings()
@@ -615,7 +880,7 @@ def worker():
             if client is None:
                 connect_mqtt()
             due = time.time() - last >= max(1, float(s["refresh_hours"])) * 3600
-            if due and (s["tmdb_key"] or games_ready(s)):
+            if due:
                 refresh_all()
                 last = time.time()
             else:
@@ -640,6 +905,8 @@ def api_state():
     s = settings()
     tracked = load(TRACK_FILE, [])
     for it in tracked:
+        if it["type"] == "custom":
+            it["info"] = fetch_custom(it)  # no lookup needed, so it is always current
         nd = (it.get("info") or {}).get("next_date")
         it["days_until"] = days_until(nd) if nd else None
     safe = {k: v for k, v in s.items() if k not in SECRETS}
@@ -647,7 +914,7 @@ def api_state():
     safe["has_mqtt_pass"] = bool(s["mqtt_pass"])
     safe["has_games_key"] = games_ready(s)
     safe["has_igdb_secret"] = bool(s["igdb_secret"])
-    return jsonify({"settings": safe, "tracked": tracked, "mqtt": client is not None})
+    return jsonify({"settings": safe, "tracked": tracked, "mqtt": client is not None, "cats": CATS})
 
 
 @app.route("/api/search")
@@ -655,9 +922,11 @@ def api_search():
     q = request.args.get("q", "").strip()
     if not q:
         return jsonify([])
-    if request.args.get("kind") == "games":
+    kind = request.args.get("kind")
+    finders = {"games": search_games, "music": search_music, "people": search_people}
+    if kind in finders:
         try:
-            return jsonify(search_games(q))
+            return jsonify(finders[kind](q))
         except Exception as e:
             return jsonify({"error": str(e)}), 400
     try:
@@ -684,13 +953,13 @@ def clean_people(v):
     return [str(p).strip() for p in (v or []) if str(p).strip()]
 
 
-@app.route("/api/track/<media_type>/<int:tid>/people", methods=["PUT"])
+@app.route("/api/track/<media_type>/<tid>/people", methods=["PUT"])
 def api_set_people(media_type, tid):
     people = clean_people(request.get_json(force=True).get("people"))
     with lock:
         tracked = load(TRACK_FILE, [])
         for t in tracked:
-            if t["id"] == tid and t["type"] == media_type:
+            if same(t, media_type, tid):
                 t["people"] = people
         save(TRACK_FILE, tracked)
     publish()
@@ -700,14 +969,18 @@ def api_set_people(media_type, tid):
 @app.route("/api/track", methods=["POST"])
 def api_track():
     b = request.get_json(force=True)
-    if b.get("type") not in ("movie", "tv", "game"):
+    kind = b.get("type")
+    if kind not in TYPES or kind == "custom":
         return jsonify({"error": "Unknown type"}), 400
-    item = {"id": int(b["id"]), "type": b["type"], "title": b.get("title", ""), "poster": b.get("poster"),
-            "people": clean_people(b.get("people"))}
+    try:
+        item = {"id": norm_id(kind, b["id"]), "type": kind, "title": b.get("title", ""), "poster": b.get("poster"),
+                "people": clean_people(b.get("people"))}
+    except (KeyError, ValueError):
+        return jsonify({"error": "That result has no usable id"}), 400
     with lock:
         tracked = load(TRACK_FILE, [])
         for t in tracked:
-            if t["id"] == item["id"] and t["type"] == item["type"]:
+            if same(t, kind, item["id"]):
                 t["people"] = sorted(set(t.get("people", [])) | set(item["people"]))
                 save(TRACK_FILE, tracked)
                 publish()
@@ -722,10 +995,47 @@ def api_track():
     return jsonify({"ok": True})
 
 
-@app.route("/api/track/<media_type>/<int:tid>", methods=["DELETE"])
+@app.route("/api/custom", methods=["POST"])
+def api_custom_add():
+    b = request.get_json(force=True) or {}
+    try:
+        item = clean_custom(b)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 400
+    item.update(id=uuid.uuid4().hex[:12], type="custom", people=clean_people(b.get("people")))
+    item["info"] = fetch_custom(item)
+    with lock:
+        tracked = load(TRACK_FILE, [])
+        tracked.append(item)
+        save(TRACK_FILE, tracked)
+    publish()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/custom/<cid>", methods=["PUT"])
+def api_custom_edit(cid):
+    try:
+        fields = clean_custom(request.get_json(force=True) or {})
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 400
+    with lock:
+        tracked = load(TRACK_FILE, [])
+        for t in tracked:
+            if same(t, "custom", cid):
+                t.update(fields)
+                t["info"] = fetch_custom(t)
+                save(TRACK_FILE, tracked)
+                break
+        else:
+            return jsonify({"error": "That item is not in your list anymore"}), 404
+    publish()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/track/<media_type>/<tid>", methods=["DELETE"])
 def api_untrack(media_type, tid):
     with lock:
-        tracked = [t for t in load(TRACK_FILE, []) if not (t["id"] == tid and t["type"] == media_type)]
+        tracked = [t for t in load(TRACK_FILE, []) if not same(t, media_type, tid)]
         save(TRACK_FILE, tracked)
     publish()
     return jsonify({"ok": True})
