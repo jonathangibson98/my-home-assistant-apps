@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0
+
+- **Games can be tagged to people** now, just like shows and movies. Pick who is tracking a game when you add it, or tap a name on its card.
+- New per-person games sensor: `sensor.release_tracker_<name>_upcoming_games`. The main games sensor has a `by_person` attribute.
+- New **People** card in Settings. Add one person at a time, rename them (their tags follow), or remove them (their tags and sensors go too).
+- **Settings are organized into cards**: People, Movies & TV, Games, Updates, Home Assistant (MQTT), and Backup. Each has its own Save button and a status badge.
+- New **Backup** card. Save your list, tags, and settings into a folder you choose in the share folder, on demand or daily or weekly. Restore from any saved backup. API keys are left out unless you turn them on.
+- Saving one settings card no longer refreshes everything or reconnects MQTT unless it needs to.
+
 ## 1.2.0
 
 - Added **video games and DLC**. Pick the **Games & DLC** switch on the Add tab and search by name.

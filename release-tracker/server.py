@@ -1,6 +1,7 @@
 import datetime as dt
 import json
 import os
+import re
 import threading
 import time
 from zoneinfo import ZoneInfo
@@ -29,7 +30,13 @@ DEFAULTS = {
     "mqtt_pass": "",
     "igdb_id": "",
     "igdb_secret": "",
+    "backup_dir": "release_tracker",
+    "backup_every": "off",
+    "backup_keep": 10,
+    "backup_keys": False,
 }
+MQTT_KEYS = {"mqtt_host", "mqtt_port", "mqtt_user", "mqtt_pass"}
+REFRESH_KEYS = {"tmdb_key", "region", "igdb_id", "igdb_secret", "window_days"}
 SECRETS = ("tmdb_key", "mqtt_pass", "igdb_secret")
 
 lock = threading.RLock()
@@ -441,6 +448,7 @@ def sync_people_discovery():
     for sl in old - set(want):
         client.publish(f"homeassistant/sensor/release_tracker/p_{sl}_upcoming/config", "", retain=True)
         client.publish(f"homeassistant/binary_sensor/release_tracker/p_{sl}_today/config", "", retain=True)
+        client.publish(f"homeassistant/sensor/release_tracker/p_{sl}_games/config", "", retain=True)
     common = {"device": DEVICE, "availability_topic": T_STATUS}
     for sl, name in want.items():
         up = {
@@ -456,6 +464,13 @@ def sync_people_discovery():
             "payload_on": "ON", "payload_off": "OFF",
             "json_attributes_topic": person_topic(sl, "today"),
             "json_attributes_template": "{{ value_json.attributes | tojson }}", **common}
+        gm = {
+            "name": f"{name} Upcoming Games", "icon": "mdi:controller",
+            "unique_id": f"release_tracker_p_{sl}_games",
+            "state_topic": person_topic(sl, "games"), "value_template": "{{ value_json.state }}",
+            "json_attributes_topic": person_topic(sl, "games"),
+            "json_attributes_template": "{{ value_json.attributes | tojson }}", **common}
+        client.publish(f"homeassistant/sensor/release_tracker/p_{sl}_games/config", json.dumps(gm), retain=True)
         client.publish(f"homeassistant/sensor/release_tracker/p_{sl}_upcoming/config", json.dumps(up), retain=True)
         client.publish(f"homeassistant/binary_sensor/release_tracker/p_{sl}_today/config", json.dumps(td), retain=True)
     save(DISC_FILE, sorted(want))
@@ -484,7 +499,8 @@ def publish():
         "items": gwin[:25], "window_days": int(s["window_days"]),
         "tracked_count": len([t for t in tracked if t["type"] == "game"]),
         "next_title": gn.get("title"), "next_date": gn.get("date"),
-        "next_days_until": gn.get("days_until"), "next_label": gn.get("label")}})
+        "next_days_until": gn.get("days_until"), "next_label": gn.get("label"),
+        "by_person": {name: [r["title"] for r in gwin if name in r["people"]] for name in people_list().values()}}})
     now = [r for r in rows if r["days_until"] == 0]
     people = people_list()
     pub(T["today"], {"state": "ON" if now else "OFF", "attributes": {
@@ -500,6 +516,14 @@ def publish():
         todays = [r for r in mine if r["days_until"] == 0]
         pub(person_topic(sl, "today"), {"state": "ON" if todays else "OFF", "attributes": {
             "person": name, "titles": [r["title"] for r in todays], "items": todays}})
+        gmine = [r for r in grows if name in r["people"]]
+        gsoon = [r for r in gmine if r["days_until"] <= w]
+        gnext = gmine[0] if gmine else {}
+        pub(person_topic(sl, "games"), {"state": len(gsoon), "attributes": {
+            "person": name, "items": gsoon[:25],
+            "titles_today": [r["title"] for r in gmine if r["days_until"] == 0],
+            "next_title": gnext.get("title"), "next_date": gnext.get("date"),
+            "next_days_until": gnext.get("days_until"), "next_label": gnext.get("label")}})
 
 
 def on_connect(c, userdata, flags, reason_code, properties=None):
@@ -539,6 +563,130 @@ def connect_mqtt():
         print(f"[mqtt] connect failed: {e}", flush=True)
 
 
+# ---------- backups (saved into the Home Assistant share folder) ----------
+SHARE = "/share"
+BK_FILE = f"{DATA}/backup_state.json"
+BK_AUTO = re.compile(r"^release-tracker-\d{8}-\d{6}\.json$")
+BK_ANY = re.compile(r"^release-tracker-(prerestore-)?\d{8}-\d{6}\.json$")
+BK_EVERY = {"daily": 24, "weekly": 168}
+
+
+def norm_backup_dir(raw):
+    """Folder under /share, as a clean relative path. Refuses anything that escapes /share."""
+    p = str(raw or "").strip().replace("\\", "/")
+    if p == SHARE or p.startswith(SHARE + "/"):
+        p = p[len(SHARE):]
+    p = p.strip("/")
+    root = os.path.realpath(SHARE)
+    full = os.path.realpath(os.path.join(SHARE, p))
+    if full != root and not full.startswith(root + os.sep):
+        raise RuntimeError("The backup folder has to be inside the share folder")
+    return p
+
+
+def backup_folder(s=None):
+    return os.path.join(SHARE, norm_backup_dir((s or settings())["backup_dir"]))
+
+
+def make_backup(tag=""):
+    s = settings()
+    folder = backup_folder(s)
+    now = dt.datetime.now(TZ)
+    name = f"release-tracker-{tag + '-' if tag else ''}{now.strftime('%Y%m%d-%H%M%S')}.json"
+    keys = bool(s.get("backup_keys"))
+    payload = {
+        "app": "release_tracker",
+        "format": 1,
+        "created": now.isoformat(timespec="seconds"),
+        "settings": {k: v for k, v in s.items() if not k.startswith("backup_") and (keys or k not in SECRETS)},
+        "tracked": load(TRACK_FILE, []),
+    }
+    try:
+        os.makedirs(folder, exist_ok=True)
+        tmp = os.path.join(folder, name + ".tmp")
+        with open(tmp, "w") as f:
+            json.dump(payload, f, indent=1)
+        os.replace(tmp, os.path.join(folder, name))
+        if not tag:  # keep only the newest N regular backups; safety copies are never pruned
+            mine = sorted(n for n in os.listdir(folder) if BK_AUTO.match(n))
+            for old in mine[:-max(1, int(s["backup_keep"]))]:
+                try:
+                    os.remove(os.path.join(folder, old))
+                except OSError:
+                    pass
+    except OSError as e:
+        raise RuntimeError(f"Could not write to {folder}: {e.strerror or e}")
+    return name
+
+
+def run_backup(tag=""):
+    st = load(BK_FILE, {})
+    if not tag:
+        st["attempt"] = time.time()
+    try:
+        name = make_backup(tag)
+    except Exception as e:
+        if not tag:
+            st["error"] = str(e)
+            save(BK_FILE, st)
+        raise
+    if not tag:
+        st.update(ts=time.time(), file=name, error=None)
+        save(BK_FILE, st)
+    return name
+
+
+def auto_backup(s):
+    hours = BK_EVERY.get(s["backup_every"])
+    if not hours:
+        return
+    st, now = load(BK_FILE, {}), time.time()
+    if now - st.get("ts", 0) >= hours * 3600 and now - st.get("attempt", 0) >= 3600:
+        try:
+            print(f"[backup] saved {run_backup()}", flush=True)
+        except Exception as e:
+            print(f"[backup] {e}", flush=True)
+
+
+def list_backups():
+    folder, out = backup_folder(), []
+    try:
+        for n in os.listdir(folder):
+            if BK_ANY.match(n):
+                st = os.stat(os.path.join(folder, n))
+                out.append({"name": n, "size": st.st_size, "time": st.st_mtime, "safety": "-prerestore-" in n})
+    except FileNotFoundError:
+        pass
+    out.sort(key=lambda b: b["time"], reverse=True)
+    return out
+
+
+def restore_backup(name):
+    if not BK_ANY.match(name or ""):
+        raise RuntimeError("That is not a Release Tracker backup file")
+    try:
+        with open(os.path.join(backup_folder(), name)) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        raise RuntimeError("Could not read that backup file")
+    tracked = data.get("tracked") if isinstance(data, dict) else None
+    if data.get("app") != "release_tracker" or not isinstance(tracked, list):
+        raise RuntimeError("That file is not a Release Tracker backup")
+    clean = [t for t in tracked if isinstance(t, dict) and t.get("id") is not None and t.get("type") in ("movie", "tv", "game")]
+    run_backup("prerestore")  # safety copy of what is there now
+    with lock:
+        s = settings()
+        for k, v in (data.get("settings") or {}).items():
+            if k in DEFAULTS and not k.startswith("backup_"):
+                s[k] = v  # keys and passwords only come back if the backup included them
+        s["people"] = clean_people(s["people"])
+        save(SET_FILE, s)
+        save(TRACK_FILE, clean)
+    threading.Thread(target=connect_mqtt, daemon=True).start()
+    threading.Thread(target=refresh_all, daemon=True).start()
+    return len(clean)
+
+
 # ---------- background worker ----------
 def worker():
     last = 0
@@ -555,6 +703,10 @@ def worker():
                 publish()  # keeps "days until" correct at midnight
         except Exception as e:
             print(f"[worker] {e}", flush=True)
+        try:
+            auto_backup(settings())
+        except Exception as e:
+            print(f"[backup] {e}", flush=True)
         time.sleep(60)
 
 
@@ -632,7 +784,7 @@ def api_track():
     if b.get("type") not in ("movie", "tv", "game"):
         return jsonify({"error": "Unknown type"}), 400
     item = {"id": int(b["id"]), "type": b["type"], "title": b.get("title", ""), "poster": b.get("poster"),
-            "people": [] if b["type"] == "game" else clean_people(b.get("people"))}
+            "people": clean_people(b.get("people"))}
     with lock:
         tracked = load(TRACK_FILE, [])
         for t in tracked:
@@ -669,17 +821,129 @@ def api_refresh():
 @app.route("/api/settings", methods=["POST"])
 def api_settings():
     b = request.get_json(force=True)
-    s = settings()
-    for k in DEFAULTS:
-        if k not in b:
-            continue
-        if k in SECRETS and not str(b[k]).strip():
-            continue  # blank = keep the saved one
-        s[k] = clean_people(b[k]) if k == "people" else b[k]
+    old = settings()
+    s = dict(old)
+    try:
+        for k in DEFAULTS:
+            if k not in b:
+                continue
+            if k in SECRETS and not str(b[k]).strip():
+                continue  # blank = keep the saved one
+            v = b[k]
+            if k == "people":
+                v = clean_people(v)
+            elif k == "backup_dir":
+                v = norm_backup_dir(v)
+            elif k == "backup_every":
+                v = v if v in ("off", "daily", "weekly") else "off"
+            elif k == "backup_keep":
+                v = min(100, max(1, int(v or 10)))
+            elif k == "backup_keys":
+                v = bool(v)
+            s[k] = v
+    except (RuntimeError, ValueError) as e:
+        return jsonify({"error": str(e)}), 400
     save(SET_FILE, s)
-    threading.Thread(target=connect_mqtt, daemon=True).start()
-    threading.Thread(target=refresh_all, daemon=True).start()
+    changed = {k for k in DEFAULTS if s[k] != old[k]}
+    if changed & MQTT_KEYS:
+        threading.Thread(target=connect_mqtt, daemon=True).start()
+    if changed & REFRESH_KEYS:
+        threading.Thread(target=refresh_all, daemon=True).start()
+    else:
+        threading.Thread(target=publish, daemon=True).start()
     return jsonify({"ok": True})
+
+
+# ---------- people ----------
+def clean_name(v):
+    return " ".join(str(v or "").replace(",", " ").split())[:30]
+
+
+@app.route("/api/people", methods=["POST"])
+def api_people_add():
+    name = clean_name((request.get_json(force=True) or {}).get("name"))
+    if not name:
+        return jsonify({"error": "Type a name first"}), 400
+    with lock:
+        s = settings()
+        people = clean_people(s["people"])
+        if slug(name) in {slug(p) for p in people}:
+            return jsonify({"error": f"{name} is already on the list"}), 400
+        s["people"] = people + [name]
+        save(SET_FILE, s)
+    publish()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/people", methods=["PUT"])
+def api_people_rename():
+    global _disc_people
+    b = request.get_json(force=True) or {}
+    old, new = str(b.get("old", "")), clean_name(b.get("new"))
+    if not new:
+        return jsonify({"error": "Type a name first"}), 400
+    with lock:
+        s = settings()
+        people = clean_people(s["people"])
+        if old not in people:
+            return jsonify({"error": "That person is not on the list"}), 404
+        if any(p != old and slug(p) == slug(new) for p in people):
+            return jsonify({"error": f"{new} is already on the list"}), 400
+        s["people"] = [new if p == old else p for p in people]
+        save(SET_FILE, s)
+        tracked = load(TRACK_FILE, [])
+        for t in tracked:  # tags follow the new name
+            t["people"] = list(dict.fromkeys(new if p == old else p for p in t.get("people", [])))
+        save(TRACK_FILE, tracked)
+    _disc_people = None  # republish sensor names even if only the capitalization changed
+    publish()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/people/remove", methods=["POST"])
+def api_people_remove():
+    name = str((request.get_json(force=True) or {}).get("name", ""))
+    with lock:
+        s = settings()
+        s["people"] = [p for p in clean_people(s["people"]) if p != name]
+        save(SET_FILE, s)
+        tracked = load(TRACK_FILE, [])
+        for t in tracked:
+            t["people"] = [p for p in t.get("people", []) if p != name]
+        save(TRACK_FILE, tracked)
+    publish()
+    return jsonify({"ok": True})
+
+
+# ---------- backup endpoints ----------
+@app.route("/api/backups")
+def api_backups():
+    s = settings()
+    out = {"files": [], "last": load(BK_FILE, {}), "share_ok": os.path.isdir(SHARE), "error": None}
+    try:
+        rel = norm_backup_dir(s["backup_dir"])
+        out["folder"] = "/share/" + rel if rel else "/share"
+        out["files"] = list_backups()
+    except Exception as e:
+        out["folder"], out["error"] = "/share", str(e)
+    return jsonify(out)
+
+
+@app.route("/api/backups", methods=["POST"])
+def api_backup_now():
+    try:
+        return jsonify({"ok": True, "file": run_backup()})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/backups/restore", methods=["POST"])
+def api_backup_restore():
+    try:
+        n = restore_backup(str((request.get_json(force=True) or {}).get("file", "")))
+        return jsonify({"ok": True, "count": n})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 
 if __name__ == "__main__":

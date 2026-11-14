@@ -11,16 +11,22 @@ Track only the TV shows, movies, games, and DLC you care about, and get told whe
 
 ## People
 
-Type the names of the people who track things in **Settings** (example: `Jon, MJ`). When you add something you can tag one person, several, or nobody. Tap a name on a card in the Tracking tab to change it later.
+Manage everyone in **Settings, People**. Type a name and tap **Add**. Each person has **Rename** and **Remove** next to their name, and changes save right away.
+
+- **Rename** moves all of that person's tags to the new name.
+- **Remove** takes their tag off every tracked item and deletes their sensors.
+
+When you add something, pick who is tracking it (shows, movies, **and games**), or nobody. Tap a name on a card in the Tracking tab to change it later.
 
 Each person gets their own sensors, named after them:
 
 | Entity | What it is |
 |---|---|
 | `sensor.release_tracker_jon_upcoming` | How many of Jon's items release inside the window. Full list in the `items` attribute. |
-| `binary_sensor.release_tracker_jon_releasing_today` | On when something Jon tracks releases today. Titles in the `titles` attribute. |
+| `binary_sensor.release_tracker_jon_releasing_today` | On when a show or movie Jon tracks releases today. Titles in the `titles` attribute. |
+| `sensor.release_tracker_jon_upcoming_games` | How many of Jon's games or DLC release inside the window. Full list in `items`. Also `titles_today`, `next_title`, `next_date`, `next_days_until`, `next_label`. |
 
-Rename someone in Settings and the old sensors are removed and new ones are created.
+Rename someone and the old sensors are removed and new ones are created.
 
 ## Everyone's sensors
 
@@ -42,7 +48,7 @@ Games use a different free service (IGDB, run by Twitch), so it needs its own ke
 
 Track the main game and any DLC or expansion IGDB knows about shows up on its own. The card shows whichever thing drops next, like `DLC: Skin Pack`. You can also search a DLC by name and track it alone.
 
-Games get one sensor, no per-person ones:
+Games have their own sensor and never touch the TV and movie sensors. Tag who is tracking a game just like a show, and each person also gets `sensor.release_tracker_<name>_upcoming_games` (see People above). The main sensor also has a `by_person` attribute listing each person's games inside the window.
 
 | Entity | What it is |
 |---|---|
@@ -68,10 +74,28 @@ action:
 
 ## Settings
 
-- **Region**: two-letter country code used for movie dates (US, GB, CA...).
-- **Check every**: how often it asks TMDB for changes. 6 hours is plenty.
-- **Show releases in the next**: the window for the "upcoming" counts.
-- **MQTT broker**: leave blank to use the Mosquitto add-on. Fill it in if your broker lives somewhere else, like another Pi.
+Settings are split into cards. Tap a card to open it. Each card has its own **Save** button, and a badge on the card shows whether it is ready.
+
+- **People**: add, rename, and remove who tracks things. Saves right away.
+- **Movies & TV**: your TMDB key, and the two-letter region used for movie dates (US, GB, CA...).
+- **Games (IGDB)**: your Twitch Client ID and Secret.
+- **Updates**: how often it checks for changes (6 hours is plenty), and the window for the "upcoming" counts.
+- **Home Assistant (MQTT)**: leave blank to use the Mosquitto add-on. Fill it in if your broker lives somewhere else, like another Pi.
+- **Backup**: see below.
+
+## Backup
+
+Backups are saved as files in the Home Assistant **share** folder, so you can grab them from Samba, SSH, or the File editor.
+
+- **Save to folder**: any folder under `/share/`. The default is `/share/release_tracker`. It is created for you.
+- **Automatic backups**: Off, Daily, or Weekly. **Back up now** saves one right away.
+- **Keep the newest**: older automatic backups are deleted past this number.
+- **Include API keys and passwords**: off by default. Turn it on only if you want a backup that restores your keys too.
+- **Saved backups**: lists what is in the folder. Tap **Restore** on one to replace your tracked list, tags, and settings with it. A safety copy of what you had is saved first and is never deleted automatically.
+
+A backup holds your tracked list, who tags what, and your settings. If it was saved without keys, restoring leaves your current keys alone.
+
+Backups need the share folder to be available to the add-on. After updating from an older version, restart the add-on. If the Backup card says the share folder is not available, reinstall or rebuild the add-on so the new access takes effect.
 
 ## Dashboard card
 
@@ -107,7 +131,7 @@ Swap `notify.notify` for the notify service of whoever should get it.
 - Dates come from TMDB, which is crowd-sourced. TV air dates can be wrong or late, and streaming shows often have no date until shortly before release.
 - Shows with no announced next episode say "No date announced yet" and get no sensor date.
 - A movie that is already out stays in your list, but it will not show up as upcoming.
-- Everything is stored in the add-on's own data folder and is included in Home Assistant backups.
+- Everything is stored in the add-on's own data folder and is included in Home Assistant backups. The Backup card makes extra copies you can reach in the share folder.
 
 ## Troubleshooting
 
