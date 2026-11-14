@@ -11,7 +11,7 @@
   <div class="head">
     <div>
       <h1>Backup</h1>
-      <p class="sub">Saves this add-on's own data: the template sensors it manages, your announcements and facts with their settings, and the "Made so far" history. Home Assistant automations, scripts and helpers are not included.</p>
+      <p class="sub">Saves this add-on's own data: the template sensors it manages, your announcements, facts and dashboard cards with their settings, and the "Made so far" history. Home Assistant automations, scripts and helpers are not included.</p>
     </div>
   </div>
 
@@ -36,13 +36,14 @@ function say(text, cls) { const m = $("#msg"); m.className = "msg " + (cls || ""
 const counts = o => [o.templates + " template sensor" + (o.templates === 1 ? "" : "s"),
   (o.announcements_count ?? (o.announcements ? 1 : 0)) + " announcement" + ((o.announcements_count ?? 0) === 1 ? "" : "s"),
   (o.facts_count ?? 0) + " fact" + ((o.facts_count ?? 0) === 1 ? "" : "s"),
+  (o.cards_count ?? 0) + " card" + ((o.cards_count ?? 0) === 1 ? "" : "s"),
   o.history + " history item" + (o.history === 1 ? "" : "s")].join(", ");
 
 async function load() {
   const d = await api("backup");
   if (d.error) { $("#where").textContent = d.error; return; }
   $("#where").replaceChildren(d.mode === "file" ? "File: " : "Folder: ", el("code", {}, d.path),
-    el("div", {style: "margin-top:6px"}, "Right now: " + counts({templates: d.current.templates, announcements_count: d.current.announcements, facts_count: d.current.facts, history: d.current.history}) + "." +
+    el("div", {style: "margin-top:6px"}, "Right now: " + counts({templates: d.current.templates, announcements_count: d.current.announcements, facts_count: d.current.facts, cards_count: d.current.cards, history: d.current.history}) + "." +
       (d.mode === "folder" ? " The newest " + d.keep + " backups are kept." : "")));
   const list = $("#list"); list.replaceChildren();
   if (!d.files.length) {
@@ -54,12 +55,12 @@ async function load() {
     confirmTap(b, "Tap again to replace", async () => {
       b.disabled = true; say("Restoring...");
       const r = await api("backup/import", {file: f.file});
-      if (r.ok) say("Restored " + r.file + ": " + counts({templates: r.templates, announcements_count: r.announcements_count, facts_count: r.facts_count, history: r.history}) + ". Safety copy of what you had: " + r.safety + (r.note ? " " + r.note : ""), "ok");
+      if (r.ok) say("Restored " + r.file + ": " + counts({templates: r.templates, announcements_count: r.announcements_count, facts_count: r.facts_count, cards_count: r.cards_count, history: r.history}) + ". Safety copy of what you had: " + r.safety + (r.note ? " " + r.note : ""), "ok");
       else say(r.error || "Restore failed.", "bad");
       load();
     });
     list.append(el("div", {class: "li"},
-      el("div", {class: "t"}, el("b", {}, f.file), el("div", {class: "dim small"}, f.modified + "  ·  " + counts({templates: f.templates, announcements_count: f.announcements_count, facts_count: f.facts_count, history: f.history}))), b));
+      el("div", {class: "t"}, el("b", {}, f.file), el("div", {class: "dim small"}, f.modified + "  ·  " + counts({templates: f.templates, announcements_count: f.announcements_count, facts_count: f.facts_count, cards_count: f.cards_count, history: f.history}))), b));
   }
 }
 $("#save").onclick = async () => {

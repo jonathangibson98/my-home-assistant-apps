@@ -1309,15 +1309,15 @@ async def ann_save_settings(request):
     return web.json_response(ann_settings())
 
 
-async def ann_registry_entity(app, unique_id):
+async def ann_registry_entity(app, unique_id, platform="input_select"):
     """entity_id of a freshly made helper, found by its storage id (it can differ from the name)."""
     for _ in range(6):
         r = await ws_call(app, {"type": "config/entity_registry/list"})
         for e in (r.get("result") or []) if r.get("success") else []:
-            if e.get("platform") == "input_select" and e.get("unique_id") == unique_id:
+            if e.get("platform") == platform and e.get("unique_id") == unique_id:
                 return e["entity_id"]
         await asyncio.sleep(0.5)
-    return "input_select." + unique_id
+    return platform + "." + unique_id
 
 
 ANN_DROPDOWN_NAME = "AI Builder Personality"
@@ -1393,6 +1393,26 @@ async def ann_dropdown_sync(request):
         why = "%s no longer exists" % ent if gone else "%s was written in configuration.yaml, so it can't be edited" % ent
         return web.json_response({"ok": True, "created": True, "entity": new_ent, "settings": ann_settings(),
                                   "message": "%s. I made %s for you (it updates by itself) and switched to it. If a dashboard card or automation used %s, point it at %s." % (why, new_ent, ent, new_ent)})
+    except Exception as e:  # noqa: BLE001 - report anything that goes wrong talking to Home Assistant
+        return web.json_response({"ok": False, "error": "Could not reach Home Assistant: %s" % e})
+
+
+async def ann_card_switch(request):
+    """Make an input_boolean (a real UI helper, always editable) that shows or hides a dashboard card."""
+    app = request.app
+    body = await ann_body(request)
+    name = re.sub(r"\s+", " ", str(body.get("name") or "")).strip()[:60] or "Show card"
+    ent = "input_boolean." + (slug(name) or "show_card")
+    try:
+        st, state = await ha(app, "GET", "/states/" + ent)
+        if st == 200 and isinstance(state, dict):  # already there: just use it
+            return web.json_response({"ok": True, "entity": ent, "existed": True,
+                                      "message": "%s already exists, so it is now picked." % ent})
+        r = await ws_call(app, {"type": "input_boolean/create", "name": name, "icon": "mdi:card-text-outline"})
+        if not r.get("success"):
+            return web.json_response({"ok": False, "error": (r.get("error") or {}).get("message", "Home Assistant would not create it.")})
+        ent = await ann_registry_entity(app, (r.get("result") or {}).get("id") or (slug(name) or "show_card"), "input_boolean")
+        return web.json_response({"ok": True, "entity": ent, "message": "Made %s and picked it. Point your dashboard card at it." % ent})
     except Exception as e:  # noqa: BLE001 - report anything that goes wrong talking to Home Assistant
         return web.json_response({"ok": False, "error": "Could not reach Home Assistant: %s" % e})
 
@@ -2094,6 +2114,344 @@ async def fact_run(request):
     return web.json_response({"ok": code == 200, "detail": str(text)[:300]})
 
 
+# ---------------------------------------------------------------- cards
+# AI-assisted dashboard cards. The user describes a card and picks the entities it reads; the AI Task writes the Lovelace
+# YAML in the same glass style as the Facts cards. Every card is saved in CARDS_LIB so it can be opened, changed with a
+# plain-English note, previewed against live data (Home Assistant renders the template) and copied into a Manual card.
+# The AI Task entity and entity list are shared with Announcements. Everything lives under /api/cards/.
+CARDS_LIB = DATA / "cards.json"
+CARD_ID_RE = re.compile(r"^[a-z0-9_]{1,60}$")
+CARD_START, CARD_END = "---CARD START---", "---CARD END---"
+CARD_ENT_RE = re.compile(
+    r"""(?:['"]|entity(?:_id)?:[ \t]*|states\.)"""
+    r"""((?:sensor|binary_sensor|input_boolean|input_text|input_number|input_select|input_datetime|weather|person|light|switch|"""
+    r"""climate|media_player|calendar|todo|sun|zone|device_tracker|cover|fan|lock|camera|script|automation|scene|number|select|"""
+    r"""button|update|counter|timer|schedule)\.[a-z0-9_]+)""")
+CARD_STYLE_GLASS = """GLASS STYLE (the look the user already uses on every card): every card carries a <style> block that restyles ha-card:
+ha-card {
+  background: rgba(255, 255, 255, 0.06) !important;
+  backdrop-filter: blur(28px) saturate(200%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(200%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  border-radius: 20px !important;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.4), inset 0 1px 1px rgba(255,255,255,0.3) !important;
+  color: rgba(255,255,255,0.9);
+}
+Use that exact recipe, then size the card with a fixed height and overflow: hidden !important. Body text is 18px, headers 20-25px, small dim text 13px at opacity 0.7."""
+CARD_EXAMPLES = r"""EXAMPLE 1 - a scrolling news card that reads JSON from a sensor attribute (custom:html-template-card):
+type: custom:html-template-card
+title: "📰 News Roundup"
+ignore_line_breaks: true
+content: >
+  {% set raw = state_attr('sensor.read_news_report', 'content') | replace('```json', '') | replace('```', '') | trim %}
+  {% set data = raw | from_json %}
+  {% set total_stories = data.categories | map(attribute='stories') | map('length') | sum %}
+  {% set box_height = 630 %}
+  {% set needs_scroll = total_stories * 55 > box_height %}
+  {% set duration = total_stories * 6 %}
+  <style>
+    ha-card { background: rgba(255, 255, 255, 0.06) !important; backdrop-filter: blur(28px) saturate(200%) !important; -webkit-backdrop-filter: blur(28px) saturate(200%) !important; border: 1px solid rgba(255, 255, 255, 0.2) !important; border-radius: 20px !important; box-shadow: 0 8px 28px rgba(0,0,0,0.4), inset 0 1px 1px rgba(255,255,255,0.3) !important; color: rgba(255,255,255,0.9); height: 690px !important; overflow: hidden !important; }
+    .scroll-wrap { position: relative; height: {{ box_height }}px; overflow: hidden; padding: 0 16px; box-sizing: border-box; }
+    .scroll-content { width: 100%; font-size: 18px; line-height: 1.3; {% if needs_scroll %} position: absolute; top: 0; animation: scroll-up {{ duration }}s linear infinite; {% else %} position: static; {% endif %} }
+    .cat-header { font-size: 20px; font-weight: bold; margin-top: 12px; margin-bottom: 4px; }
+    @keyframes scroll-up { 0% { transform: translateY(0); } 5% { transform: translateY(0); } 95% { transform: translateY(-100%); } 100% { transform: translateY(-100%); } }
+  </style>
+  <div class="scroll-wrap"><div class="scroll-content">
+    {% for cat in data.categories %}<div class="cat-header">{{ cat.category }}</div>
+    {% for story in cat.stories %}<b>{{ story.headline }}</b><br>{{ story.summary }}<br><br>{% endfor %}{% endfor %}
+  </div></div>
+
+EXAMPLE 2 - a short markdown card styled with card_mod:
+type: markdown
+content: |-
+  🎁 {{ states('input_text.birthday_person') }}
+
+  {{ state_attr('sensor.read_birthdays', 'content') }}
+card_mod:
+  style: |
+    ha-card {
+      background: rgba(255, 255, 255, 0.06) !important;
+      backdrop-filter: blur(28px) saturate(200%) !important;
+      -webkit-backdrop-filter: blur(28px) saturate(200%) !important;
+      border: 1px solid rgba(255, 255, 255, 0.2) !important;
+      border-radius: 20px !important;
+      padding: 4px;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.3) !important;
+      color: rgba(255,255,255,0.9);
+      font-size: 18px;
+      line-height: 1.1;
+    }
+
+EXAMPLE 3 - a question-and-answer card: JSON {"title": ..., "body": ...} read from sensor.read_google_result, title shown at 24px on top, the body in a box that auto-scrolls only when the text is long (estimate lines from character count, then animate translateY like example 1)."""
+
+
+def cards_library():
+    lib = load_json(CARDS_LIB, {})
+    return lib if isinstance(lib, dict) else {}
+
+
+def cards_clean_state(state):
+    """Keep only a plain JSON object of sensible size."""
+    if not isinstance(state, dict) or len(json.dumps(state)) > 300_000:
+        return None
+    return state
+
+
+def cards_store(cid, name, state):
+    lib = cards_library()
+    old = lib.get(cid, {})
+    lib[cid] = {"id": cid, "name": str(name or old.get("name") or cid)[:80],
+                "state": state if state is not None else old.get("state") or {},
+                "updated": time.strftime("%Y-%m-%d %H:%M")}
+    save_json(CARDS_LIB, lib)
+    return lib[cid]
+
+
+def cards_entity_brief(s):
+    """What the AI is told about one entity: its state and its attributes, long values cut."""
+    lines = ["%s (state: %s)" % (s.get("entity_id"), str(s.get("state"))[:200])]
+    for k, v in list((s.get("attributes") or {}).items())[:25]:
+        if k in ("icon", "supported_features", "attribution", "entity_picture"):
+            continue
+        t = v if isinstance(v, str) else json.dumps(v, default=str)
+        lines.append("  attribute %s: %s" % (k, t[:1500] + (" ...(cut short)" if len(t) > 1500 else "")))
+    return "\n".join(lines)
+
+
+def cards_prompt(req, briefs, toggle, style, current, feedback):
+    look = {"glass": CARD_STYLE_GLASS,
+            "plain": "PLAIN STYLE: use normal Home Assistant look. Do not restyle ha-card and do not use card_mod or custom CSS unless the request needs it.",
+            "any": "STYLE: pick whatever looks best, but keep it clean and readable on a dark dashboard."}[style]
+    p = ["You write Home Assistant Lovelace dashboard cards. Reply with the card only, in the format shown at the bottom.", "",
+         "RULES:",
+         "- Output ONE card as YAML. Use a vertical-stack when the request needs several cards.",
+         "- Prefer custom:html-template-card (HACS) for anything custom, markdown with card_mod for simple text, and built-in cards (entities, glance, gauge, button, tile) when they fit. The user already has html-template-card and card_mod installed.",
+         "- Put templates in a literal block (content: | or content: >). Never put {% %} outside a block scalar.",
+         "- Be defensive: use default values, check data exists before reading it, and strip ```json and ``` before from_json when a sensor attribute holds JSON that may be wrapped in code fences.",
+         "- Only use entity ids that appear in the DATA below or that the user typed in the request. Never invent entity ids.",
+         "- No external images, scripts, fonts or links. Use emoji for icons.",
+         "- Do NOT wrap the card in a conditional card: the tool adds the show/hide switch by itself.",
+         "- If the card scrolls or rotates, only animate when the content is taller than the box.",
+         "- No markdown fences, no commentary outside the format below.", "", look, "",
+         "REFERENCE CARDS the user already likes (copy their approach and look, not their entities):", CARD_EXAMPLES, ""]
+    if briefs:
+        p += ["DATA the card can read (live right now):", "\n".join(briefs), ""]
+    else:
+        p += ["No entities were picked. Use only entity ids the user typed in the request.", ""]
+    if toggle:
+        p += ["The user will show or hide this card with %s. That is handled for you." % toggle, ""]
+    if current and feedback:
+        p += ["CURRENT CARD:", current, "", "CHANGE REQUESTED: " + feedback, "Return the whole updated card, keeping everything the user did not ask to change.", ""]
+        if req:
+            p += ["ORIGINAL REQUEST (for context): " + req, ""]
+    else:
+        p += ["WHAT THE USER WANTS: " + req, ""]
+    p += ["FORMAT (exactly this):", "NAME: short card name", "NOTES: one or two plain sentences on what it does and anything to know",
+          CARD_START, "<the card YAML>", CARD_END]
+    return "\n".join(p)
+
+
+def cards_parse(text):
+    """(yaml, name, notes) from the AI's answer. Markers are used instead of code fences because card templates contain ``` themselves."""
+    t = str(text or "")
+    m = re.search(r"^NAME:[ \t]*(.+)$", t, re.M)
+    name = m.group(1).strip()[:80] if m else ""
+    m = re.search(r"^NOTES:[ \t]*(.+)$", t, re.M)
+    notes = m.group(1).strip()[:600] if m else ""
+    i, j = t.find(CARD_START), t.rfind(CARD_END)
+    if i >= 0 and j > i:
+        y = t[i + len(CARD_START):j]
+    else:  # no markers: take everything after the NAME/NOTES lines and drop one outer code fence
+        y = re.sub(r"^(?:NAME|NOTES):.*$", "", t, flags=re.M)
+        y = re.sub(r"^\s*```(?:ya?ml)?[ \t]*\n", "", y)
+        y = re.sub(r"\n```\s*$", "", y)
+    return y.strip("\n").rstrip() + "\n", name, notes
+
+
+def cards_check(y):
+    """(parsed card, error). A card is a mapping with a type."""
+    if not str(y or "").strip():
+        return None, "The card is empty."
+    try:
+        cfg = yaml.safe_load(y)
+    except yaml.YAMLError as e:
+        return None, "That is not valid YAML: %s" % str(e)[:300]
+    if not isinstance(cfg, dict) or not isinstance(cfg.get("type"), str):
+        return None, "A card needs to start with a type: line."
+    return cfg, ""
+
+
+def cards_wrap(y, toggle):
+    """Wrap a card so it only shows while an input_boolean is on (skipped if it already uses that switch)."""
+    if toggle in y:
+        return y
+    body = "\n".join(("  " + l) if l.strip() else l for l in y.rstrip().split("\n"))
+    return "type: conditional\nconditions:\n  - condition: state\n    entity: %s\n    state: 'on'\ncard:\n%s\n" % (toggle, body)
+
+
+def cards_templates(cfg):
+    """Every template Home Assistant can render for preview: html-template-card and markdown content."""
+    out = []
+
+    def walk(x):
+        if isinstance(x, dict):
+            t = str(x.get("type") or "")
+            if t in ("custom:html-template-card", "markdown") and isinstance(x.get("content"), str):
+                out.append({"type": t, "title": str(x.get("title") or ""), "content": x["content"]})
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+
+    walk(cfg)
+    return out
+
+
+def cards_needs(cfg, y):
+    """Custom cards and add-ons the card relies on, so the user knows what has to be installed (HACS)."""
+    need = set()
+
+    def walk(x):
+        if isinstance(x, dict):
+            t = str(x.get("type") or "")
+            if t.startswith("custom:"):
+                need.add(t)
+            if "card_mod" in x:
+                need.add("card_mod")
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+
+    walk(cfg)
+    return sorted(need)
+
+
+def cards_unknown(y, known):
+    return sorted({m.group(1) for m in CARD_ENT_RE.finditer(y) if m.group(1) not in known})[:12]
+
+
+async def cards_ai(app, ai, prompt):
+    st, data = await ha(app, "POST", "/services/ai_task/generate_data",
+                        {"entity_id": ai, "task_name": "Dashboard card", "instructions": prompt},
+                        params={"return_response": "true"}, timeout=TIMEOUT)
+    if st != 200:
+        raise RuntimeError("AI task call failed: %s" % errmsg(data))
+    out = ((data.get("service_response") or {}) if isinstance(data, dict) else {}).get("data")
+    return "" if out is None else (out if isinstance(out, str) else json.dumps(out))
+
+
+async def cards_generate(request):
+    app = request.app
+    b = await ann_body(request)
+    req = str(b.get("request") or "").strip()[:4000]
+    feedback = str(b.get("feedback") or "").strip()[:2000]
+    current = str(b.get("yaml") or "").strip()[:60000]
+    toggle = str(b.get("toggle") or "").strip()
+    toggle = toggle if re.match(r"^input_boolean\.[a-z0-9_]+$", toggle) else ""
+    style = b.get("style") if b.get("style") in ("glass", "plain", "any") else "glass"
+    wanted = [e for e in (b.get("entities") or []) if isinstance(e, str) and ANN_ENT_RE.match(e)][:12]
+    if not (req or (current and feedback)):
+        return web.json_response({"ok": False, "error": "Say what the card should show first."})
+    ai = ann_settings().get("ai_task_entity") or ENTITY
+    st, states = await ha(app, "GET", "/states")
+    by_id = {s["entity_id"]: s for s in states} if st == 200 and isinstance(states, list) else {}
+    briefs, used = [], 0
+    for e in wanted:
+        if e in by_id:
+            t = cards_entity_brief(by_id[e])
+            if used + len(t) > 14000:
+                t = t[:max(0, 14000 - used)]
+            used += len(t)
+            briefs.append(t)
+    try:
+        out = await cards_ai(app, ai, cards_prompt(req, briefs, toggle, style, current, feedback))
+        y, name, notes = cards_parse(out)
+        cfg, err = cards_check(y)
+        if err:  # one retry: tell the AI what was wrong with its own answer
+            out = await cards_ai(app, ai, cards_prompt(req, briefs, toggle, style, y, "Your last answer was rejected: %s Fix it and return the whole card." % err))
+            y, name2, notes2 = cards_parse(out)
+            name, notes = name or name2, notes or notes2
+            cfg, err = cards_check(y)
+    except Exception as e:  # noqa: BLE001 - report anything that goes wrong talking to the AI
+        return web.json_response({"ok": False, "error": str(e)[:500]})
+    if err:
+        return web.json_response({"ok": False, "error": "The AI's card was not usable. %s Try rewording, or tap Build again." % err, "raw": y[:6000]})
+    if toggle:
+        y = cards_wrap(y, toggle)
+        cfg, _ = cards_check(y)
+    known = set(by_id) | set(wanted)
+    return web.json_response({"ok": True, "yaml": y, "name": name, "notes": notes,
+                              "unknown": cards_unknown(y, known) if by_id else [], "needs": cards_needs(cfg, y)})
+
+
+async def cards_check_route(request):
+    """Validate YAML the user edited by hand, and say what it needs and which entities it uses that Home Assistant lacks."""
+    b = await ann_body(request)
+    y = str(b.get("yaml") or "")
+    cfg, err = cards_check(y)
+    if err:
+        return web.json_response({"ok": False, "error": err})
+    st, states = await ha(request.app, "GET", "/states")
+    known = {s["entity_id"] for s in states} if st == 200 and isinstance(states, list) else None
+    return web.json_response({"ok": True, "needs": cards_needs(cfg, y), "unknown": cards_unknown(y, known) if known else []})
+
+
+async def cards_preview(request):
+    """Let Home Assistant render the card's templates against live data, so errors show before the card is pasted."""
+    app = request.app
+    b = await ann_body(request)
+    cfg, err = cards_check(str(b.get("yaml") or ""))
+    if err:
+        return web.json_response({"ok": False, "error": err})
+    items = cards_templates(cfg)[:6]
+    out = []
+    for it in items:
+        code, text = await ha_text(app, "POST", "/template", {"template": it["content"]}, timeout=25)
+        row = {"type": it["type"], "title": it["title"]}
+        if code == 200:
+            row["html"] = str(text)[:300_000]
+        else:
+            row["error"] = str(text)[:800] or "Home Assistant could not render it."
+        out.append(row)
+    note = "" if items else "This card has no template to preview (it uses built-in card settings only), so check it on your dashboard."
+    return web.json_response({"ok": True, "items": out, "note": note})
+
+
+async def cards_library_list(request):
+    items = sorted(cards_library().values(), key=lambda x: str(x.get("updated") or ""), reverse=True)
+    return web.json_response({"items": items})
+
+
+async def cards_library_save(request):
+    b = await ann_body(request)
+    state = cards_clean_state(b.get("state"))
+    if state is None:
+        return web.json_response({"ok": False, "error": "Nothing to save."})
+    lib = cards_library()
+    cid = str(b.get("id") or "")
+    if not CARD_ID_RE.match(cid):
+        base = (slug(b.get("name") or "card") or "card")[:55]
+        cid, n = base, 2
+        while cid in lib:
+            cid = "%s_%d" % (base, n)
+            n += 1
+    return web.json_response({"ok": True, "item": cards_store(cid, b.get("name"), state)})
+
+
+async def cards_library_delete(request):
+    b = await ann_body(request)
+    cid = str(b.get("id") or "")
+    lib = cards_library()
+    if cid not in lib:
+        return web.json_response({"ok": False, "error": "That card is not in the list."})
+    lib.pop(cid)
+    save_json(CARDS_LIB, lib)
+    return web.json_response({"ok": True})
+
+
 # ---------------------------------------------------------------- backup / import
 # Saves this add-on's own data (template sensors it manages, "Made so far" history, announcement settings)
 # to the folder (or single .json file) given in the backup_path option, and imports it back.
@@ -2111,7 +2469,22 @@ def collect_backup():
                      "announcement_settings": load_json(ANN_SETTINGS, {}),
                      "announcements": ann_library(),
                      "fact_settings": load_json(FACT_SETTINGS, {}),
-                     "facts": fact_library()}}
+                     "facts": fact_library(),
+                     "cards": cards_library()}}
+
+
+def backup_cards(text):
+    """The saved dashboard cards in a backup, or None for backups made before cards existed (an import then leaves yours alone)."""
+    try:
+        c = json.loads(text)["data"].get("cards")
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return None
+    if not isinstance(c, dict):
+        return None
+    c = {k: v for k, v in c.items() if CARD_ID_RE.match(str(k)) and isinstance(v, dict) and isinstance(v.get("state"), dict)}
+    for k, v in c.items():
+        v["id"] = k
+    return c
 
 
 def parse_backup(text):
@@ -2180,12 +2553,14 @@ def peek_backup(p):
         st = p.stat()
         if st.st_size > 32 * 1024 * 1024:
             return None
-        templates, history, ann, lib, fset, facts = parse_backup(p.read_text(encoding="utf-8"))
+        raw = p.read_text(encoding="utf-8")
+        templates, history, ann, lib, fset, facts = parse_backup(raw)
+        cards = backup_cards(raw)
     except (OSError, ValueError):
         return None
     return {"file": p.name, "size": st.st_size, "modified": time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime)),
             "templates": len(templates), "history": len(history), "announcements": bool(ann),
-            "announcements_count": len(lib or {}), "facts_count": len(facts or {})}
+            "announcements_count": len(lib or {}), "facts_count": len(facts or {}), "cards_count": len(cards or {})}
 
 
 def write_backup(tag=""):
@@ -2221,7 +2596,7 @@ async def backup_info(request):
         "path": BACKUP_PATH, "mode": "file" if backup_is_file() else "folder", "keep": BACKUP_KEEP,
         "files": files,
         "current": {"templates": len(load_json(STORE, {})), "history": len(load_json(HIST, [])), "announcements": len(ann_library()),
-                    "facts": len(fact_library())},
+                    "facts": len(fact_library()), "cards": len(cards_library())},
     })
 
 
@@ -2245,7 +2620,9 @@ async def backup_import(request):
     if not path.is_file():
         return web.json_response({"ok": False, "error": "%s was not found in %s." % (name, backup_folder())})
     try:
-        templates, history, ann, lib, fset, facts = parse_backup(path.read_text(encoding="utf-8"))
+        raw = path.read_text(encoding="utf-8")
+        templates, history, ann, lib, fset, facts = parse_backup(raw)
+        cards = backup_cards(raw)
     except (OSError, ValueError) as e:
         return web.json_response({"ok": False, "error": str(e)})
     try:
@@ -2261,6 +2638,8 @@ async def backup_import(request):
         save_json(FACT_SETTINGS, fset)
     if facts is not None:
         save_json(FACTS_LIB, facts)
+    if cards is not None:
+        save_json(CARDS_LIB, cards)
     note = ""
     try:
         render_package(templates)
@@ -2272,7 +2651,8 @@ async def backup_import(request):
     return web.json_response({"ok": True, "file": name, "safety": safety.name, "note": note,
                               "templates": len(templates), "history": len(history), "announcements": bool(ann),
                               "announcements_count": len(lib if lib is not None else ann_library()),
-                              "facts_count": len(facts if facts is not None else fact_library())})
+                              "facts_count": len(facts if facts is not None else fact_library()),
+                              "cards_count": len(cards if cards is not None else cards_library())})
 
 
 async def on_startup(app):
@@ -2294,12 +2674,14 @@ def main():
         web.get("/builder", page("builder.html")),
         web.get("/announcements", page("announcements.html")),
         web.get("/facts", page("facts.html")),
+        web.get("/cards", page("cards.html")),
         web.get("/backup", page("backup.html")),
         web.get("/ui.css", asset("ui.css", "text/css")),
         web.get("/ui.js", asset("ui.js", "application/javascript")),
         web.get("/announcements.js", asset("announcements.js", "application/javascript")),
         web.get("/sources.js", asset("sources.js", "application/javascript")),
         web.get("/facts.js", asset("facts.js", "application/javascript")),
+        web.get("/cards.js", asset("cards.js", "application/javascript")),
         web.get("/autoform.js", asset("autoform.js", "application/javascript")),
         web.get("/js-yaml.min.js", asset("js-yaml.min.js", "application/javascript")),
         web.get("/api/status", status),
@@ -2323,6 +2705,7 @@ def main():
         web.post("/api/ann/helper", ann_helper),
         web.post("/api/ann/push", ann_push),
         web.post("/api/ann/run", ann_run),
+        web.post("/api/ann/card_switch", ann_card_switch),
         # facts
         web.get("/api/facts/options", fact_options),
         web.get("/api/facts/test", fact_test_status),
@@ -2337,6 +2720,13 @@ def main():
         web.post("/api/facts/helper", fact_helper),
         web.post("/api/facts/push", fact_push),
         web.post("/api/facts/run", fact_run),
+        # dashboard cards
+        web.get("/api/cards/library", cards_library_list),
+        web.post("/api/cards/library/save", cards_library_save),
+        web.post("/api/cards/library/delete", cards_library_delete),
+        web.post("/api/cards/generate", cards_generate),
+        web.post("/api/cards/check", cards_check_route),
+        web.post("/api/cards/preview", cards_preview),
         # backup / import
         web.get("/api/backup", backup_info),
         web.post("/api/backup/save", backup_save),

@@ -1,6 +1,6 @@
 # Creator & AI Builder
 
-Builds Home Assistant things from plain English (automations, scenes, scripts, template sensors, helpers, AppDaemon apps, pyscripts, blueprints, whole add-ons), makes AI voice announcements, makes AI facts for your dashboard, and backs up its own data. Use the tab bar at the top of the panel: **Build / Announcements / Facts / Backup**.
+Builds Home Assistant things from plain English (automations, scenes, scripts, template sensors, helpers, AppDaemon apps, pyscripts, blueprints, whole add-ons), makes AI voice announcements, makes AI facts and AI-written dashboard cards, and backs up its own data. Use the tab bar at the top of the panel: **Build / Announcements / Facts / Cards / Backup**.
 
 # Build
 
@@ -195,6 +195,20 @@ Phone notifications: entities (`notify.jon`) and services (`notify.mobile_app_*`
 
 Setups you saved in your browser with an older version can be moved into My announcements from that tab.
 
+## Dashboard card switch
+
+Each announcement has an optional **Dashboard card** section. Pick an `input_boolean` (or press **Create a switch for me**) and the announcement controls it:
+
+- **Turn it on**: *When it starts talking* (default: right after the AI has written the text, just before it is spoken) or *Right away, before the AI writes it*. The second one shows the card sooner, but if the AI step fails the card stays on.
+- **Turn it off again when it finishes**: waits for the speech to end (and the music to resume), then turns the switch off.
+- **Keep the card up this many extra seconds**: delay before it turns off.
+- If nothing speaks (a notification-only announcement) there is no finish to wait for, so it only turns off when you set extra seconds. Otherwise it stays on.
+- Wrap your dashboard card in a conditional on the same `input_boolean`. The **Cards** and **Facts** tabs do that for you when you pick a show / hide switch.
+- Preview and text-only tests never flip the switch. **Test with sound** does, so you can see the card.
+- When you import a hand-written script and switch to the form tools, an `input_boolean` it turns on (other than your talking flag) is filled in as the card switch.
+
+The steps are named *Show dashboard card*, *Keep dashboard card up* and *Hide dashboard card* in the script, so the editor can read them back.
+
 ## Announcement troubleshooting
 
 **Push to Home Assistant fails**: check the Log tab. If Home Assistant refuses the default Supervisor access, set `ha_token`.
@@ -237,6 +251,38 @@ MQTT topic prefix, the sensor that reads your fact file (so the AI can avoid rep
 - **Empty result**: open **Test, don't publish** and read "What the AI answered, raw". With the title format, the AI must answer as `Title ||| fact`.
 - **Schedule says "not pushed"**: press **Save and push**.
 
+---
+
+# Cards
+
+An AI dashboard card creator. It sits beside Facts and uses the same AI Task as Announcements.
+
+## Making a card
+
+1. **New card**, then give it a name.
+2. **What should it show?** Describe it in plain words: rotating or scrolling, sizes, emoji, what goes big and what goes small.
+3. **Data the card reads**: pick the sensors, helpers or entities. The AI is shown their live state and attributes, so it uses the real field names. For a fact or list saved with Facts, pick its file_reader sensor (for example `sensor.read_new_songs`).
+4. **Show / hide switch** (optional): the card is wrapped in a conditional that only shows it while this `input_boolean` is on. **Create a switch for me** makes one. Pick the same switch in an announcement's Dashboard card section and the announcement turns the card on and off.
+5. **Look**: Glass matches your other cards (the blurred, rounded style), Plain is normal Home Assistant, or let the AI choose.
+6. **Build the card**, read the YAML, and use **Copy card YAML**. In your dashboard add a **Manual** card and paste.
+
+## Changing it
+
+- Edit the YAML by hand and press **Check my edits**, or type a change under **Change something** and press **Revise with AI**. It gets your current YAML and returns the whole card.
+- **Build it again from scratch** replaces the card in the box (it asks you to tap twice).
+- Picking a show / hide switch after the card is built wraps the YAML for you, or points an existing wrapper at the new switch.
+
+## Preview
+
+**Preview it** asks Home Assistant to render the card's templates (`custom:html-template-card` and markdown) with your live entities, so a template error shows up here instead of on your dashboard. The preview is sandboxed and approximate: your theme, card height and animations can look a little different. Cards made only from built-in card settings have no template to preview.
+
+## Notes
+
+- Custom cards the YAML uses (for example `custom:html-template-card`, `card_mod`) come from HACS. The card shows what it needs.
+- Entity ids in the YAML that Home Assistant doesn't have are listed as a warning. The AI is told to use only the entities you picked or typed.
+- AI output can be wrong. Read the card, and preview it, before you paste it into a dashboard.
+- Saved cards live in the add-on and are included in Backup. The add-on does not edit your dashboards: you paste the card yourself.
+
 # Backup
 
 The **Backup** tab saves and restores this add-on's own data:
@@ -244,6 +290,7 @@ The **Backup** tab saves and restores this add-on's own data:
 - the template sensors it manages (and so the template file it writes)
 - the "Made so far" history
 - your Announcements settings
+- your saved announcements, facts and dashboard cards
 
 It does not back up your Home Assistant automations, scripts or helpers (use Home Assistant's own backups for those), or the `/data/backups` copies of files the Builder overwrote.
 

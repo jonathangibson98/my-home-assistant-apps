@@ -132,6 +132,26 @@
           <input type="range" id="vol" min="10" max="100">
           <label class="check" style="margin-top:6px"><input type="checkbox" id="pause" checked> Pause music while talking, then resume</label>
         </section>
+
+        <section class="card">
+          <div class="ch"><h2><span class="n">5</span>Dashboard card</h2><p>Optional. Show a card on your dashboard while this runs.</p></div>
+          <label class="l">Show / hide switch</label>
+          <div id="cardpick"></div>
+          <div class="row" style="margin-top:8px"><button class="btn sm" id="cardmake">Create a switch for me</button></div>
+          <div class="msg" id="cardmsg" role="status" aria-live="polite"></div>
+          <p class="help">Pick the input_boolean your dashboard card is wrapped in (the Cards and Facts tabs can wrap a card with one). The announcement turns it on, then off again.</p>
+          <div id="cardopts">
+            <label class="l" for="cardwhen">Turn it on</label>
+            <select id="cardwhen" style="max-width:360px">
+              <option value="talk">When it starts talking</option>
+              <option value="start">Right away, before the AI writes it</option>
+            </select>
+            <label class="check" style="margin-top:6px"><input type="checkbox" id="cardoff" checked> Turn it off again when it finishes</label>
+            <label class="l" for="cardhold">Keep the card up this many extra seconds</label>
+            <input type="number" id="cardhold" min="0" step="5" value="0" style="max-width:160px">
+            <p class="help" id="cardhelp"></p>
+          </div>
+        </section>
         </div>
       </div>
 

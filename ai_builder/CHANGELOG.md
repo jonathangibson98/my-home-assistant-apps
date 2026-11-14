@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.12.0 - 2026-11-13
+
+- **Announcements can now turn a dashboard card on and off.** New **Dashboard card** section in the announcement editor: pick an `input_boolean` (or press **Create a switch for me**) and the script turns it on when the announcement starts talking, then off when it finishes. Choose to turn it on right away (before the AI writes) instead, keep the card up for some extra seconds, or leave it on afterwards. Test runs without sound never flip the switch
+- Importing a hand-written script (like a New Music Friday one) and switching to the form tools now picks up the card switch: an `input_boolean` it turns on that isn't your talking flag is filled in for you
+- **New Cards tab, beside Facts: an AI dashboard card creator.** Describe a card in plain English, pick the entities it reads (the AI sees their live attributes), and get Lovelace YAML in your glass style. Optional show / hide switch wrapper, **Revise with AI**, hand-editing with **Check my edits**, and **Preview with live data**, where Home Assistant renders the template so errors show before you paste. Flags missing entities and says which HACS cards it needs. Copy into a Manual card
+- Saved cards are included in Backup and restored with Import (older backups leave your cards alone)
+- Push your announcements again to use the new switch steps. Existing scripts are unchanged until you do
+
 ## 2.11.1 - 2026-11-12
 
 - **No more "it was written in configuration.yaml so I can't edit it" error.** The Personality dropdown now fixes itself. If the dropdown you picked is written in `configuration.yaml` (or was deleted), the add-on makes its own editable dropdown (`input_select.ai_builder_personality`) through Home Assistant, switches your settings to it and keeps its options matched from then on. If that one already exists it is reused instead of making a copy

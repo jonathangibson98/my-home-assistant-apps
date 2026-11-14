@@ -1,13 +1,14 @@
 # Creator & AI Builder
 
-Type what you want in plain English. Your Home Assistant `ai_task` entity builds it. One add-on, four tools:
+Type what you want in plain English. Your Home Assistant `ai_task` entity builds it. One add-on, five tools:
 
 - **Build**: automations, scenes, scripts, template sensors, helpers, AppDaemon apps, pyscripts, blueprints and whole add-ons.
 - **Announcements**: tap checkboxes to make AI-written voice announcements (weather, news, welcome home, roasts, whatever). It writes the Home Assistant script and pushes it in.
 - **Facts**: AI-written facts for a dashboard. Pick random topics and angles, a format and a file, optionally run on a schedule. It writes the Home Assistant script (and automation) and pushes it in.
+- **Cards**: describe a dashboard card in plain English and the AI writes the Lovelace YAML in your glass style. Pick the entities it reads, preview it with live data, tweak it with a sentence, and copy it into a Manual card.
 - **Backup**: save this add-on's data to a path you choose in the options, and import it back.
 
-Use the tab bar at the top of the sidebar panel to switch: **Build / Announcements / Facts / Backup**.
+Use the tab bar at the top of the sidebar panel to switch: **Build / Announcements / Facts / Cards / Backup**.
 
 ## Build
 
@@ -28,6 +29,7 @@ Use the tab bar at the top of the sidebar panel to switch: **Build / Announcemen
 - **Test before saving**: preview the data, test text only, or test with sound, using a temporary script that is deleted afterward
 - Helper tab: describe what you want and the AI writes the instructions and ticks the data it needs
 - Settings with searchable entity pickers, Auto-fill, and Export/Import as JSON
+- **Dashboard card switch**: pick an `input_boolean` and the announcement turns it on when it starts talking and off when it finishes, so your card only shows while it plays
 
 ## Facts
 
@@ -39,6 +41,15 @@ Use the tab bar at the top of the sidebar panel to switch: **Build / Announcemen
 - Import a whole automation (like a daily birthdays one) and edit its YAML and save path here
 - Keep your own automations with a fact: load an existing automation, or import a script and its automation together
 - Test before saving, Helper tab, import your own script, and everything is included in Backup
+
+## Cards
+
+- Describe the card, pick the sensors and helpers it reads (the AI is shown their live attributes, so it uses the real field names), and choose a look: Glass (your style), Plain, or let the AI choose
+- Optional show / hide switch wraps the card in a conditional so it only shows while an `input_boolean` is on. **Create a switch for me** makes one
+- **Revise with AI**: type a change in plain words and it updates the card you have
+- **Preview with live data**: Home Assistant renders the card's template so errors show up before you paste it
+- Tells you which custom cards it needs from HACS and flags entities that don't exist
+- Saved cards are included in Backup
 
 ## Backup
 

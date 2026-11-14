@@ -2,6 +2,7 @@
 let O = {}, S = {}, ENT = [], LIB = [], FOUND = [], mem = {};
 let cur = {id: null, isNew: true, pushed: false}, dirty = false, view = "lib", OPEN = "", HEL = {entity: "", goal: "", idea: ""};
 let editorReady = false, rawMode = false;
+const CARD = {sw: ""};  /* the dashboard-card switch picked in the editor (the picker widget keeps no value of its own) */
 
 const aiName = () => S.helper_ai_task_entity || S.ai_task_entity || "";
 const ann = (path, body) => api("ann/" + path, body);
@@ -135,6 +136,7 @@ function libCard(it) {
     el("div", {class: "top"}, el("div", {style: "min-width:0"}, el("h3", {}, it.name || it.id), el("div", {class: "dim small mono"}, "script." + it.id)), el("span", {class: "pill " + status[0]}, status[1])),
     el("div", {class: "clamp"}, st.raw != null ? "Your own script, kept exactly as you wrote it." : (st.task || "No instructions yet.")),
     el("div", {class: "meta"}, st.raw != null ? el("span", {class: "pill plain"}, "Own script") : [el("span", {class: "pill plain"}, (st.src || []).length + " data source" + ((st.src || []).length === 1 ? "" : "s")), el("span", {class: "pill plain"}, outsSummary(st))],
+      st.cardSw ? el("span", {class: "pill plain", title: st.cardSw}, "Card switch") : null,
       el("span", {class: "pill plain"}, "Edited " + ago(it.updated))),
     el("div", {class: "acts"}, el("button", {class: "btn primary sm", onclick: () => openItem(it)}, "Edit"), run, dup, del), msg);
 }
@@ -196,8 +198,20 @@ function st() {
   return {name: $("#name").value, src: $$("[data-s]:checked").map(c => c.dataset.s), outs: $$("[data-o]:checked").map(c => c.dataset.o),
     json: $$('[data-o^="n:"]:checked').length > 0, pers: Object.fromEntries($$("[data-p]").map(t => [t.dataset.p, t.value])),
     usePers: $("#usePers").checked && !!O.personality_select, one: $("#one").value, len: +$("#len").value || 1000,
-    task: $("#task").value.trim(), vol: +$("#vol").value / 100, pause: $("#pause").checked};
+    task: $("#task").value.trim(), vol: +$("#vol").value / 100, pause: $("#pause").checked,
+    cardSw: CARD.sw, cardWhen: $("#cardwhen").value || "talk", cardOff: $("#cardoff").checked, cardHold: Math.max(0, Math.round(+$("#cardhold").value || 0))};
 }
+function drawCardPick() {
+  $("#cardpick").replaceChildren(picker(["input_boolean"], false, () => CARD.sw ? [CARD.sw] : [], a => { CARD.sw = a[0] || ""; gen(); markDirty(); }));
+}
+$("#cardmake").onclick = async () => {
+  const m = $("#cardmsg"), b = $("#cardmake"); b.disabled = true; m.className = "msg"; m.textContent = "Making the switch...";
+  const r = await ann("card_switch", {name: ($("#name").value.trim() || "Announcement") + " card"});
+  b.disabled = false; m.className = "msg " + (r.ok ? "ok" : "bad"); m.textContent = r.ok ? r.message : r.error;
+  if (!r.ok) return;
+  if (!ENT.some(e => e.id === r.entity)) ENT.push({id: r.entity, name: r.entity});
+  CARD.sw = r.entity; drawCardPick(); gen(); markDirty();
+};
 function applyState(s) {
   if (s.raw != null) { setRaw(true); if (s.name != null) $("#name").value = s.name; $("#rawyaml").value = s.raw; gen(); return; }
   setRaw(false);
@@ -212,6 +226,10 @@ function applyState(s) {
   $("#task").value = s.task ?? s.extra ?? "";
   if (s.vol != null) $("#vol").value = Math.round(s.vol * 100);
   if (s.pause != null) $("#pause").checked = s.pause;
+  CARD.sw = s.cardSw || ""; drawCardPick();
+  $("#cardwhen").value = s.cardWhen === "start" ? "start" : "talk";
+  $("#cardoff").checked = s.cardOff != null ? !!s.cardOff : true;
+  $("#cardhold").value = s.cardHold || 0;
   gen();
 }
 /* Rebuild the option lists (sources, outputs, personalities) from settings. Keeps what is already ticked. */
@@ -232,6 +250,7 @@ function build() {
   const hasSel = !!O.personality_select;
   $("#selwrap").hidden = !hasSel; $("#usePers").checked = hasSel;
   $("#len").value = O.default_length || 1000; $("#vol").value = O.default_volume || 70;
+  drawCardPick();
   Object.entries(PRE).forEach(([k, p]) => {
     $("#presets").append(el("button", {class: "chip", onclick: () => {
       const have = usable().map(x => x.type), miss = p.types.filter(t => !have.includes(t));
@@ -248,10 +267,12 @@ function build() {
 /* ---------- editor: script text ---------- */
 function makeYaml(s0, o) {
   if (s0.raw != null) return s0.raw;  /* a pasted script is pushed exactly as written */
-  o = o || {}; const s = o.silent ? Object.assign({}, s0, {outs: [], json: false, pause: false}) : s0;
+  o = o || {}; const s = o.silent ? Object.assign({}, s0, {outs: [], json: false, pause: false, cardSw: ""}) : s0;
   const chosen = s.src.map(id => usable().find(x => x.id === id)).filter(Boolean), n = JSON.stringify(s.name || "Announcement"), A = O.speaker || "media_player.SET_ME", players = O.music_players || [], flag = O.talking_flag,
     sp_on = s.outs.includes("tts") && !!O.tts_entity && !!O.speaker, al = (O.alexa_targets || []).filter(a => s.outs.includes("a:" + a)), nt = (O.notify_targets || []).filter(a => s.outs.includes("n:" + a)), speak = sp_on || al.length > 0;
   s.json = s.json || nt.length > 0;
+  const cs = String(s.cardSw || "").trim(), cardOn = /^input_boolean\.[a-z0-9_]+$/.test(cs);
+  const cardStep = alias => `  - alias: ${alias}\n    action: input_boolean.turn_on\n    target:\n      entity_id: ${cs}\n`;
   let y = "alias: " + n + "\ndescription: " + ASK + "\nsequence:\n  - variables:\n      current_time: '{{ now().strftime(''%A, %B %-d %Y %-I:%M %p %Z'') }}'\n";
   chosen.forEach(c => { y += genPre(c) });
   if (chosen.length) y += "  - alias: Load data sources\n    variables:\n" + chosen.map(c => { const b = body(c).trim(); return b ? `      src_${c.id}: |-\n` + ind(b, 8) : `      src_${c.id}: ""` }).join("\n") + "\n";
@@ -267,13 +288,16 @@ function makeYaml(s0, o) {
     return "- action: ai_task.generate_data\n  data:\n    task_name: " + n + "\n    entity_id: " + (O.ai_task_entity || "ai_task.SET_ME") + "\n    instructions: |-\n" + ind(L.join("\n\n"), 6) + "\n  response_variable: announcement";
   };
   const styleFor = k => s.pers[k] ?? s.pers[DEF] ?? DEF_STYLE;
+  if (cardOn && s.cardWhen === "start") y += cardStep("Show dashboard card early");
   if (s.usePers) {
     y += "  - alias: Generate announcement\n    choose:\n";
     Object.keys(s.pers).forEach(k => { y += `      - conditions:\n          - condition: state\n            entity_id: ${O.personality_select}\n            state: ${JSON.stringify(k)}\n        sequence:\n` + ind(task(s.pers[k]), 10) + "\n" });
     y += "    default:\n" + ind(task(styleFor(DEF)), 6) + "\n";  /* dropdown on something unknown: use Default instead of saying nothing */
   } else y += ind(task(styleFor(s.one)), 2) + "\n";
   const sp = s.json ? "{{ (announcement.data | from_json).speech }}" : "{{ announcement.data }}";
-  y += `  - variables:\n      speech: '${sp}'\n  - alias: Deliver\n    parallel:\n`;
+  y += `  - variables:\n      speech: '${sp}'\n`;
+  if (cardOn && s.cardWhen !== "start") y += cardStep("Show dashboard card");
+  y += "  - alias: Deliver\n    parallel:\n";
   if (sp_on) y += `      - action: tts.speak\n        target:\n          entity_id: ${O.tts_entity}\n        data:\n          message: '{{ speech }}'\n          media_player_entity_id: ${A}\n`;
   if (al.length) y += "      - action: notify.alexa_media\n        data:\n          target:\n" + al.map(a => "            - " + a).join("\n") + "\n          message: '{{ speech }}'\n          data:\n            type: tts\n";
   const isSvc = id => { const e = ENT.find(x => x.id === id); return e ? !!e.svc : /^notify\.mobile_app_/.test(id) };
@@ -285,12 +309,18 @@ function makeYaml(s0, o) {
   else if (al.length) y += "  - delay:\n      seconds: 40\n";
   if (speak && flag) y += `  - action: input_boolean.turn_off\n    target:\n      entity_id: ${flag}\n`;
   if (speak && s.pause && players.length) y += "  - if:\n      - condition: state\n        entity_id: " + players[0] + "\n        state: paused\n    then:\n      - action: media_player.media_play\n        target:\n          entity_id: " + players[0] + "\n";
+  if (cardOn && s.cardOff) {  /* off after the speech is done (and the extra hold), or never if nothing waits and no hold is set */
+    const hold = Math.max(0, Math.round(+s.cardHold || 0));
+    if (hold > 0) y += `  - alias: Keep dashboard card up\n    delay:\n      seconds: ${hold}\n`;
+    if (speak || hold > 0) y += `  - alias: Hide dashboard card\n    action: input_boolean.turn_off\n    target:\n      entity_id: ${cs}\n`;
+  }
   return y;
 }
 
 /* Read a script made by this tool back into form state. Used for scripts that predate the library. */
 function recover(cfg) {
-  const s = {name: cfg.alias || "", src: [], outs: [], json: false, pers: {}, usePers: false, one: DEF, len: O.default_length || 1000, task: "", vol: (O.default_volume || 70) / 100, pause: false};
+  const s = {name: cfg.alias || "", src: [], outs: [], json: false, pers: {}, usePers: false, one: DEF, len: O.default_length || 1000, task: "", vol: (O.default_volume || 70) / 100, pause: false,
+    cardSw: "", cardWhen: "talk", cardOff: true, cardHold: 0};
   const notes = [], acts = [];
   const walk = a => (Array.isArray(a) ? a : [a]).forEach(x => {
     if (!x || typeof x !== "object") return;
@@ -311,6 +341,20 @@ function recover(cfg) {
     if (a === "notify.send_message") [].concat((x.target || {}).entity_id || []).forEach(t => s.outs.push("n:" + t));
     else if (a.startsWith("notify.") && a !== "notify.alexa_media") s.outs.push("n:" + a);
   });
+  const entOf = x => [].concat((x.target || {}).entity_id || (x.data || {}).entity_id || [])[0] || "";
+  const secs = d => typeof d === "number" ? d : typeof d === "string" ? (d.split(":").reduce((a, v) => a * 60 + (+v || 0), 0)) : d ? (+d.hours || 0) * 3600 + (+d.minutes || 0) * 60 + (+d.seconds || 0) : 0;
+  const showA = acts.find(x => /^Show dashboard card/.test(x.alias || "") && x.action === "input_boolean.turn_on");
+  if (showA) {
+    s.cardSw = entOf(showA); s.cardWhen = /early$/.test(showA.alias) ? "start" : "talk";
+    s.cardOff = acts.some(x => x.alias === "Hide dashboard card");
+    const hold = acts.find(x => x.alias === "Keep dashboard card up"); s.cardHold = hold ? secs(hold.delay) : 0;
+  } else {  /* a hand-written script: an input_boolean it turns on that is not the talking flag is most likely the card switch */
+    const on = acts.find(x => x.action === "input_boolean.turn_on" && entOf(x) && entOf(x) !== O.talking_flag);
+    if (on) {
+      s.cardSw = entOf(on); s.cardWhen = "talk"; s.cardOff = acts.some(x => x.action === "input_boolean.turn_off" && entOf(x) === s.cardSw); s.cardHold = 0;
+      notes.push("Found " + s.cardSw + " being turned on, so it is filled in as the dashboard card switch" + (s.cardOff ? "." : ", and it is left on afterwards like your script does."));
+    }
+  }
   const ai = acts.filter(x => x.action === "ai_task.generate_data");
   const text = ai.length ? String((ai[0].data || {}).instructions || "") : "";
   const m = text.match(/YOUR TASK: ([\s\S]*?)\n\nSTYLE: /);
@@ -359,7 +403,8 @@ function openEditor(state, c, note) {
 }
 const blankState = () => ({name: "My announcement", src: usable().filter(x => x.type === "household").map(x => x.id),
   outs: $$("[data-o]").map(c => c.dataset.o).filter(o => !o.startsWith("n:")), task: "", len: O.default_length || 1000, vol: (O.default_volume || 70) / 100, pause: true,
-  usePers: !!O.personality_select, one: DEF, pers: Object.fromEntries(persList().map(p => [p.name, p.style]))});
+  usePers: !!O.personality_select, one: DEF, pers: Object.fromEntries(persList().map(p => [p.name, p.style])),
+  cardSw: "", cardWhen: "talk", cardOff: true, cardHold: 0});
 function openNew(over) { openEditor(Object.assign(blankState(), over || {}), {isNew: true}); }
 function openItem(it) {
   const s = Object.assign(blankState(), it.state || {}, {name: (it.state || {}).name || it.name});
@@ -408,7 +453,12 @@ $("#gohelp").onclick = () => { showView("help"); $("#tabs").hidden = true; HEL.b
 function gen() {
   const s = st(); $("#out").textContent = makeYaml(s);
   if (rawMode) { paintState(); return; }
-  $("#onewrap").hidden = s.usePers; $("#volv").textContent = Math.round(s.vol * 100); paintState();
+  $("#onewrap").hidden = s.usePers; $("#volv").textContent = Math.round(s.vol * 100);
+  $("#cardopts").hidden = !s.cardSw;
+  const talks = s.outs.some(o => o === "tts" || o.startsWith("a:"));
+  $("#cardhelp").textContent = s.cardOff ? (talks || s.cardHold > 0 ? "It turns off after the announcement has finished playing" + (s.cardHold > 0 ? ", plus " + s.cardHold + " seconds." : ".")
+    : "Nothing here speaks, so it has no finish to wait for. Add extra seconds to have it turn off by itself, or leave it on.") : "It stays on after the announcement. Turn it off from your dashboard or another automation.";
+  paintState();
 }
 document.addEventListener("input", e => {
   if (!e.target.closest("#v-edit")) return;
