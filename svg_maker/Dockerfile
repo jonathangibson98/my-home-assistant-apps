@@ -1,6 +1,6 @@
 # Debian (glibc) base on purpose. The tracer (vtracer) is a Rust library, and its crash on the
 # Alpine (musl) base used by the combined add-on is why SVG Maker was split out.
-FROM python:3.12-slim-bookworm
+FROM python:3.15-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 
