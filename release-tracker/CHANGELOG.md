@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.0
+
+- **One sensor for everything**: `sensor.release_tracker_releases`. Shows, movies, games, and DLC are all in it.
+- The state is the number of releases inside your window. `items`, `next_*`, `today`, `today_count`, and `by_person` are attributes.
+- Removed the separate next release, upcoming, releasing today, upcoming games, and all per-person sensors. They are deleted from Home Assistant automatically on startup. **Automations and dashboard cards that used them need to point at the new sensor.** See the examples in the docs.
+
 ## 1.3.0
 
 - **Games can be tagged to people** now, just like shows and movies. Pick who is tracking a game when you add it, or tap a name on its card.

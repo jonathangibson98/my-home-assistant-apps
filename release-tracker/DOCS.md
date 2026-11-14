@@ -18,23 +18,23 @@ Manage everyone in **Settings, People**. Type a name and tap **Add**. Each perso
 
 When you add something, pick who is tracking it (shows, movies, **and games**), or nobody. Tap a name on a card in the Tracking tab to change it later.
 
-Each person gets their own sensors, named after them:
+Who tracks what shows up in the `by_person` attribute of the release sensor (see below). Renaming or removing someone updates it right away.
 
-| Entity | What it is |
+## The release sensor
+
+Everything comes through **one** sensor: `sensor.release_tracker_releases`. Shows, movies, games, and DLC are all in it.
+
+The state is how many releases land inside your window (Settings, Updates). The details are attributes:
+
+| Attribute | What it is |
 |---|---|
-| `sensor.release_tracker_jon_upcoming` | How many of Jon's items release inside the window. Full list in the `items` attribute. |
-| `binary_sensor.release_tracker_jon_releasing_today` | On when a show or movie Jon tracks releases today. Titles in the `titles` attribute. |
-| `sensor.release_tracker_jon_upcoming_games` | How many of Jon's games or DLC release inside the window. Full list in `items`. Also `titles_today`, `next_title`, `next_date`, `next_days_until`, `next_label`. |
+| `items` | The list of releases inside the window, soonest first (up to 30). Each has `title`, `type` (TV, Movie, or Game), `date`, `days_until`, `label`, and `people`. |
+| `next_title`, `next_date`, `next_days_until`, `next_label`, `next_type` | The very next thing coming out, even if it is past the window. |
+| `today_count`, `today` | How many things drop today, and their titles. |
+| `by_person` | For each person, the titles of their releases inside the window. |
+| `window_days`, `tracked_count` | Your window setting, and how many items you track. |
 
-Rename someone and the old sensors are removed and new ones are created.
-
-## Everyone's sensors
-
-| Entity | What it is |
-|---|---|
-| `sensor.release_tracker_next_release` | Title of the next thing coming out. Attributes: `date`, `days_until`, `label`, `type`. |
-| `sensor.release_tracker_upcoming` | Count of releases inside the window. List is in `items`. |
-| `binary_sensor.release_tracker_releasing_today` | On when anything tracked releases today. `by_person` shows who it is for. |
+If you updated from an older version, the old sensors (`next_release`, `upcoming`, `releasing_today`, `upcoming_games`, and the per-person ones) are removed from Home Assistant on startup. They may linger as greyed-out entries in the entity list until you delete them there.
 
 ## Games and DLC
 
@@ -48,28 +48,24 @@ Games use a different free service (IGDB, run by Twitch), so it needs its own ke
 
 Track the main game and any DLC or expansion IGDB knows about shows up on its own. The card shows whichever thing drops next, like `DLC: Skin Pack`. You can also search a DLC by name and track it alone.
 
-Games have their own sensor and never touch the TV and movie sensors. Tag who is tracking a game just like a show, and each person also gets `sensor.release_tracker_<name>_upcoming_games` (see People above). The main sensor also has a `by_person` attribute listing each person's games inside the window.
-
-| Entity | What it is |
-|---|---|
-| `sensor.release_tracker_upcoming_games` | How many games or DLC release inside the window. Full list in `items`. Also `next_title`, `next_date`, `next_days_until`, `next_label`. |
+Games show up in the same release sensor as everything else, with `type` set to `Game`. Tag who is tracking a game just like a show.
 
 Notify when something drops today:
 
 ```yaml
-alias: Game drops today
+alias: Release drops today
 trigger:
   - platform: time
     at: "08:00:00"
 condition:
   - condition: template
     value_template: >
-      {{ state_attr('sensor.release_tracker_upcoming_games','next_days_until') == 0 }}
+      {{ state_attr('sensor.release_tracker_releases','today_count') | int > 0 }}
 action:
   - service: notify.notify
     data:
       title: Dropping today
-      message: "{{ state_attr('sensor.release_tracker_upcoming_games','next_title') }}: {{ state_attr('sensor.release_tracker_upcoming_games','next_label') }}"
+      message: "{{ state_attr('sensor.release_tracker_releases','today') | join(', ') }}"
 ```
 
 ## Settings
@@ -103,8 +99,19 @@ Backups need the share folder to be available to the add-on. After updating from
 type: markdown
 title: Coming Soon
 content: |
-  {% for i in state_attr('sensor.release_tracker_upcoming','items') %}
-  **{{ i.title }}**: {{ i.label }}, {{ i.date }} ({{ i.days_until }}d)
+  {% for i in state_attr('sensor.release_tracker_releases','items') %}
+  **{{ i.title }}** ({{ i.type }}): {{ i.label }}, {{ i.date }} ({{ i.days_until }}d)
+  {% endfor %}
+```
+
+Show only one person's releases:
+
+```yaml
+type: markdown
+title: MJ's releases
+content: |
+  {% for i in state_attr('sensor.release_tracker_releases','items') if 'MJ' in i.people %}
+  **{{ i.title }}**: {{ i.label }}, {{ i.date }}
   {% endfor %}
 ```
 
@@ -113,23 +120,30 @@ content: |
 ```yaml
 alias: MJ release day
 trigger:
-  - platform: state
-    entity_id: binary_sensor.release_tracker_mj_releasing_today
-    to: "on"
+  - platform: time
+    at: "08:00:00"
+condition:
+  - condition: template
+    value_template: >
+      {{ state_attr('sensor.release_tracker_releases','items')
+         | selectattr('days_until','eq',0) | selectattr('people','contains','MJ') | list | count > 0 }}
 action:
   - service: notify.notify
     data:
       title: Dropping today
-      message: "{{ state_attr('binary_sensor.release_tracker_mj_releasing_today','titles') | join(', ') }}"
+      message: >
+        {{ state_attr('sensor.release_tracker_releases','items')
+           | selectattr('days_until','eq',0) | selectattr('people','contains','MJ')
+           | map(attribute='title') | join(', ') }}
 ```
 
 Swap `notify.notify` for the notify service of whoever should get it.
 
 ## Things to know
 
-- Game dates come from IGDB, also crowd-sourced. Dates are the earliest across all platforms. If only a month or year is known it says "expected" and gets no sensor date.
+- Game dates come from IGDB, also crowd-sourced. Dates are the earliest across all platforms. If only a month or year is known it says "expected" and gets no date.
 - Dates come from TMDB, which is crowd-sourced. TV air dates can be wrong or late, and streaming shows often have no date until shortly before release.
-- Shows with no announced next episode say "No date announced yet" and get no sensor date.
+- Shows with no announced next episode say "No date announced yet" and get no date.
 - A movie that is already out stays in your list, but it will not show up as upcoming.
 - Everything is stored in the add-on's own data folder and is included in Home Assistant backups. The Backup card makes extra copies you can reach in the share folder.
 

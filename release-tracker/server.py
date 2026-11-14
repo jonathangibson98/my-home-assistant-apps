@@ -322,11 +322,9 @@ def days_until(date_str):
     return (dt.date.fromisoformat(date_str) - today()).days
 
 
-def upcoming(games=False):
+def upcoming():
     rows = []
     for it in load(TRACK_FILE, []):
-        if (it["type"] == "game") != games:
-            continue
         info = it.get("info") or {}
         nd = info.get("next_date")
         if not nd:
@@ -352,7 +350,7 @@ def upcoming(games=False):
 client = None
 _sent = {}
 T_STATUS = "release_tracker/status"
-T = {k: f"release_tracker/{k}" for k in ("next", "upcoming", "today", "games")}
+T = {"releases": "release_tracker/releases"}
 DEVICE = {
     "identifiers": ["release_tracker"],
     "name": "Release Tracker",
@@ -386,37 +384,35 @@ def pub(topic, payload):
 
 
 def send_discovery(c):
-    common = {"device": DEVICE, "availability_topic": T_STATUS}
-    ents = [
-        ("sensor", "next", {
-            "name": "Next Release", "icon": "mdi:movie-open-play",
-            "state_topic": T["next"], "value_template": "{{ value_json.state }}",
-            "json_attributes_topic": T["next"],
-            "json_attributes_template": "{{ value_json.attributes | tojson }}"}),
-        ("sensor", "upcoming", {
-            "name": "Upcoming Releases", "icon": "mdi:calendar-star",
-            "state_topic": T["upcoming"], "value_template": "{{ value_json.state }}",
-            "json_attributes_topic": T["upcoming"],
-            "json_attributes_template": "{{ value_json.attributes | tojson }}"}),
-        ("binary_sensor", "today", {
-            "name": "Releasing Today", "icon": "mdi:party-popper",
-            "state_topic": T["today"], "value_template": "{{ value_json.state }}",
-            "payload_on": "ON", "payload_off": "OFF",
-            "json_attributes_topic": T["today"],
-            "json_attributes_template": "{{ value_json.attributes | tojson }}"}),
-        ("sensor", "games", {
-            "name": "Upcoming Games", "icon": "mdi:controller",
-            "state_topic": T["games"], "value_template": "{{ value_json.state }}",
-            "json_attributes_topic": T["games"],
-            "json_attributes_template": "{{ value_json.attributes | tojson }}"}),
-    ]
-    for comp, key, cfg in ents:
-        cfg.update(common)
-        cfg["unique_id"] = f"release_tracker_{key}"
-        c.publish(f"homeassistant/{comp}/release_tracker/{key}/config", json.dumps(cfg), retain=True)
+    cfg = {
+        "name": "Releases", "icon": "mdi:calendar-star",
+        "unique_id": "release_tracker_releases",
+        "state_topic": T["releases"], "value_template": "{{ value_json.state }}",
+        "unit_of_measurement": "releases",
+        "json_attributes_topic": T["releases"],
+        "json_attributes_template": "{{ value_json.attributes | tojson }}",
+        "device": DEVICE, "availability_topic": T_STATUS,
+    }
+    c.publish("homeassistant/sensor/release_tracker/releases/config", json.dumps(cfg), retain=True)
+    cleanup_legacy(c)
 
 
-_disc_people = None
+def cleanup_legacy(c):
+    """Remove the many sensors older versions created, so only the one release sensor is left."""
+    for comp, key in (("sensor", "next"), ("sensor", "upcoming"), ("binary_sensor", "today"), ("sensor", "games")):
+        c.publish(f"homeassistant/{comp}/release_tracker/{key}/config", "", retain=True)
+    for key in ("next", "upcoming", "today", "games"):
+        c.publish(f"release_tracker/{key}", "", retain=True)
+    for sl in load(DISC_FILE, []):
+        c.publish(f"homeassistant/sensor/release_tracker/p_{sl}_upcoming/config", "", retain=True)
+        c.publish(f"homeassistant/binary_sensor/release_tracker/p_{sl}_today/config", "", retain=True)
+        c.publish(f"homeassistant/sensor/release_tracker/p_{sl}_games/config", "", retain=True)
+        for key in ("upcoming", "today", "games"):
+            c.publish(f"release_tracker/person/{sl}/{key}", "", retain=True)
+    try:
+        os.remove(DISC_FILE)
+    except OSError:
+        pass
 
 
 def slug(name):
@@ -433,104 +429,27 @@ def people_list():
     return people
 
 
-def person_topic(sl, key):
-    return f"release_tracker/person/{sl}/{key}"
-
-
-def sync_people_discovery():
-    global _disc_people
-    if client is None:
-        return
-    want = people_list()
-    if _disc_people == set(want):
-        return
-    old = set(load(DISC_FILE, [])) | (_disc_people or set())
-    for sl in old - set(want):
-        client.publish(f"homeassistant/sensor/release_tracker/p_{sl}_upcoming/config", "", retain=True)
-        client.publish(f"homeassistant/binary_sensor/release_tracker/p_{sl}_today/config", "", retain=True)
-        client.publish(f"homeassistant/sensor/release_tracker/p_{sl}_games/config", "", retain=True)
-    common = {"device": DEVICE, "availability_topic": T_STATUS}
-    for sl, name in want.items():
-        up = {
-            "name": f"{name} Upcoming", "icon": "mdi:account-clock",
-            "unique_id": f"release_tracker_p_{sl}_upcoming",
-            "state_topic": person_topic(sl, "upcoming"), "value_template": "{{ value_json.state }}",
-            "json_attributes_topic": person_topic(sl, "upcoming"),
-            "json_attributes_template": "{{ value_json.attributes | tojson }}", **common}
-        td = {
-            "name": f"{name} Releasing Today", "icon": "mdi:bell-ring",
-            "unique_id": f"release_tracker_p_{sl}_today",
-            "state_topic": person_topic(sl, "today"), "value_template": "{{ value_json.state }}",
-            "payload_on": "ON", "payload_off": "OFF",
-            "json_attributes_topic": person_topic(sl, "today"),
-            "json_attributes_template": "{{ value_json.attributes | tojson }}", **common}
-        gm = {
-            "name": f"{name} Upcoming Games", "icon": "mdi:controller",
-            "unique_id": f"release_tracker_p_{sl}_games",
-            "state_topic": person_topic(sl, "games"), "value_template": "{{ value_json.state }}",
-            "json_attributes_topic": person_topic(sl, "games"),
-            "json_attributes_template": "{{ value_json.attributes | tojson }}", **common}
-        client.publish(f"homeassistant/sensor/release_tracker/p_{sl}_games/config", json.dumps(gm), retain=True)
-        client.publish(f"homeassistant/sensor/release_tracker/p_{sl}_upcoming/config", json.dumps(up), retain=True)
-        client.publish(f"homeassistant/binary_sensor/release_tracker/p_{sl}_today/config", json.dumps(td), retain=True)
-    save(DISC_FILE, sorted(want))
-    _disc_people = set(want)
-
-
 def publish():
-    rows = upcoming()
     s = settings()
-    tracked = load(TRACK_FILE, [])
-    window = [r for r in rows if r["days_until"] <= int(s["window_days"])]
-    if rows:
-        n = rows[0]
-        pub(T["next"], {"state": n["title"], "attributes": {
-            "date": n["date"], "days_until": n["days_until"], "label": n["label"], "type": n["type"]}})
-    else:
-        pub(T["next"], {"state": "Nothing scheduled", "attributes": {
-            "date": None, "days_until": None, "label": None, "type": None}})
-    pub(T["upcoming"], {"state": len(window), "attributes": {
-        "items": window[:25], "window_days": int(s["window_days"]),
-        "tracked_count": len([t for t in tracked if t["type"] != "game"])}})
-    grows = upcoming(games=True)
-    gwin = [r for r in grows if r["days_until"] <= int(s["window_days"])]
-    gn = grows[0] if grows else {}
-    pub(T["games"], {"state": len(gwin), "attributes": {
-        "items": gwin[:25], "window_days": int(s["window_days"]),
-        "tracked_count": len([t for t in tracked if t["type"] == "game"]),
-        "next_title": gn.get("title"), "next_date": gn.get("date"),
-        "next_days_until": gn.get("days_until"), "next_label": gn.get("label"),
-        "by_person": {name: [r["title"] for r in gwin if name in r["people"]] for name in people_list().values()}}})
-    now = [r for r in rows if r["days_until"] == 0]
-    people = people_list()
-    pub(T["today"], {"state": "ON" if now else "OFF", "attributes": {
-        "titles": [r["title"] for r in now], "items": now,
-        "by_person": {name: [r["title"] for r in now if name in r["people"]] for name in people.values()}}})
-    sync_people_discovery()
     w = int(s["window_days"])
-    for sl, name in people.items():
-        mine = [r for r in rows if name in r["people"]]
-        soon = [r for r in mine if r["days_until"] <= w]
-        pub(person_topic(sl, "upcoming"), {"state": len(soon), "attributes": {
-            "person": name, "items": soon[:25]}})
-        todays = [r for r in mine if r["days_until"] == 0]
-        pub(person_topic(sl, "today"), {"state": "ON" if todays else "OFF", "attributes": {
-            "person": name, "titles": [r["title"] for r in todays], "items": todays}})
-        gmine = [r for r in grows if name in r["people"]]
-        gsoon = [r for r in gmine if r["days_until"] <= w]
-        gnext = gmine[0] if gmine else {}
-        pub(person_topic(sl, "games"), {"state": len(gsoon), "attributes": {
-            "person": name, "items": gsoon[:25],
-            "titles_today": [r["title"] for r in gmine if r["days_until"] == 0],
-            "next_title": gnext.get("title"), "next_date": gnext.get("date"),
-            "next_days_until": gnext.get("days_until"), "next_label": gnext.get("label")}})
+    rows = upcoming()
+    soon = [r for r in rows if r["days_until"] <= w]
+    now = [r for r in rows if r["days_until"] == 0]
+    n = rows[0] if rows else {}
+    people = people_list()
+    pub(T["releases"], {"state": len(soon), "attributes": {
+        "window_days": w,
+        "tracked_count": len(load(TRACK_FILE, [])),
+        "items": soon[:30],
+        "next_title": n.get("title"), "next_date": n.get("date"), "next_days_until": n.get("days_until"),
+        "next_label": n.get("label"), "next_type": n.get("type"),
+        "today_count": len(now), "today": [r["title"] for r in now],
+        "by_person": {name: [r["title"] for r in soon if name in r["people"]] for name in people.values()}}})
 
 
 def on_connect(c, userdata, flags, reason_code, properties=None):
     print(f"[mqtt] connected: {reason_code}", flush=True)
-    global _disc_people
     _sent.clear()
-    _disc_people = None
     send_discovery(c)
     c.publish(T_STATUS, "online", retain=True)
     publish()
@@ -877,7 +796,6 @@ def api_people_add():
 
 @app.route("/api/people", methods=["PUT"])
 def api_people_rename():
-    global _disc_people
     b = request.get_json(force=True) or {}
     old, new = str(b.get("old", "")), clean_name(b.get("new"))
     if not new:
@@ -895,7 +813,6 @@ def api_people_rename():
         for t in tracked:  # tags follow the new name
             t["people"] = list(dict.fromkeys(new if p == old else p for p in t.get("people", [])))
         save(TRACK_FILE, tracked)
-    _disc_people = None  # republish sensor names even if only the capitalization changed
     publish()
     return jsonify({"ok": True})
 

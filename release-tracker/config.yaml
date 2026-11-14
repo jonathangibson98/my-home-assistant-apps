@@ -1,5 +1,5 @@
 name: Release Tracker
-version: "1.3.0"
+version: "1.4.0"
 slug: release_tracker
 image: "ghcr.io/jonathangibson98/{arch}-addon-release_tracker"
 description: Track the TV shows, movies, video games, and DLC you pick and see exactly when they drop
