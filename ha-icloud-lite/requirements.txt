@@ -1,4 +1,4 @@
 pyicloud==2.7.0
 rich
 paho-mqtt>=2.0
-aiohttp>=3.9
+aiohttp>=3.14.5
