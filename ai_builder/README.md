@@ -3,7 +3,7 @@
 Type what you want in plain English. Your Home Assistant `ai_task` entity builds it. One add-on, five tools:
 
 - **Build**: automations, scenes, scripts, template sensors, helpers, AppDaemon apps, pyscripts, blueprints and whole add-ons.
-- **Announcements**: tap checkboxes to make AI-written voice announcements (weather, news, welcome home, roasts, whatever). It writes the Home Assistant script and pushes it in.
+- **Announcements**: tap checkboxes to make AI-written voice announcements (weather, news, welcome home, roasts, whatever). It writes the Home Assistant script and pushes it in, and can run it on a schedule.
 - **Facts**: AI-written facts for a dashboard. Pick random topics and angles, a format and a file, optionally run on a schedule. It writes the Home Assistant script (and automation) and pushes it in.
 - **Cards**: describe a dashboard card in plain English and the AI writes the Lovelace YAML in your glass style. Pick the entities it reads, preview it with live data, tweak it with a sentence, and copy it into a Manual card.
 - **Backup**: save this add-on's data to a path you choose in the options, and import it back.

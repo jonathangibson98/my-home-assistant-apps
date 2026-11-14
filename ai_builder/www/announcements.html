@@ -12,6 +12,9 @@
   #v-set .page-dock-space{height:70px}
   .srcrow .t small{display:block;color:var(--dim)}
   textarea#task{min-height:110px}
+  .inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .inline input,.inline select{width:auto;max-width:150px}
+  #autoout{white-space:pre-wrap}
 </style>
 </head>
 <body>
@@ -21,7 +24,7 @@
     <div class="head">
       <div>
         <h1>Announcements</h1>
-        <p class="sub">AI-written voice announcements. Each one is a Home Assistant script you can open, change and push again at any time.</p>
+        <p class="sub">AI-written voice announcements. Each one is a Home Assistant script you can open, change and push again at any time, with an optional schedule.</p>
       </div>
     </div>
     <div id="setupnote" style="margin-bottom:14px"></div>
@@ -153,6 +156,31 @@
           </div>
         </section>
         </div>
+
+        <section class="card" id="autocard">
+          <div class="ch"><h2><span class="n" id="autonum">6</span>Run it automatically</h2><p>Optional. Makes a Home Assistant automation that runs this script, so it plays without you pressing anything. The script stays as it is, so your other automations can still call it.</p></div>
+          <label class="check"><input type="checkbox" id="auto-on"> Run on a schedule</label>
+          <div id="autoopts" hidden>
+            <label class="l" for="auto-every">Every</label>
+            <div class="inline"><input type="number" id="auto-every" min="0" step="1" style="width:90px"><select id="auto-unit"><option value="minutes">minutes</option><option value="hours">hours</option></select></div>
+            <p class="help">0 turns the repeat off. Minutes up to 59, hours up to 23.</p>
+            <label class="l" for="auto-at">And at this time every day (optional)</label>
+            <input type="time" id="auto-at" style="max-width:160px">
+            <label class="l">And when this entity changes (optional)</label>
+            <div id="autowatch"></div>
+            <div class="inline" id="autowatchopts" style="margin-top:8px" hidden>
+              <input id="auto-attr" placeholder="attribute (blank = state)" style="max-width:240px">
+              <span class="dim small">after it has held for</span>
+              <input type="number" id="auto-for" min="0" step="1" style="width:90px">
+              <span class="dim small">seconds</span>
+            </div>
+            <label class="l">Only when someone is home (optional)</label>
+            <div id="autohome"></div>
+            <p class="help">Runs only if any of these is on or home. A zone counts when it has someone in it.</p>
+            <div id="autodefault"></div>
+            <p class="help">If it is still talking when the next trigger comes, the new trigger is skipped. It does not cut the announcement off.</p>
+          </div>
+        </section>
       </div>
 
       <aside class="side stack">
@@ -169,6 +197,7 @@
         <section class="card">
           <div class="ch"><h2>The script</h2><p>Read it before you push.</p></div>
           <details id="ymldet"><summary>Show YAML</summary><pre id="out"></pre></details>
+          <details id="autodet"><summary>Show schedule YAML</summary><pre id="autoout"></pre></details>
           <div class="row" style="margin-top:10px">
             <button class="btn sm" id="run" title="Run the version that is saved in Home Assistant">Run saved script</button>
             <button class="btn sm" id="copy">Copy YAML</button>

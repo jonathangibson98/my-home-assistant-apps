@@ -2,6 +2,8 @@
 let O = {}, S = {}, ENT = [], LIB = [], FOUND = [], mem = {};
 let cur = {id: null, isNew: true, pushed: false}, dirty = false, view = "lib", OPEN = "", HEL = {entity: "", goal: "", idea: ""};
 let editorReady = false, rawMode = false;
+const AUTO = {watch: "", home: []};  /* the entity pickers in "Run it automatically" keep no value of their own */
+const FACT = {home: []};  /* the default "someone is home" list, set in Facts > Settings */
 const CARD = {sw: ""};  /* the dashboard-card switch picked in the editor (the picker widget keeps no value of its own) */
 
 const aiName = () => S.helper_ai_task_entity || S.ai_task_entity || "";
@@ -32,8 +34,59 @@ function setAlias(y, name) {
   const line = "alias: " + JSON.stringify(name || "Announcement");
   return /^alias:.*$/m.test(y) ? y.replace(/^alias:.*$/m, () => line) : line + "\n" + y;
 }
+const defAuto = () => ({on: false, every: 0, unit: "hours", at: "", watch: "", watchAttr: "", watchFor: 0, home: []});
+const autoSummary = a => {
+  const p = [];
+  if (+a.every > 0) p.push("every " + Math.round(+a.every) + (a.unit === "hours" ? " h" : " min"));
+  if (a.at) p.push("daily at " + a.at);
+  if (a.watch) p.push("when " + a.watch + " changes");
+  return p.join(" and ") || "no trigger set";
+};
+/* the schedule: an automation (<script id>_auto) that calls the script. Works for form scripts and pasted ones alike. */
+function makeAuto(s0, sid) {
+  const a = Object.assign(defAuto(), (s0 && s0.auto) || {});
+  if (!a.on) return "";
+  const T = [];
+  if (+a.every > 0) {
+    if (a.unit === "hours") T.push(`  - trigger: time_pattern\n    hours: "/${Math.min(23, Math.max(1, Math.round(+a.every)))}"\n    minutes: 0\n`);
+    else T.push(`  - trigger: time_pattern\n    minutes: "/${Math.min(59, Math.max(1, Math.round(+a.every)))}"\n`);
+  }
+  if (/^\d{1,2}:\d{2}$/.test(a.at || "")) T.push(`  - trigger: time\n    at: "${a.at.padStart(5, "0")}:00"\n`);
+  if (a.watch) T.push(`  - trigger: state\n    entity_id: ${a.watch}\n` + (a.watchAttr ? `    attribute: ${a.watchAttr}\n` : "") + (+a.watchFor > 0 ? `    for:\n      seconds: ${Math.round(+a.watchFor)}\n` : ""));
+  if (!T.length) return "";
+  let y = "alias: " + JSON.stringify((s0.name || "Announcement") + " (auto)") + "\ndescription: " + ASK + "\nmode: single\nmax_exceeded: silent\ntriggers:\n" + T.join("");
+  const C = (a.home || []).map(e => {
+    const d = e.split(".")[0];
+    if (d === "zone") return `numeric_state\n        entity_id: ${e}\n        above: 0`;
+    if (d === "person" || d === "device_tracker") return `state\n        entity_id: ${e}\n        state: home`;
+    return `state\n        entity_id: ${e}\n        state: "on"`;
+  });
+  if (C.length === 1) y += "conditions:\n  - condition: " + C[0].replace(/\n        /g, "\n    ") + "\n";
+  else if (C.length) y += "conditions:\n  - condition: or\n    conditions:\n" + C.map(c => "      - condition: " + c + "\n").join("");
+  return y + "actions:\n  - action: script." + sid + "\n";
+}
+const autoProblem = s => s.auto && s.auto.on && !makeAuto(s, "x") ? "The schedule needs a repeat time, a time of day or an entity to watch." : "";
+const autoState = () => ({on: $("#auto-on").checked, every: $("#auto-every").value === "" ? 0 : +$("#auto-every").value, unit: $("#auto-unit").value === "minutes" ? "minutes" : "hours",
+  at: $("#auto-at").value || "", watch: AUTO.watch, watchAttr: $("#auto-attr").value.trim(), watchFor: Math.max(0, Math.round(+$("#auto-for").value || 0)), home: [...AUTO.home]});
+function drawAutoDefault() {
+  const b = $("#autodefault"); b.replaceChildren();
+  if (FACT.home.length && !AUTO.home.length) b.append(el("button", {class: "btn sm", style: "margin-top:6px", onclick: () => { AUTO.home = [...FACT.home]; drawAuto(); gen(); markDirty(); }}, "Use my default presence list"));
+}
+function drawAuto() {
+  $("#autowatch").replaceChildren(picker(null, false, () => AUTO.watch ? [AUTO.watch] : [], a => { AUTO.watch = a[0] || ""; gen(); markDirty(); }));
+  $("#autohome").replaceChildren(picker(null, true, () => AUTO.home, a => { AUTO.home = a; drawAutoDefault(); gen(); markDirty(); }));
+  drawAutoDefault();
+}
+function applyAuto(x) {
+  const a = Object.assign(defAuto(), x || {});
+  $("#auto-on").checked = !!a.on; $("#auto-every").value = a.every; $("#auto-unit").value = a.unit === "minutes" ? "minutes" : "hours"; $("#auto-at").value = a.at || "";
+  $("#auto-attr").value = a.watchAttr || ""; $("#auto-for").value = a.watchFor || 0;
+  AUTO.watch = a.watch || ""; AUTO.home = [...(a.home || [])]; drawAuto();
+}
+
 function setRaw(on) {
   rawMode = !!on;
+  $("#autonum").textContent = rawMode ? "3" : "6";
   $("#formcards").hidden = rawMode; $("#rawcard").hidden = !rawMode;
   $("#trycard").hidden = rawMode; $("#ymldet").hidden = rawMode;
 }
@@ -122,14 +175,14 @@ function libCard(it) {
   const status = !it.pushed_at && !it.in_ha ? ["warn", "Draft, not in Home Assistant"] : it.in_ha ? ["ok", "In Home Assistant"] : ["bad", "Missing in Home Assistant"];
   const msg = el("div", {class: "msg", style: "margin:0"});
   const del = el("button", {class: "btn danger sm"}, "Delete");
-  confirmTap(del, it.in_ha ? "Tap again: removes the script too" : "Tap again to delete", () => removeAnn(it.id, !!it.in_ha));
+  confirmTap(del, it.in_ha ? "Tap again: removes the script" + (it.auto_in_ha ? " and schedule" : "") + " too" : "Tap again to delete", () => removeAnn(it.id, !!it.in_ha));
   const run = el("button", {class: "btn sm", disabled: !it.in_ha, title: it.in_ha ? "Run it now" : "Push it to Home Assistant first", onclick: async () => {
     run.disabled = true; msg.className = "msg"; msg.textContent = "Starting...";
     const r = await ann("run", {id: it.id}); msg.className = "msg " + (r.ok ? "ok" : "bad"); msg.textContent = r.ok ? "Started." : (r.detail || r.error); run.disabled = false;
   }}, "Run now");
   const dup = el("button", {class: "btn sm", onclick: async () => {
     const id = uniqueId(slug((it.name || it.id) + " copy"));
-    const r = await ann("library/save", {id, name: (it.name || it.id) + " copy", state: Object.assign({}, st, {name: (it.name || it.id) + " copy"}, st.raw != null ? {raw: setAlias(st.raw, (it.name || it.id) + " copy")} : {})});
+    const r = await ann("library/save", {id, name: (it.name || it.id) + " copy", state: Object.assign({}, st, {name: (it.name || it.id) + " copy", auto: Object.assign(defAuto(), st.auto || {}, {on: false})}, st.raw != null ? {raw: setAlias(st.raw, (it.name || it.id) + " copy")} : {})});
     if (r.ok) { flash("Copied as a draft: " + id, "ok"); loadLib(); } else flash(r.error, "bad");
   }}, "Duplicate");
   return el("div", {class: "card ann"},
@@ -137,6 +190,7 @@ function libCard(it) {
     el("div", {class: "clamp"}, st.raw != null ? "Your own script, kept exactly as you wrote it." : (st.task || "No instructions yet.")),
     el("div", {class: "meta"}, st.raw != null ? el("span", {class: "pill plain"}, "Own script") : [el("span", {class: "pill plain"}, (st.src || []).length + " data source" + ((st.src || []).length === 1 ? "" : "s")), el("span", {class: "pill plain"}, outsSummary(st))],
       st.cardSw ? el("span", {class: "pill plain", title: st.cardSw}, "Card switch") : null,
+      st.auto && st.auto.on ? (!it.auto_in_ha ? el("span", {class: "pill warn"}, "Schedule not pushed") : it.auto_on ? el("span", {class: "pill ok"}, "Runs " + autoSummary(st.auto)) : el("span", {class: "pill warn"}, "Schedule is off in HA")) : null,
       el("span", {class: "pill plain"}, "Edited " + ago(it.updated))),
     el("div", {class: "acts"}, el("button", {class: "btn primary sm", onclick: () => openItem(it)}, "Edit"), run, dup, del), msg);
 }
@@ -169,7 +223,7 @@ async function updateAll() {
   const todo = LIB.filter(x => x.pushed_at); let ok = 0; const bad = [];
   flash("Updating " + todo.length + "...", "");
   for (const it of todo) {
-    const r = await ann("push", {id: it.id, yaml: makeYaml(Object.assign({src: [], outs: [], pers: {}}, it.state)), state: it.state});
+    const r = await ann("push", {id: it.id, yaml: makeYaml(Object.assign({src: [], outs: [], pers: {}}, it.state)), auto_yaml: makeAuto(Object.assign({}, it.state, {name: (it.state || {}).name || it.name}), it.id), state: it.state});
     if (r.ok) ok++; else bad.push(it.name + ": " + (r.detail || r.error));
   }
   flash("Updated " + ok + " of " + todo.length + " with your current settings." + (bad.length ? " Failed: " + bad.join("; ") : ""), bad.length ? "bad" : "ok");
@@ -194,8 +248,8 @@ function pickBox(parent, attr, key, label, on) {
   parent.append(el("label", {class: "pick", title: label}, i, el("span", {}, label)));
 }
 function st() {
-  if (rawMode) return {name: $("#name").value, raw: $("#rawyaml").value};
-  return {name: $("#name").value, src: $$("[data-s]:checked").map(c => c.dataset.s), outs: $$("[data-o]:checked").map(c => c.dataset.o),
+  if (rawMode) return {name: $("#name").value, raw: $("#rawyaml").value, auto: autoState()};
+  return {name: $("#name").value, auto: autoState(), src: $$("[data-s]:checked").map(c => c.dataset.s), outs: $$("[data-o]:checked").map(c => c.dataset.o),
     json: $$('[data-o^="n:"]:checked').length > 0, pers: Object.fromEntries($$("[data-p]").map(t => [t.dataset.p, t.value])),
     usePers: $("#usePers").checked && !!O.personality_select, one: $("#one").value, len: +$("#len").value || 1000,
     task: $("#task").value.trim(), vol: +$("#vol").value / 100, pause: $("#pause").checked,
@@ -213,6 +267,7 @@ $("#cardmake").onclick = async () => {
   CARD.sw = r.entity; drawCardPick(); gen(); markDirty();
 };
 function applyState(s) {
+  applyAuto(s.auto);
   if (s.raw != null) { setRaw(true); if (s.name != null) $("#name").value = s.name; $("#rawyaml").value = s.raw; gen(); return; }
   setRaw(false);
   if (s.name != null) $("#name").value = s.name;
@@ -404,7 +459,7 @@ function openEditor(state, c, note) {
 const blankState = () => ({name: "My announcement", src: usable().filter(x => x.type === "household").map(x => x.id),
   outs: $$("[data-o]").map(c => c.dataset.o).filter(o => !o.startsWith("n:")), task: "", len: O.default_length || 1000, vol: (O.default_volume || 70) / 100, pause: true,
   usePers: !!O.personality_select, one: DEF, pers: Object.fromEntries(persList().map(p => [p.name, p.style])),
-  cardSw: "", cardWhen: "talk", cardOff: true, cardHold: 0});
+  cardSw: "", cardWhen: "talk", cardOff: true, cardHold: 0, auto: defAuto()});
 function openNew(over) { openEditor(Object.assign(blankState(), over || {}), {isNew: true}); }
 function openItem(it) {
   const s = Object.assign(blankState(), it.state || {}, {name: (it.state || {}).name || it.name});
@@ -423,16 +478,18 @@ async function openFound(f, msgEl) {
 function say(text, cls) { const m = $("#msg"); m.className = "msg " + (cls || ""); m.textContent = text; }
 async function persist(push) {
   const s = st();
+  if (push) { const bad = autoProblem(s); if (bad) { say(bad, "bad"); return; } }
   if (!cur.id) cur.id = uniqueId(slug(s.name));
   const btns = [$("#save"), $("#push")]; btns.forEach(b => b.disabled = true);
   say(push ? "Pushing to Home Assistant..." : "Saving...");
   let r;
-  if (push) r = await ann("push", {id: cur.id, yaml: makeYaml(s), state: s, new: cur.isNew && !cur.pushed});
+  if (push) r = await ann("push", {id: cur.id, yaml: makeYaml(s), auto_yaml: makeAuto(s, cur.id), state: s, new: cur.isNew && !cur.pushed});
   else r = await ann("library/save", {id: cur.id, name: s.name, state: s});
   btns.forEach(b => b.disabled = false);
   if (!(r.ok)) { say(r.detail || r.error || "That failed.", "bad"); if (!cur.saved && !cur.pushed && !cur.fixedId) cur.id = null; paintState(); return; }
   cur.saved = true; cur.isNew = false; if (push) cur.pushed = true; dirty = false; paintState();
-  say(push ? "Done. script." + cur.id + " is up to date in Home Assistant." : "Saved. Home Assistant still has the previous version." + (cur.pushed ? " Push to update it." : ""), "ok");
+  const am = push ? (s.auto.on ? " It runs " + autoSummary(s.auto) + "." : r.auto === "removed" ? " The old schedule was removed." : "") : "";
+  say(push ? "Done. script." + cur.id + " is up to date in Home Assistant." + am : "Saved. Home Assistant still has the previous version." + (cur.pushed ? " Push to update it." : ""), "ok");
 }
 $("#save").onclick = () => persist(false);
 $("#push").onclick = () => persist(true);
@@ -452,6 +509,8 @@ $("#gohelp").onclick = () => { showView("help"); $("#tabs").hidden = true; HEL.b
 
 function gen() {
   const s = st(); $("#out").textContent = makeYaml(s);
+  $("#autoopts").hidden = !s.auto.on; $("#autowatchopts").hidden = !s.auto.watch;
+  $("#autoout").textContent = makeAuto(s, cur.id || slug(s.name)) || (s.auto.on ? "Set a repeat time, a time of day or an entity to watch to see the schedule." : "No schedule. Turn on \"Run on a schedule\" to make one.");
   if (rawMode) { paintState(); return; }
   $("#onewrap").hidden = s.usePers; $("#volv").textContent = Math.round(s.vol * 100);
   $("#cardopts").hidden = !s.cardSw;
@@ -738,7 +797,8 @@ $("#setfill").onclick = () => {
 };
 
 /* ---------- start ---------- */
-Promise.all([api("ann/options"), api("ann/entities").then(r => Array.isArray(r) ? r : [])]).then(async ([o, e]) => {
+Promise.all([api("ann/options"), api("ann/entities").then(r => Array.isArray(r) ? r : []), api("facts/options")]).then(async ([o, e, f]) => {
   if (o.error) { $("#setupnote").append(el("div", {class: "note bad"}, o.error)); return; }
+  FACT.home = f && Array.isArray(f.home_entities) ? f.home_entities : [];
   S = o; ENT = e; build(); setupNote(); drawHelper(); drawSettings(); await loadLib(); showView("lib");
 });

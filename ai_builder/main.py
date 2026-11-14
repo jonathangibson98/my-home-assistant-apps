@@ -1454,6 +1454,7 @@ async def ann_script_id(body):
 
 
 ANN_MARK = "Made with Announcement Maker"
+ANN_AUTO_SUFFIX = "_auto"  # the optional schedule automation for a script is <script id>_auto
 
 
 def ann_library():
@@ -1480,26 +1481,52 @@ def ann_store(sid, name, state, pushed=False):
 
 
 async def ann_push(request):
+    """Create or update the script, and its optional schedule automation (<script id>_auto, which calls the script).
+    A schedule that is switched off removes the automation, but only one this tool made. If the request has no
+    auto_yaml at all, the automation is left alone."""
     app = request.app
     body = await ann_body(request)
     sid = await ann_script_id(body)
+    aid = sid + ANN_AUTO_SUFFIX
     try:
         cfg = yaml.safe_load(body.get("yaml", ""))
+        acfg = yaml.safe_load(body["auto_yaml"]) if body.get("auto_yaml") else None
     except yaml.YAMLError as e:
         return web.json_response({"error": "YAML problem: %s" % e}, status=400)
     if not isinstance(cfg, dict):
         return web.json_response({"ok": False, "detail": "The script YAML is empty or not valid."})
+    if acfg is not None:
+        if not isinstance(acfg, dict):
+            return web.json_response({"ok": False, "detail": "The schedule YAML is not valid."})
+        bad = fact_auto_problem(acfg)
+        if bad:
+            return web.json_response({"ok": False, "detail": bad})
+        acfg["description"] = ANN_MARK  # so a later push or delete knows this automation is ours
     code, text = await ha_text(app, "POST", f"/config/script/config/{sid}", cfg)
     if code != 200:
         return web.json_response({"ok": False, "detail": "HA said %s: %s" % (code, str(text)[:300])})
     await ha_text(app, "POST", "/services/script/reload", {})
+    auto = "none"
+    if acfg is not None:
+        code, text = await ha_text(app, "POST", f"/config/automation/config/{aid}", acfg)
+        if code != 200:
+            return web.json_response({"ok": False, "detail": "The script was pushed, but HA refused the schedule (%s): %s" % (code, str(text)[:300])})
+        await ha_text(app, "POST", "/services/automation/reload", {})
+        auto = "pushed"
+    elif "auto_yaml" in body:  # schedule switched off: remove the automation, but only one this tool made
+        code, old = await ha(app, "GET", f"/config/automation/config/{aid}", timeout=10)
+        if code == 200 and isinstance(old, dict) and old.get("description") == ANN_MARK:
+            code, text = await ha_text(app, "DELETE", f"/config/automation/config/{aid}")
+            if code == 200:
+                await ha_text(app, "POST", "/services/automation/reload", {})
+                auto = "removed"
     name = str(cfg.get("alias") or sid)
     if body.get("new"):  # the editor says so the first time a script is created
         add_history({"kind": "announcement", "name": name, "entity": f"script.{sid}"})
     state = clean_ann_state(body.get("state"))
     if state is not None or sid in ann_library():
         ann_store(sid, name, state, pushed=True)
-    return web.json_response({"ok": True, "entity": f"script.{sid}"})
+    return web.json_response({"ok": True, "entity": f"script.{sid}", "auto": auto})
 
 
 async def ann_found(app, skip):
@@ -1524,9 +1551,13 @@ async def ann_library_list(request):
     st, states = await ha(app, "GET", "/states")
     live = {s["entity_id"].split(".", 1)[1]: s for s in states if st == 200 and isinstance(states, list)
             and s["entity_id"].startswith("script.")}
+    autos = {str((s.get("attributes") or {}).get("id")): s for s in states if st == 200 and isinstance(states, list)
+             and s["entity_id"].startswith("automation.")}
     items = []
     for i, v in lib.items():
-        items.append({**v, "in_ha": i in live, "last_run": ((live.get(i) or {}).get("attributes") or {}).get("last_triggered")})
+        a = autos.get(i + ANN_AUTO_SUFFIX)
+        items.append({**v, "in_ha": i in live, "last_run": ((live.get(i) or {}).get("attributes") or {}).get("last_triggered"),
+                      "auto_in_ha": a is not None, "auto_on": bool(a) and a.get("state") == "on"})
     items.sort(key=lambda x: str(x.get("updated") or ""), reverse=True)
     found = await ann_found(app, set(lib)) if st == 200 else []
     return web.json_response({"items": items, "found": found, "ha_ok": st == 200})
@@ -1557,6 +1588,11 @@ async def ann_library_delete(request):
                 return web.json_response({"ok": False, "error": "HA said %s: %s" % (code, str(text)[:300])})
             await ha_text(app, "POST", "/services/script/reload", {})
             removed_script = True
+    code, old = await ha(app, "GET", f"/config/automation/config/{sid + ANN_AUTO_SUFFIX}", timeout=10)
+    if code == 200 and isinstance(old, dict) and old.get("description") == ANN_MARK:  # its schedule, if this tool made one
+        code, _t = await ha_text(app, "DELETE", f"/config/automation/config/{sid + ANN_AUTO_SUFFIX}")
+        if code == 200:
+            await ha_text(app, "POST", "/services/automation/reload", {})
     lib.pop(sid, None)
     save_json(ANN_LIB, lib)
     return web.json_response({"ok": True, "script_deleted": removed_script})

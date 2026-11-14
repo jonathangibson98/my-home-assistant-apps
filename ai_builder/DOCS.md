@@ -195,6 +195,23 @@ Phone notifications: entities (`notify.jon`) and services (`notify.mobile_app_*`
 
 Setups you saved in your browser with an older version can be moved into My announcements from that tab.
 
+## Run an announcement on a schedule
+
+Each announcement has an optional **Run it automatically** section (step 6, or step 3 for an imported script). Tick **Run on a schedule**, then choose any of:
+
+- **Every** N minutes (up to 59) or hours (up to 23). `0` turns the repeat off.
+- **At this time every day.**
+- **When this entity changes**, optionally for one attribute and only after it has held for some seconds.
+- **Only when someone is home**: runs only if any listed entity is on or home. A zone counts when it has someone in it. **Use my default presence list** fills it from Facts -> Settings -> Someone is home.
+
+**Save and push** then makes a second Home Assistant automation, `<script id>_auto`, that calls the announcement's script. The script is not changed, so your own automations that call it keep working.
+
+- If the announcement is still talking when the next trigger comes, the new trigger is skipped.
+- Untick **Run on a schedule** and push to remove the automation. Only automations this add-on made are ever removed.
+- **Show schedule YAML** beside the script shows what will be pushed.
+- Deleting an announcement also removes its schedule. **Duplicate** copies the settings with the schedule off.
+- The card in **My announcements** says whether the schedule is on, off in Home Assistant, or not pushed yet.
+
 ## Dashboard card switch
 
 Each announcement has an optional **Dashboard card** section. Pick an `input_boolean` (or press **Create a switch for me**) and the announcement controls it:

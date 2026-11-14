@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.13.0 - 2026-11-14
+
+- **Announcements can now run on their own, the same way Facts can.** New **Run it automatically** section in the announcement editor: run every N minutes or hours, at a time of day, and/or when an entity (or one of its attributes) changes, and only when someone is home. Pushing makes a Home Assistant automation (`<script id>_auto`) that calls the announcement's script. The script itself is unchanged, so automations of your own that call it keep working
+- Works for announcements built with the form and for ones you imported as your own script. A **Show schedule YAML** box beside the script shows exactly what will be pushed
+- If the announcement is still talking when the next trigger arrives, that trigger is skipped instead of cutting it off
+- Turning the schedule off and pushing removes the automation, but only one this add-on made. Deleting an announcement removes its schedule too. **Update all in Home Assistant** pushes schedules as well
+- Each saved announcement shows whether its schedule is on, off in Home Assistant, or not pushed yet. **Duplicate** copies the schedule settings with the schedule switched off, so you don't get two copies firing at once
+- "Only when someone is home" can start from the default list you set in Facts -> Settings
+- Existing announcements have no schedule until you turn one on and push
+
 ## 2.12.0 - 2026-11-13
 
 - **Announcements can now turn a dashboard card on and off.** New **Dashboard card** section in the announcement editor: pick an `input_boolean` (or press **Create a switch for me**) and the script turns it on when the announcement starts talking, then off when it finishes. Choose to turn it on right away (before the AI writes) instead, keep the card up for some extra seconds, or leave it on afterwards. Test runs without sound never flip the switch
