@@ -23,7 +23,7 @@
     color: var(--dim); border-radius: 10px; font: inherit; cursor: pointer;
   }
   nav button.on { background: var(--accent); color: #1a0f14; border-color: var(--accent); font-weight: 600; }
-  nav button:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  nav button:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .item {
     display: flex; gap: 12px; background: var(--card); border: 1px solid var(--line);
     border-radius: 12px; padding: 10px; margin-bottom: 10px; align-items: stretch;
@@ -45,8 +45,10 @@
     width: 100%; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--line);
     background: #14142a; color: var(--text); font: inherit;
   }
+  input[type="checkbox"] { width: auto; margin: 0; accent-color: var(--accent); }
   .btn { padding: 11px 16px; border-radius: 10px; border: none; background: var(--accent); color: #1a0f14; font: inherit; font-weight: 600; cursor: pointer; white-space: nowrap; }
   .btn.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); }
+  .btn.small { padding: 6px 12px; font-size: 0.85rem; }
   .btn:disabled { opacity: .5; cursor: default; }
   label { display: block; margin: 12px 0 5px; color: var(--dim); font-size: 0.85rem; }
   .hint { color: var(--dim); font-size: 0.8rem; margin-top: 4px; }
@@ -60,6 +62,44 @@
   .kind .chip { padding: 7px 14px; font-size: 0.85rem; }
   .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ok); color: #08261a; padding: 10px 16px; border-radius: 10px; font-weight: 600; opacity: 0; transition: opacity .2s; pointer-events: none; }
   .toast.show { opacity: 1; }
+
+  /* settings cards */
+  details.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; }
+  details.card > summary {
+    list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px;
+    padding: 14px; font-weight: 600;
+  }
+  details.card > summary::-webkit-details-marker { display: none; }
+  details.card > summary::after { content: "\25B8"; color: var(--dim); margin-left: 2px; }
+  details.card[open] > summary::after { content: "\25BE"; }
+  .ct { flex: 1; }
+  .badge { font-size: 0.72rem; font-weight: 600; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); }
+  .badge.ok { color: var(--ok); border-color: var(--ok); }
+  .badge.warn { color: var(--accent); border-color: var(--accent); }
+  .cbody { padding: 0 14px 14px; border-top: 1px solid var(--line); }
+  .cbody > :first-child { margin-top: 12px; }
+  .cbody label:first-child { margin-top: 12px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+  .check { display: flex; align-items: flex-start; gap: 10px; margin: 14px 0 0; color: var(--text); font-size: 0.9rem; }
+  .check input { margin-top: 3px; }
+  .path { display: flex; align-items: center; }
+  .path span { padding: 11px 0 11px 12px; border: 1px solid var(--line); border-right: none; border-radius: 10px 0 0 10px; background: #14142a; color: var(--dim); }
+  .path input { border-radius: 0 10px 10px 0; }
+
+  /* people manager */
+  .prow { display: flex; align-items: center; gap: 8px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+  .prow:last-child { border-bottom: none; }
+  .pname { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .pname b { overflow: hidden; text-overflow: ellipsis; }
+  .addrow { display: flex; gap: 8px; margin-top: 12px; }
+
+  /* backup list */
+  .bk { display: flex; align-items: center; gap: 8px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+  .bk:last-child { border-bottom: none; }
+  .bkinfo { flex: 1; min-width: 0; }
+  .bklist { max-height: 300px; overflow-y: auto; }
+  @media (max-width: 420px) { .grid2 { grid-template-columns: 1fr; } }
   @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
 </style>
 </head>
@@ -87,45 +127,119 @@
       <button class="btn" id="go">Search</button>
     </div>
     <div class="who">
-      <div class="quiet">Who cares about it?</div>
+      <div class="quiet">Who is tracking it?</div>
       <div class="chips" id="who"></div>
     </div>
     <div id="results"></div>
   </section>
 
   <section id="tab-settings" hidden>
-    <label for="s-key">TMDB API key or read access token</label>
-    <input id="s-key" type="password" autocomplete="off">
-    <div class="hint" id="key-hint"></div>
 
-    <label for="s-region">Region for movie release dates (2-letter code, like US)</label>
-    <input id="s-region" maxlength="2">
+    <details class="card" id="c-people" open>
+      <summary><span class="ct">People</span><span class="badge" id="bd-people"></span></summary>
+      <div class="cbody">
+        <div class="hint">Everyone here can be tagged on shows, movies, and games. Each person gets their own sensors in Home Assistant. Changes here save right away.</div>
+        <div id="people-list"></div>
+        <div class="addrow">
+          <input id="p-new" placeholder="Add a person" maxlength="30" autocomplete="off" aria-label="Name of the person to add">
+          <button class="btn" id="p-add">Add</button>
+        </div>
+      </div>
+    </details>
 
-    <label for="s-people">People who track things (comma separated)</label>
-    <input id="s-people" placeholder="Jon, MJ">
-    <div class="hint">Each person gets their own sensors in Home Assistant.</div>
+    <details class="card" id="c-tmdb">
+      <summary><span class="ct">Movies &amp; TV</span><span class="badge" id="bd-tmdb"></span></summary>
+      <div class="cbody">
+        <label for="s-key">TMDB API key or read access token</label>
+        <input id="s-key" type="password" autocomplete="off">
+        <div class="hint" id="key-hint"></div>
+        <label for="s-region">Region for movie release dates</label>
+        <input id="s-region" maxlength="2" placeholder="US">
+        <div class="hint">Two-letter country code, like US, GB, or CA.</div>
+        <div class="actions"><button class="btn" id="save-tmdb">Save</button></div>
+      </div>
+    </details>
 
-    <label for="s-hours">Check for changes every (hours)</label>
-    <input id="s-hours" type="number" min="1">
+    <details class="card" id="c-games">
+      <summary><span class="ct">Games (IGDB)</span><span class="badge" id="bd-games"></span></summary>
+      <div class="cbody">
+        <div class="hint">Free. Log in at dev.twitch.tv/console, register an app, and paste its Client ID and a new Client Secret here. Only needed for games and DLC.</div>
+        <label for="s-gid">Twitch Client ID</label>
+        <input id="s-gid" autocomplete="off">
+        <label for="s-gsec">Twitch Client Secret</label>
+        <input id="s-gsec" type="password" autocomplete="off">
+        <div class="hint" id="games-hint"></div>
+        <div class="actions"><button class="btn" id="save-games">Save</button></div>
+      </div>
+    </details>
 
-    <label for="s-window">Show releases coming in the next (days)</label>
-    <input id="s-window" type="number" min="1">
+    <details class="card" id="c-updates">
+      <summary><span class="ct">Updates</span><span class="badge" id="bd-updates"></span></summary>
+      <div class="cbody">
+        <div class="grid2">
+          <div>
+            <label for="s-hours">Check for changes every (hours)</label>
+            <input id="s-hours" type="number" min="1">
+          </div>
+          <div>
+            <label for="s-window">Show releases in the next (days)</label>
+            <input id="s-window" type="number" min="1">
+          </div>
+        </div>
+        <div class="actions"><button class="btn" id="save-updates">Save</button></div>
+      </div>
+    </details>
 
-    <h2>Video games (IGDB)</h2>
-    <div class="hint">Free. Log in at dev.twitch.tv/console, register an app, and paste its Client ID and a new Client Secret here. Only needed for games and DLC.</div>
-    <label for="s-gid">Twitch Client ID</label><input id="s-gid" autocomplete="off">
-    <label for="s-gsec">Twitch Client Secret</label><input id="s-gsec" type="password" autocomplete="off">
-    <div class="hint" id="games-hint"></div>
+    <details class="card" id="c-mqtt">
+      <summary><span class="ct">Home Assistant (MQTT)</span><span class="badge" id="bd-mqtt"></span></summary>
+      <div class="cbody">
+        <div class="hint">Leave blank to use the Mosquitto add-on in Home Assistant. Fill in only if your broker is somewhere else.</div>
+        <div class="grid2">
+          <div><label for="s-mhost">Host</label><input id="s-mhost"></div>
+          <div><label for="s-mport">Port</label><input id="s-mport" type="number"></div>
+          <div><label for="s-muser">Username</label><input id="s-muser" autocomplete="off"></div>
+          <div><label for="s-mpass">Password</label><input id="s-mpass" type="password" autocomplete="off"></div>
+        </div>
+        <div class="hint" id="mqtt-hint"></div>
+        <div class="actions"><button class="btn" id="save-mqtt">Save</button></div>
+      </div>
+    </details>
 
-    <h2>MQTT broker</h2>
-    <div class="hint">Leave blank to use the Mosquitto add-on in Home Assistant. Fill in only if your broker is somewhere else.</div>
-    <label for="s-mhost">Host</label><input id="s-mhost">
-    <label for="s-mport">Port</label><input id="s-mport" type="number">
-    <label for="s-muser">Username</label><input id="s-muser" autocomplete="off">
-    <label for="s-mpass">Password</label><input id="s-mpass" type="password" autocomplete="off">
-    <div class="hint" id="mqtt-hint"></div>
+    <details class="card" id="c-backup">
+      <summary><span class="ct">Backup</span><span class="badge" id="bd-backup"></span></summary>
+      <div class="cbody">
+        <div class="hint">Saves your tracked list, tags, and settings as a file in the Home Assistant share folder.</div>
+        <label for="b-dir">Save to folder</label>
+        <div class="path"><span>/share/</span><input id="b-dir" placeholder="release_tracker" autocomplete="off"></div>
+        <div class="hint" id="b-share-hint"></div>
+        <div class="grid2">
+          <div>
+            <label for="b-every">Automatic backups</label>
+            <select id="b-every">
+              <option value="off">Off</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+            </select>
+          </div>
+          <div>
+            <label for="b-keep">Keep the newest</label>
+            <input id="b-keep" type="number" min="1" max="100">
+          </div>
+        </div>
+        <label class="check" for="b-keys">
+          <input type="checkbox" id="b-keys">
+          <span>Include API keys and passwords<span class="hint" style="display:block">Off by default. Anything with access to the share folder can read these files.</span></span>
+        </label>
+        <div class="actions">
+          <button class="btn" id="save-backup">Save</button>
+          <button class="btn ghost" id="backup-now">Back up now</button>
+        </div>
+        <div class="hint" id="b-status"></div>
+        <h2>Saved backups</h2>
+        <div class="bklist" id="b-list"></div>
+      </div>
+    </details>
 
-    <div style="margin-top:18px"><button class="btn" id="save">Save settings</button></div>
   </section>
 </main>
 <div class="toast" id="toast"></div>
@@ -134,8 +248,13 @@
 const $ = s => document.querySelector(s);
 const IMG = "https://image.tmdb.org/t/p/w154";
 let state = null;
+let backups = null;
 let chosen = new Set();
 let kind = "video";
+let editing = null;     // person being renamed
+let removing = null;    // person awaiting remove confirmation
+let restoring = null;   // backup file awaiting restore confirmation
+let firstLoad = true;
 
 async function api(path, opts) {
   const r = await fetch("api/" + path, opts);
@@ -143,9 +262,10 @@ async function api(path, opts) {
   if (!r.ok) throw new Error(j.error || r.statusText);
   return j;
 }
+const send = (path, method, body) => api(path, { method, body: JSON.stringify(body || {}) });
 function toast(msg) {
   const t = $("#toast"); t.textContent = msg; t.classList.add("show");
-  setTimeout(() => t.classList.remove("show"), 1800);
+  setTimeout(() => t.classList.remove("show"), 2200);
 }
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -163,6 +283,13 @@ function prettyDate(s) {
   const [y, m, d] = s.split("-").map(Number);
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
 }
+function stamp(sec) {
+  return new Date(sec * 1000).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
+function kb(n) { return n < 1024 ? n + " B" : (n / 1024).toFixed(1) + " KB"; }
+function badge(id, text, cls) {
+  const b = $(id); b.textContent = text; b.className = "badge" + (cls ? " " + cls : "");
+}
 
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
@@ -176,6 +303,7 @@ function byDays(a, b) {
   return da - db;
 }
 
+// ---------- tracking ----------
 function card(it) {
   const isGame = it.type === "game";
   const info = it.info || {};
@@ -185,7 +313,7 @@ function card(it) {
   body.append(el("div", "title", info.title || it.title));
   body.append(el("div", "sub", info.label || "Not checked yet"));
   if (info.next_date) body.append(el("div", "sub", prettyDate(info.next_date)));
-  if (!isGame) {
+  if (state.settings.people.length) {
     const chips = el("div", "chips");
     for (const name of state.settings.people) {
       const on = (it.people || []).includes(name);
@@ -193,7 +321,7 @@ function card(it) {
       b.setAttribute("aria-pressed", on);
       b.onclick = async () => {
         const next = on ? it.people.filter(p => p !== name) : [...(it.people || []), name];
-        await api(`track/${it.type}/${it.id}/people`, { method: "PUT", body: JSON.stringify({ people: next }) });
+        await send(`track/${it.type}/${it.id}/people`, "PUT", { people: next });
         await load();
       };
       chips.append(b);
@@ -243,35 +371,209 @@ function render() {
   }
 }
 
-function renderSettings() {
-  const s = state.settings;
-  $("#s-region").value = s.region;
-  $("#s-people").value = s.people.join(", ");
-  chosen = new Set([...chosen].filter(n => s.people.includes(n)));
+// ---------- who is tracking (Add tab) ----------
+function renderWho() {
+  const people = state.settings.people;
+  chosen = new Set([...chosen].filter(n => people.includes(n)));
   const who = $("#who"); who.replaceChildren();
-  for (const name of s.people) {
+  if (!people.length) {
+    who.append(el("div", "hint", "No one on the list yet. Add people under Settings, People."));
+    return;
+  }
+  for (const name of people) {
     const c = el("button", "chip" + (chosen.has(name) ? " on" : ""), name);
     c.setAttribute("aria-pressed", chosen.has(name));
     c.onclick = () => { chosen.has(name) ? chosen.delete(name) : chosen.add(name); c.classList.toggle("on"); c.setAttribute("aria-pressed", chosen.has(name)); };
     who.append(c);
   }
+}
+
+// ---------- people manager ----------
+function renderPeople() {
+  const box = $("#people-list"); box.replaceChildren();
+  const people = state.settings.people;
+  badge("#bd-people", people.length ? people.length + (people.length === 1 ? " person" : " people") : "None yet", people.length ? "" : "warn");
+  if (!people.length) box.append(el("div", "quiet", "No one yet. Add a name below."));
+  for (const name of people) {
+    const n = state.tracked.filter(t => (t.people || []).includes(name)).length;
+    const row = el("div", "prow");
+    if (editing === name) {
+      const inp = el("input"); inp.value = name; inp.maxLength = 30;
+      inp.setAttribute("aria-label", "New name for " + name);
+      const ok = el("button", "btn small", "Save");
+      const no = el("button", "btn ghost small", "Cancel");
+      ok.onclick = async () => {
+        try { await send("people", "PUT", { old: name, new: inp.value }); editing = null; await load(); toast("Renamed"); }
+        catch (e) { toast(e.message); }
+      };
+      no.onclick = () => { editing = null; renderPeople(); };
+      inp.addEventListener("keydown", e => { if (e.key === "Enter") ok.click(); if (e.key === "Escape") no.click(); });
+      row.append(inp, ok, no);
+      box.append(row);
+      inp.focus(); inp.select();
+      continue;
+    }
+    const info = el("div", "pname");
+    info.append(el("b", null, name), el("span", "sub", n === 1 ? "1 item tagged" : n + " items tagged"));
+    row.append(info);
+    if (removing === name) {
+      row.append(el("span", "sub", "Remove?"));
+      const yes = el("button", "btn small", "Yes");
+      const no = el("button", "btn ghost small", "No");
+      yes.onclick = async () => {
+        try { await send("people/remove", "POST", { name }); removing = null; await load(); toast("Removed " + name); }
+        catch (e) { toast(e.message); }
+      };
+      no.onclick = () => { removing = null; renderPeople(); };
+      row.append(yes, no);
+    } else {
+      const rn = el("button", "btn ghost small", "Rename");
+      rn.onclick = () => { editing = name; removing = null; renderPeople(); };
+      const rm = el("button", "btn ghost small", "Remove");
+      rm.setAttribute("aria-label", "Remove " + name);
+      rm.onclick = () => { removing = name; editing = null; renderPeople(); };
+      row.append(rn, rm);
+    }
+    box.append(row);
+  }
+  if (removing) {
+    const h = el("div", "hint", "Removing someone also takes their tag off tracked items and deletes their sensors.");
+    box.append(h);
+  }
+}
+async function addPerson() {
+  const inp = $("#p-new");
+  try { await send("people", "POST", { name: inp.value }); inp.value = ""; await load(); toast("Added"); inp.focus(); }
+  catch (e) { toast(e.message); }
+}
+$("#p-add").onclick = addPerson;
+$("#p-new").addEventListener("keydown", e => { if (e.key === "Enter") addPerson(); });
+
+// ---------- settings ----------
+function fillSettings() {
+  const s = state.settings;
+  $("#s-region").value = s.region;
   $("#s-hours").value = s.refresh_hours;
   $("#s-window").value = s.window_days;
   $("#s-gid").value = s.igdb_id || "";
-  $("#games-hint").textContent = s.has_games_key ? "Games are set up. Leave the secret blank to keep it." : "Not set up yet. Games search will not work until you add both.";
   $("#s-mhost").value = s.mqtt_host;
   $("#s-mport").value = s.mqtt_port;
   $("#s-muser").value = s.mqtt_user;
+  $("#b-dir").value = s.backup_dir || "";
+  $("#b-every").value = s.backup_every || "off";
+  $("#b-keep").value = s.backup_keep || 10;
+  $("#b-keys").checked = !!s.backup_keys;
+}
+function renderSettingsStatus() {
+  const s = state.settings;
+  badge("#bd-tmdb", s.has_key ? "Ready" : "Needs key", s.has_key ? "ok" : "warn");
   $("#key-hint").textContent = s.has_key ? "A key is saved. Leave blank to keep it." : "Free at themoviedb.org: Settings, then API.";
+  badge("#bd-games", s.has_games_key ? "Ready" : "Not set up", s.has_games_key ? "ok" : "");
+  $("#games-hint").textContent = s.has_games_key ? "Games are set up. Leave the secret blank to keep it." : "Not set up yet. Games search will not work until you add both.";
+  badge("#bd-updates", "Every " + s.refresh_hours + "h");
+  badge("#bd-mqtt", state.mqtt ? "Connected" : "Not connected", state.mqtt ? "ok" : "warn");
   $("#mqtt-hint").textContent = state.mqtt ? "Connected to a broker." : "Not connected to a broker yet.";
 }
 
-async function load() {
+async function saveSection(body, button, delayed) {
+  button.disabled = true;
+  try {
+    await send("settings", "POST", body);
+    ["#s-key", "#s-gsec", "#s-mpass"].forEach(i => $(i).value = "");
+    toast("Saved");
+    const go = async () => { await load(true); };
+    delayed ? setTimeout(go, 2500) : await go();
+  } catch (e) { toast(e.message); }
+  button.disabled = false;
+}
+$("#save-tmdb").onclick = e => saveSection({ tmdb_key: $("#s-key").value, region: $("#s-region").value.trim().toUpperCase() || "US" }, e.target);
+$("#save-games").onclick = e => saveSection({ igdb_id: $("#s-gid").value.trim(), igdb_secret: $("#s-gsec").value }, e.target);
+$("#save-updates").onclick = e => saveSection({ refresh_hours: Number($("#s-hours").value) || 6, window_days: Number($("#s-window").value) || 60 }, e.target);
+$("#save-mqtt").onclick = e => saveSection({
+  mqtt_host: $("#s-mhost").value.trim(), mqtt_port: Number($("#s-mport").value) || 1883,
+  mqtt_user: $("#s-muser").value.trim(), mqtt_pass: $("#s-mpass").value,
+}, e.target, true);
+
+// ---------- backup ----------
+function backupBody() {
+  return {
+    backup_dir: $("#b-dir").value, backup_every: $("#b-every").value,
+    backup_keep: Number($("#b-keep").value) || 10, backup_keys: $("#b-keys").checked,
+  };
+}
+async function loadBackups() {
+  try { backups = await api("backups"); } catch (e) { backups = { files: [], last: {}, error: e.message, share_ok: true, folder: "/share" }; }
+  renderBackups();
+}
+function renderBackups() {
+  const b = backups; if (!b || !state) return;
+  const every = state.settings.backup_every;
+  badge("#bd-backup", b.error || !b.share_ok ? "Problem" : every === "off" ? "Manual" : every === "daily" ? "Daily" : "Weekly", b.error || !b.share_ok ? "warn" : every === "off" ? "" : "ok");
+  $("#b-share-hint").textContent = !b.share_ok ? "The share folder is not available to this add-on yet. Restart or reinstall the add-on after updating." : "Saved in " + b.folder;
+  const st = $("#b-status");
+  const last = b.last || {};
+  st.textContent = b.error || (last.error ? "Last backup failed: " + last.error : last.ts ? "Last backup: " + stamp(last.ts) : "No backups yet.");
+  st.className = b.error || last.error ? "err" : "hint";
+
+  const box = $("#b-list"); box.replaceChildren();
+  if (!b.files.length) { box.append(el("div", "quiet", "Nothing saved in this folder yet.")); return; }
+  for (const f of b.files) {
+    const row = el("div", "bk");
+    const info = el("div", "bkinfo");
+    info.append(el("div", "title", stamp(f.time)));
+    info.append(el("div", "sub", kb(f.size) + (f.safety ? " - safety copy from a restore" : "")));
+    row.append(info);
+    if (restoring === f.name) {
+      row.append(el("span", "sub", "Replace your list and settings?"));
+      const yes = el("button", "btn small", "Restore");
+      const no = el("button", "btn ghost small", "Cancel");
+      yes.onclick = async () => {
+        yes.disabled = true;
+        try {
+          const r = await send("backups/restore", "POST", { file: f.name });
+          restoring = null; toast("Restored " + r.count + " items");
+          await load(true);
+        } catch (e) { toast(e.message); yes.disabled = false; }
+      };
+      no.onclick = () => { restoring = null; renderBackups(); };
+      row.append(yes, no);
+    } else {
+      const rs = el("button", "btn ghost small", "Restore");
+      rs.onclick = () => { restoring = f.name; renderBackups(); };
+      row.append(rs);
+    }
+    box.append(row);
+  }
+  if (restoring) box.append(el("div", "hint", "A safety copy of what you have now is saved first."));
+}
+$("#save-backup").onclick = e => saveSection(backupBody(), e.target);
+$("#backup-now").onclick = async e => {
+  const btn = e.target; btn.disabled = true; btn.textContent = "Backing up...";
+  try {
+    await send("settings", "POST", backupBody());
+    await send("backups", "POST");
+    toast("Backup saved");
+  } catch (err) { toast(err.message); }
+  btn.disabled = false; btn.textContent = "Back up now";
+  await load(true);
+};
+
+// ---------- loading ----------
+async function load(fillForm) {
   state = await api("state");
-  render(); renderSettings();
-  if (!state.settings.has_key && !state.settings.has_games_key) document.querySelector('[data-tab="settings"]').click();
+  render(); renderWho(); renderPeople(); renderSettingsStatus();
+  if (fillForm || firstLoad) fillSettings();
+  await loadBackups();
+  if (firstLoad) {
+    firstLoad = false;
+    if (!state.settings.has_key && !state.settings.has_games_key) {
+      document.querySelector('[data-tab="settings"]').click();
+      $("#c-tmdb").open = true;
+    }
+  }
 }
 
+// ---------- search / add ----------
 async function search() {
   const q = $("#q").value.trim();
   if (!q) return;
@@ -294,7 +596,7 @@ async function search() {
       b.disabled = tracked;
       b.onclick = async () => {
         b.disabled = true; b.textContent = "Adding...";
-        try { await api("track", { method: "POST", body: JSON.stringify({ ...r, people: r.type === "game" ? [] : [...chosen] }) }); b.textContent = "Tracking"; await load(); toast("Added " + r.title); }
+        try { await send("track", "POST", { ...r, people: [...chosen] }); b.textContent = "Tracking"; await load(); toast("Added " + r.title); }
         catch (e) { b.disabled = false; b.textContent = "Track"; toast(e.message); }
       };
       when.append(b); card.append(when); box.append(card);
@@ -307,7 +609,6 @@ document.querySelectorAll("#kind .chip").forEach(b => b.onclick = () => {
   kind = b.dataset.kind;
   document.querySelectorAll("#kind .chip").forEach(x => { x.classList.toggle("on", x === b); x.setAttribute("aria-pressed", x === b); });
   $("#q").placeholder = kind === "games" ? "Search a game or DLC" : "Search a show or movie";
-  document.querySelector(".who").hidden = kind === "games";
   $("#results").replaceChildren();
   if (kind === "games" && !state.settings.has_games_key) $("#results").append(el("div", "err", "Add your Twitch Client ID and Secret in Settings first."));
 });
@@ -319,22 +620,6 @@ $("#refresh").onclick = async () => {
   try { await api("refresh", { method: "POST" }); await load(); toast("Refreshed"); }
   catch (e) { toast(e.message); }
   b.disabled = false; b.textContent = "Refresh now";
-};
-
-$("#save").onclick = async () => {
-  const body = {
-    tmdb_key: $("#s-key").value, region: $("#s-region").value.toUpperCase() || "US",
-    people: $("#s-people").value, refresh_hours: Number($("#s-hours").value) || 6, window_days: Number($("#s-window").value) || 60,
-    mqtt_host: $("#s-mhost").value.trim(), mqtt_port: Number($("#s-mport").value) || 1883,
-    mqtt_user: $("#s-muser").value.trim(), mqtt_pass: $("#s-mpass").value,
-    igdb_id: $("#s-gid").value.trim(), igdb_secret: $("#s-gsec").value,
-  };
-  try {
-    await api("settings", { method: "POST", body: JSON.stringify(body) });
-    $("#s-key").value = ""; $("#s-mpass").value = ""; $("#s-gsec").value = "";
-    toast("Saved");
-    setTimeout(load, 2500);
-  } catch (e) { toast(e.message); }
 };
 
 load();
