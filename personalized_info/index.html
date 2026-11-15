@@ -52,6 +52,14 @@ input[type=checkbox]{width:22px;height:22px}
   display:flex;justify-content:space-between;align-items:center;gap:10px}
 #st{font-size:14px;color:var(--dim)}
 #st.warn{color:var(--warn)} #st.ok{color:var(--ok)} #st.bad{color:#f87171}
+.now{font-weight:400;color:var(--ok);font-size:14px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.chips button{font-size:13px;padding:6px 10px;background:var(--accsoft)}
+.ha{border-left:2px solid var(--acc);margin:14px 0 4px 6px;padding-left:10px}
+.ha .rl{display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center;margin-top:8px}
+.ha .rl label{margin:0}
+.hint{font-size:12px;color:var(--dim);margin-top:6px}
+.bday{background:var(--card);border-radius:10px;padding:10px 12px;margin-top:10px;font-size:14px}
 </style>
 </head>
 <body>
@@ -66,6 +74,8 @@ input[type=checkbox]{width:22px;height:22px}
 </nav>
 
 <main id="main"></main>
+<datalist id="ents"></datalist>
+<datalist id="zones"></datalist>
 
 <div id="bar">
   <span id="st">Loading...</span>
@@ -74,13 +84,29 @@ input[type=checkbox]{width:22px;height:22px}
 
 <script>
 let D = null, S = null, tab = 'people', dirty = false;
+let ROLES = {}, ENTS = [], LIVE = {status: {}, birthdays: [], birthdays_text: ''};
 let adding = false, newName = '';
 const open = new Set();
 // Keys with their own editor. They are hidden in the plain fields and can't be added by hand.
 const RESERVED = {
   music: 'Music is edited in the Music tab.',
   top_artists: 'Music is edited in the Music tab.',
-  places: 'Places are linked in the Places section of the person. Add the places themselves in the Places tab.'
+  places: 'Places are linked in the Places section of the person. Add the places themselves in the Places tab.',
+  links: 'Linked entities are set in the Home Assistant section of the person.'
+};
+// Fields the other add-ons and the AI announcements can use. Shown as quick-add buttons until a person has them.
+const QUICK = {
+  birthday: ['Birthday', ''], nickname: ['Nickname', ''], say_name_as: ['Say name as (for speech)', ''],
+  pronouns: ['Pronouns', ''], favorite_teams: ['Favorite teams', []], games: ['Games they play', []],
+  psn_id: ['PSN ID', ''], shows_and_movies: ['Shows and movies', []], work_schedule: ['Work schedule', ''],
+  usual_bedtime: ['Usual bedtime', ''], usual_wake_time: ['Usual wake time', '']
+};
+const HINTS = {
+  birthday: '1998-05-06, or 05-06 without the year. Used for birthday announcements and the countdown.',
+  say_name_as: 'How a voice should say the name, if it gets it wrong (for example "M J").',
+  psn_id: 'Their PlayStation Network online ID.',
+  favorite_teams: 'One per line, like in Team Tracker (for example Carolina Panthers).',
+  usual_bedtime: 'For example 11:30 PM. Sleep Tracker tracks the real thing.'
 };
 const $ = s => document.querySelector(s);
 const slug = t => t.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
@@ -151,9 +177,13 @@ function fields(obj, skip = []) {
       wrap.append(h('input', {type: 'number', value: v, step: 'any',
         oninput: e => { obj[k] = e.target.value === '' ? 0 : Number(e.target.value); touch(); }}));
     } else {
-      wrap.append(h('input', {type: 'text', value: v ?? '',
-        oninput: e => { obj[k] = e.target.value; touch(); }}));
+      const inp = h('input', {type: 'text', value: v ?? '',
+        oninput: e => { obj[k] = e.target.value; touch(); }});
+      if (k === 'zone') { inp.setAttribute('list', 'zones'); inp.placeholder = 'zone.work'; }
+      if (k === 'birthday') inp.placeholder = '1998-05-06';
+      wrap.append(inp);
     }
+    if (HINTS[k]) wrap.append(h('div', {className: 'hint', textContent: HINTS[k]}));
   }
   return wrap;
 }
@@ -162,20 +192,23 @@ function card(id, title, body, extra) {
   return h('details', {
     open: open.has(id),
     ontoggle: e => { e.target.open ? open.add(id) : open.delete(id); }
-  }, h('summary', {textContent: title}), body, extra);
+  }, typeof title === 'string' ? h('summary', {textContent: title}) : h('summary', {}, title), body, extra);
 }
 
 /* ---------- People tab (no music here) ---------- */
 function people() {
   const f = h('div');
-  f.append(h('p', {className: 'note', textContent: 'Music is edited in the Music tab and places in the Places tab. Both show up on each person in the sensor.'}));
+  f.append(h('p', {className: 'note', textContent: 'Music is edited in the Music tab and places in the Places tab. Both show up on each person in the sensor. Link someone to their Home Assistant entities and the sensor also says what they are doing right now.'}));
+  if (LIVE.birthdays_text) f.append(h('div', {className: 'bday', textContent: '🎂 ' + LIVE.birthdays_text}));
   for (const g of ['household', 'friends']) {
     f.append(h('h2', {textContent: g === 'household' ? 'Household' : 'Friends'}));
     for (const k of Object.keys(D[g])) {
       const p = D[g][k];
       if (!p || typeof p !== 'object') continue;
-      f.append(card(g + k, p.name || k,
-        h('div', {}, fields(p, Object.keys(RESERVED)), adder(p, RESERVED), placeLinks(p)),
+      const now = (LIVE.status[k] || {}).text;
+      const title = h('span', {}, p.name || k, now ? h('span', {className: 'now', textContent: '  ' + now}) : null);
+      f.append(card(g + k, title,
+        h('div', {}, fields(p, Object.keys(RESERVED)), quickAdd(p), adder(p, RESERVED), placeLinks(p), haLinks(g, k, p)),
         h('div', {className: 'add'},
           h('button', {className: 'del', textContent: 'Delete person', onclick: () => {
             if (confirm('Delete ' + (p.name || k) + ' and their music?')) {
@@ -195,16 +228,63 @@ function people() {
   return f;
 }
 
+/* ---------- quick-add fields ---------- */
+function quickAdd(p) {
+  const missing = Object.keys(QUICK).filter(k => !(k in p));
+  if (!missing.length) return null;
+  return h('div', {}, h('label', {textContent: 'Quick add'}),
+    h('div', {className: 'chips'}, missing.map(k => h('button', {textContent: '+ ' + QUICK[k][0], onclick: () => {
+      p[k] = JSON.parse(JSON.stringify(QUICK[k][1])); touch(); draw();
+    }}))));
+}
+
+/* ---------- Home Assistant links ---------- */
+function haLinks(g, k, p) {
+  const box = h('div', {className: 'ha'});
+  box.append(h('label', {textContent: 'Home Assistant'}),
+    h('div', {className: 'hint', textContent: 'Link their entities so the info sensor says what they are doing right now: where they are, asleep (Sleep Tracker), at work (Work Hours), gaming (PS5 Status), their calendar. Pick from the list or type an entity id.'}));
+  const links = (p.links && typeof p.links === 'object') ? p.links : {};
+  for (const [role, label] of Object.entries(ROLES)) {
+    const inp = h('input', {type: 'text', value: links[role] || '', placeholder: role === 'notify' ? 'notify.mobile_app_...' : 'entity id',
+      oninput: e => {
+        const v = e.target.value.trim();
+        if (!p.links || typeof p.links !== 'object') p.links = {};
+        if (v) p.links[role] = v; else delete p.links[role];
+        if (!Object.keys(p.links).length) delete p.links;
+        touch();
+      }});
+    inp.setAttribute('list', 'ents');
+    box.append(h('div', {className: 'rl'}, h('label', {textContent: label}), inp));
+  }
+  const msg = h('div', {className: 'meta'});
+  box.append(h('div', {className: 'add'}, h('button', {textContent: 'Find automatically', onclick: async () => {
+    if (dirty) { msg.textContent = 'Save first, then find.'; return; }
+    msg.textContent = 'Looking...';
+    try {
+      const r = await (await fetch('api/suggest?person=' + encodeURIComponent(k))).json();
+      if (!r.ok) { msg.textContent = r.error; return; }
+      const n = Object.keys(r.new).length;
+      if (!n) { msg.textContent = Object.keys(r.found).length ? 'Everything found is already linked.' : 'Nothing found. Link them by hand.'; return; }
+      p.links = Object.assign({}, p.links || {}, r.new);
+      touch(); draw();
+      status('Found ' + n + ' entit' + (n === 1 ? 'y' : 'ies') + '. Check them, then Save.', 'warn');
+    } catch (e) { msg.textContent = 'That failed. Check the app log.'; }
+  }})), msg);
+  const now = LIVE.status[k];
+  if (now && now.text) box.append(h('div', {className: 'hint', textContent: 'Right now: ' + now.text}));
+  return box;
+}
+
 /* ---------- Place templates ---------- */
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 const blankHours = () => Object.fromEntries(DAYS.map(d => [d, '']));
 const TEMPLATES = {
   residence: () => ({
-    type: 'Private residence', address: '',
+    type: 'Private residence', address: '', zone: '',
     residents: [], pets: [], parking: '', notes: ''
   }),
   business: () => ({
-    type: 'Business', category: '', address: '', phone: '', website: '',
+    type: 'Business', category: '', address: '', zone: '', phone: '', website: '',
     hours: blankHours(), features: [], notes: ''
   })
 };
@@ -252,7 +332,7 @@ function placeLinks(p) {
 /* ---------- Places tab (the only place addresses are edited) ---------- */
 function places() {
   const f = h('div');
-  f.append(h('p', {className: 'note', textContent: 'Add places here (houses, workplaces, hangouts) and they save to places.yaml. Then link them to people on the People tab. The sensor shows the full place info on each person.'}));
+  f.append(h('p', {className: 'note', textContent: 'Add places here (houses, workplaces, hangouts) and they save to places.yaml. Then link them to people on the People tab. The sensor shows the full place info on each person. Set a place\'s zone to its Home Assistant zone (the one Work Hours, Location Hub or Zone Creator use) so they line up.'}));
   const users = k => {
     const out = [];
     for (const g of ['household', 'friends']) {
@@ -449,6 +529,20 @@ function draw() {
   });
 }
 
+async function loadLive() {
+  try { LIVE = await (await fetch('api/preview')).json(); } catch (e) { return; }
+  if (!dirty) draw();
+}
+async function loadEntities() {
+  try {
+    const r = await (await fetch('api/entities')).json();
+    ROLES = r.roles || {}; ENTS = r.entities || [];
+    $('#ents').replaceChildren(...ENTS.map(e => h('option', {value: e.id, textContent: e.name})));
+    $('#zones').replaceChildren(...ENTS.filter(e => e.id.startsWith('zone.')).map(e => h('option', {value: e.id, textContent: e.name})));
+    draw();
+  } catch (e) { /* the pickers just stay empty */ }
+}
+
 async function saveData() {
   if (!D) return;
   status('Saving...');
@@ -456,7 +550,7 @@ async function saveData() {
     const r = await fetch('api/data', {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(D)
     });
-    if (r.ok) { dirty = false; status('Saved ' + new Date().toLocaleTimeString(), 'ok'); }
+    if (r.ok) { dirty = false; status('Saved ' + new Date().toLocaleTimeString(), 'ok'); loadLive(); }
     else status('Save failed. Check the app log.', 'bad');
   } catch (e) { status('Save failed. Check the app log.', 'bad'); }
 }
@@ -469,6 +563,9 @@ fetch('api/data').then(r => r.json()).then(d => {
   status('Loaded', 'ok');
   draw();
   loadSensors();
+  loadEntities();
+  loadLive();
+  setInterval(loadLive, 60000);
 }).catch(() => status('Could not load data. Check the app log.', 'bad'));
 </script>
 </body>
