@@ -428,14 +428,68 @@ def parse_birthday(v):
         return None
     return (int(y) if y else None), mo, da
 
+BIRTHDAY_KEYS = ("birthday", "dob", "date_of_birth", "birth_date", "birthdate")
+
+def birthday_of(p):
+    """(field name, (year, month, day)) from whichever birthday field the person uses, or (None, None)."""
+    for key in BIRTHDAY_KEYS:
+        if p.get(key):
+            b = parse_birthday(p[key])
+            if b:
+                return key, b
+    return None, None
+
+def age_of(b):
+    if not b or not b[0]:
+        return None
+    y, mo, da = b
+    t = datetime.date.today()
+    return t.year - y - ((t.month, t.day) < (mo, da))
+
+# Fields that something better already covers. They're left out of the sensor (so the AI never gets a stale
+# duplicate) and the page offers to remove them.
+HOME_FIELDS = re.compile(r"^(home|home_?(location|address|town|city|area)|address|lives_?(in|at)?|residence)$")
+WORK_FIELDS = re.compile(r"^(work_?(location|address|place|site)|workplace|works_at|job_location|office_location)$")
+
+def linked_place(d, p, labels):
+    links = p.get("places") if isinstance(p.get("places"), dict) else {}
+    for label, key in links.items():
+        if re.fullmatch(labels, slug(label)):
+            pl = (d.get("places") or {}).get(key)
+            if isinstance(pl, dict) and (str(pl.get("zone") or "").startswith("zone.") or str(pl.get("address") or "").strip()):
+                return key, pl
+    return None, None
+
+def covered_fields(d, p):
+    """{field: why it's covered} for one person."""
+    if not isinstance(p, dict):
+        return {}
+    out = {}
+    for rx, labels, what in ((HOME_FIELDS, r"home", "home"), (WORK_FIELDS, r"work|job|office", "work")):
+        key, pl = linked_place(d, p, labels)
+        if not pl:
+            continue
+        how = "zone" if str(pl.get("zone") or "").startswith("zone.") else "address"
+        for f in p:
+            if rx.match(slug(f)) and f not in out:
+                out[f] = f"{pl.get('name') or key} ({what} place with a {how})"
+    used, b = birthday_of(p)
+    if used:
+        for f in BIRTHDAY_KEYS:
+            if f != used and f in p:
+                out[f] = f"the {used.replace('_', ' ')} field"
+        if b[0] and "age" in p:
+            out["age"] = f"their {used.replace('_', ' ')} (age is worked out from it)"
+    return out
+
 def birthdays(d):
     today = datetime.date.today()
     out = []
     for g in ("household", "friends"):
         for k, p in d[g].items():
-            if not isinstance(p, dict) or not p.get("birthday"):
+            if not isinstance(p, dict):
                 continue
-            b = parse_birthday(p["birthday"])
+            _, b = birthday_of(p)
             if not b:
                 continue
             y, mo, da = b
@@ -542,8 +596,11 @@ def with_extras(d, group, states=None):
         if not isinstance(p, dict):
             out[k] = p
             continue
-        q = prune(dict(p))
+        q = prune({f: v for f, v in p.items() if f not in covered_fields(d, p)})
         q.pop("places", None)
+        _, b = birthday_of(p)
+        if age_of(b) is not None:
+            q["age"] = age_of(b)
         links = q.pop("links", None)
         if links:
             q["entities"] = links
@@ -795,7 +852,9 @@ async def get_preview(r):
     d = await loop.run_in_executor(None, load)
     states = await loop.run_in_executor(None, ha_states)
     _, attrs = build_info(d, states)
+    covered = {k: c for g in ("household", "friends") for k, p in d[g].items() if (c := covered_fields(d, p))}
     return web.json_response({"status": attrs["status"], "birthdays": attrs["birthdays"], "places": attrs["places"],
+                              "covered": covered,
                               "birthdays_text": attrs["birthdays_text"]})
 
 async def get_settings(r):
