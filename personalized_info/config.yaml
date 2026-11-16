@@ -1,5 +1,5 @@
 name: Personalized Info
-version: "0.5.0"
+version: "0.5.1"
 slug: personalized_info
 image: "ghcr.io/jonathangibson98/{arch}-addon-personalized_info"
 description: Edit everyone's info and music in one place

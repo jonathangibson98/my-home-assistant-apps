@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.1
+
+- **No more duplicate fields.** When something better covers a field, it's hidden on the People tab and left out of the sensor, with a **Remove them** button to clear it out of the file:
+  - `home_location` (and home, address, lives in...) when the person's **home** place has a zone or an address
+  - work location fields (work_location, workplace, works_at...) when their **work** place has a zone or an address. A job title like `occupation` stays
+  - `age` when the birthday has a year: the sensor now gives an `age` worked out from it, so it never goes stale
+  - a second birthday field (for example both `birthday` and `dob`)
+- Removing a home location whose home place has no address yet moves it into that place's address, so nothing is lost.
+- **Birthdays read `dob`** (and `date_of_birth`, `birth_date`), not only `birthday`, so the countdown and birthday attributes work with existing people. The Birthday quick-add button is hidden when they already have one.
+
 ## 0.5.0
 
 - **Places link to Home Assistant zones.** Every place (old ones too) has a **Home Assistant zone** picker at the top of its card, and **Find matching zone** picks the zone with the same name (or `zone.home` for the place your household calls home).

@@ -84,7 +84,9 @@ input[type=checkbox]{width:22px;height:22px}
 
 <script>
 let D = null, S = null, tab = 'people', dirty = false;
-let ROLES = {}, ENTS = [], LIVE = {status: {}, birthdays: [], birthdays_text: ''};
+let ROLES = {}, ENTS = [], LIVE = {status: {}, birthdays: [], birthdays_text: '', covered: {}};
+const BIRTHDAY_KEYS = ['birthday', 'dob', 'date_of_birth', 'birth_date', 'birthdate'];
+const HOME_FIELDS = /^(home|home_?(location|address|town|city|area)|address|lives_?(in|at)?|residence)$/;
 let adding = false, newName = '';
 const open = new Set();
 // Keys with their own editor. They are hidden in the plain fields and can't be added by hand.
@@ -103,6 +105,7 @@ const QUICK = {
 };
 const HINTS = {
   birthday: '1998-05-06, or 05-06 without the year. Used for birthday announcements and the countdown.',
+  dob: 'Used for birthday announcements, the countdown and their age.',
   say_name_as: 'How a voice should say the name, if it gets it wrong (for example "M J").',
   psn_id: 'Their PlayStation Network online ID.',
   favorite_teams: 'One per line, like in Team Tracker (for example Carolina Panthers).',
@@ -208,7 +211,7 @@ function people() {
       const now = (LIVE.status[k] || {}).text;
       const title = h('span', {}, p.name || k, now ? h('span', {className: 'now', textContent: '  ' + now}) : null);
       f.append(card(g + k, title,
-        h('div', {}, fields(p, Object.keys(RESERVED)), quickAdd(p), adder(p, RESERVED), placeLinks(p), haLinks(g, k, p)),
+        h('div', {}, coveredNote(k, p), fields(p, [...Object.keys(RESERVED), ...Object.keys(covered(k, p))]), quickAdd(p), adder(p, RESERVED), placeLinks(p), haLinks(g, k, p)),
         h('div', {className: 'add'},
           h('button', {className: 'del', textContent: 'Delete person', onclick: () => {
             if (confirm('Delete ' + (p.name || k) + ' and their music?')) {
@@ -228,9 +231,30 @@ function people() {
   return f;
 }
 
+/* ---------- fields something better already covers (home location when home is a linked place, age from
+   the birthday, a second birthday field) ---------- */
+const covered = (k, p) => Object.fromEntries(Object.entries((LIVE.covered || {})[k] || {}).filter(([f]) => f in p));
+function coveredNote(k, p) {
+  const c = covered(k, p), keys = Object.keys(c);
+  if (!keys.length) return null;
+  return h('div', {className: 'ha'},
+    h('label', {textContent: 'Covered elsewhere'}),
+    ...keys.map(f => h('div', {className: 'hint', textContent: pretty(f) + ' (' + String(p[f]) + '): covered by ' + c[f] + '.'})),
+    h('div', {className: 'hint', textContent: 'Hidden here and left out of the sensor, so the AI gets the place or birthday instead of a duplicate.'}),
+    h('div', {className: 'add'}, h('button', {textContent: 'Remove ' + (keys.length === 1 ? 'it' : 'them'), onclick: () => {
+      for (const f of keys) {
+        // a home location the home place doesn't have yet becomes that place's address, so nothing is lost
+        const home = p.places && p.places.home && D.places[p.places.home];
+        if (HOME_FIELDS.test(slug(f)) && home && !String(home.address || '').trim() && String(p[f] || '').trim()) home.address = String(p[f]).trim();
+        delete p[f];
+      }
+      touch(); draw();
+    }})));
+}
+
 /* ---------- quick-add fields ---------- */
 function quickAdd(p) {
-  const missing = Object.keys(QUICK).filter(k => !(k in p));
+  const missing = Object.keys(QUICK).filter(k => !(k in p) && !(k === 'birthday' && BIRTHDAY_KEYS.some(b => b in p)));
   if (!missing.length) return null;
   return h('div', {}, h('label', {textContent: 'Quick add'}),
     h('div', {className: 'chips'}, missing.map(k => h('button', {textContent: '+ ' + QUICK[k][0], onclick: () => {

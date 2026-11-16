@@ -58,3 +58,16 @@ Open a place on the **Places** tab and set its **Home Assistant zone** (or tap *
 
 Home Assistant reports a person in a zone by the zone's name, and `home` for `zone.home`, so the zone has to exist in Home Assistant (make one with Zone Creator if it doesn't).
 
+## Fields that are covered elsewhere
+
+Some fields repeat what a linked place or the birthday already says. Those are hidden on the People tab (listed under **Covered elsewhere**) and left out of the sensor:
+
+| Field | Covered when |
+|---|---|
+| `home_location`, `home`, `address`, `lives_in`... | their **home** place has a zone or an address |
+| `work_location`, `workplace`, `works_at`... | their **work** place has a zone or an address |
+| `age` | the birthday has a year (the sensor works the age out) |
+| a second birthday field | they already have `dob` or `birthday` |
+
+**Remove them** deletes them from the file. A home location the home place doesn't have yet becomes that place's address.
+
