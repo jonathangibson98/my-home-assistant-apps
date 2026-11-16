@@ -329,6 +329,32 @@ function placeLinks(p) {
   return box;
 }
 
+/* ---------- a place's Home Assistant zone ---------- */
+function zoneRow(k, pl, here) {
+  const box = h('div', {className: 'ha'});
+  const inp = h('input', {type: 'text', value: pl.zone || '', placeholder: 'zone.home',
+    oninput: e => { const v = e.target.value.trim(); if (v) pl.zone = v; else delete pl.zone; touch(); }});
+  inp.setAttribute('list', 'zones');
+  const name = (ENTS.find(e => e.id === pl.zone) || {}).name;
+  const msg = h('div', {className: 'hint'});
+  box.append(h('label', {textContent: 'Home Assistant zone'}), inp,
+    h('div', {className: 'hint', textContent: pl.zone
+      ? (name ? 'Linked to ' + name + '. ' : 'That zone isn\'t in Home Assistant (yet). ') + 'When someone linked on the People tab is in this zone, their status says they\'re at ' + (pl.name || k) + '.'
+      : 'Link the zone for this place so "at ' + (pl.name || k) + '" shows up when someone is there, instead of the zone\'s own name.'}),
+    h('div', {className: 'add'}, h('button', {textContent: 'Find matching zone', onclick: async () => {
+      msg.textContent = 'Looking...';
+      try {
+        const r = await (await fetch('api/zone_suggest?place=' + encodeURIComponent(k) + '&name=' + encodeURIComponent(pl.name || k))).json();
+        if (!r.ok) { msg.textContent = r.error; return; }
+        if (!r.zone) { msg.textContent = 'No zone looks like this place. Pick one from the list, or make one with Zone Creator.'; return; }
+        pl.zone = r.zone; touch(); draw();
+        status('Linked ' + (pl.name || k) + ' to ' + (r.name || r.zone) + '. Check it, then Save.', 'warn');
+      } catch (e) { msg.textContent = 'That failed. Check the app log.'; }
+    }})), msg);
+  if (here.length) box.append(h('div', {className: 'hint', textContent: 'Here now: ' + here.join(', ')}));
+  return box;
+}
+
 /* ---------- Places tab (the only place addresses are edited) ---------- */
 function places() {
   const f = h('div');
@@ -350,10 +376,13 @@ function places() {
     const pl = D.places[k];
     if (!pl || typeof pl !== 'object') continue;
     const used = users(k);
-    f.append(card('p' + k, pl.name || k,
+    const here = ((LIVE.places || {})[k] || {}).people_here || [];
+    const title = h('span', {}, pl.name || k, here.length ? h('span', {className: 'now', textContent: '  ' + here.join(', ') + ' here'}) : null);
+    f.append(card('p' + k, title,
       h('div', {},
         h('div', {className: 'meta', textContent: 'Used by: ' + (used.length ? used.join(', ') : 'nobody yet')}),
-        fields(pl), adder(pl)),
+        zoneRow(k, pl, here),
+        fields(pl, ['zone']), adder(pl, {zone: 'The zone is set at the top of the place.'})),
       h('div', {className: 'add'},
         pl.hours ? null : h('button', {textContent: '+ Weekly hours', onclick: () => {
           pl.hours = blankHours(); touch(); draw();

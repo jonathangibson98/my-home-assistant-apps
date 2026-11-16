@@ -255,6 +255,45 @@ def ago(ts):
     except Exception:
         return None
 
+def zone_of(state, states):
+    """A person's state names their zone: "home" is zone.home, any other zone shows its friendly name."""
+    if not state or state in ("not_home", "unknown", "unavailable"):
+        return None
+    if state == "home":
+        return "zone.home"
+    return next((e for e, z in states.items() if e.startswith("zone.")
+                 and ((z.get("attributes") or {}).get("friendly_name") == state or e == "zone." + slug(state))), None)
+
+def zone_places(d):
+    """zone entity -> place key, for places linked to a zone."""
+    out = {}
+    for k, pl in (d.get("places") or {}).items():
+        z = str((pl or {}).get("zone") or "").strip() if isinstance(pl, dict) else ""
+        if z.startswith("zone.") and z not in out:
+            out[z] = k
+    return out
+
+def suggest_zone(d, key, states, name=None):
+    """Best-guess zone for a place: by name, or zone.home for the place a household member calls home."""
+    pl = dict((d.get("places") or {}).get(key) or {})
+    if name:
+        pl["name"] = name
+    words = lambda t: {w for w in re.findall(r"[a-z0-9]+", str(t).lower()) if w not in ("the", "s", "of", "and")}
+    want = words(pl.get("name") or key) | words(key)
+    best, score = None, 0
+    for e, z in states.items():
+        if not e.startswith("zone."):
+            continue
+        have = words((z.get("attributes") or {}).get("friendly_name", "")) | words(e.split(".", 1)[1])
+        sc = len(want & have)
+        if sc > score:
+            best, score = e, sc
+    if not best and "zone.home" in states:
+        for p in d["household"].values():
+            if isinstance(p, dict) and isinstance(p.get("places"), dict) and p["places"].get("home") == key:
+                return "zone.home"
+    return best
+
 def live_status(d, p, states):
     """What a linked person is doing right now, from their linked entities. None when nothing is linked."""
     links = p.get("links") if isinstance(p, dict) else None
@@ -265,10 +304,23 @@ def live_status(d, p, states):
     s = st("person") or st("phone")
     if s:
         where = s["state"]
-        zone = states.get("zone." + where) if where not in ("home", "not_home") else None
-        where = "home" if where == "home" else "away" if where == "not_home" else (zone or {}).get("attributes", {}).get("friendly_name", where)
+        zone = zone_of(where, states)
+        where = "home" if where == "home" else "away" if where == "not_home" else \
+            (states.get(zone) or {}).get("attributes", {}).get("friendly_name", where) if zone else where
         out["location"] = where
-        words.append(where)
+        if zone:
+            out["zone"] = zone
+        key = zone_places(d).get(zone) if zone else None
+        place = (d.get("places") or {}).get(key) if key else None
+        if place:  # a place linked to this zone: say its name, and which of their places it is
+            out["place"] = place.get("name") or key
+            out["place_key"] = key
+            mine = [lbl for lbl, k in (p.get("places") or {}).items() if k == key] if isinstance(p.get("places"), dict) else []
+            if mine:
+                out["place_role"] = mine[0]
+            words.append(f"at {out['place']}" + (f" ({pretty_label(mine[0])})" if mine and slug(mine[0]) != slug(out['place']) else ""))
+        else:
+            words.append(where)
     s = st("location")
     if s and s["state"] not in ("unknown", "unavailable", ""):
         out["location_detail"] = s["state"]
@@ -308,6 +360,9 @@ def live_status(d, p, states):
             words.append(f"phone {b['state']}%")
     out["text"] = " · ".join(words)
     return out or None
+
+def pretty_label(t):
+    return str(t).replace("_", " ")
 
 def suggest_links(d, key, states):
     """Find a person's entities by the names the other add-ons and the phone app use."""
@@ -466,8 +521,8 @@ def prune(o):
         return [x for x in (prune(i) for i in o) if x not in empty]
     return o
 
-def resolve_places(d, p):
-    """Turn a person's place links (label: place key) into the full place info."""
+def resolve_places(d, p, now=None):
+    """Turn a person's place links (label: place key) into the full place info, marking the one they're at."""
     links = p.get("places")
     if not isinstance(links, dict):
         return None
@@ -475,6 +530,8 @@ def resolve_places(d, p):
     for label, key in links.items():
         pl = d["places"].get(key)
         out[label] = {"key": key, **prune(pl)} if isinstance(pl, dict) else {"key": key, "missing": True}
+        if now and now.get("place_key") == key:
+            out[label]["here_now"] = True
     return out or None
 
 def with_extras(d, group, states=None):
@@ -493,7 +550,7 @@ def with_extras(d, group, states=None):
         now = live_status(d, p, states or {})
         if now:
             q["now"] = now
-        pl = resolve_places(d, p)
+        pl = resolve_places(d, p, now)
         if pl:
             q["places"] = pl
         m = person_music(d, k)
@@ -517,6 +574,12 @@ def build_info(d, states=None):
             everyone[k] = {"group": "friends", **v}
     music_by_person = {k: v["music"] for k, v in everyone.items() if "music" in v}
     status = {k: v["now"] for k, v in everyone.items() if v.get("now")}
+    places = prune(d["places"])
+    for pk, pl in places.items():
+        if isinstance(pl, dict):
+            here = [everyone[k].get("name", k) for k, v in status.items() if v.get("place_key") == pk]
+            if here:
+                pl["people_here"] = here
     bdays = birthdays(d)
     attrs = {
         "total_facts": total, "last_update": ts,
@@ -524,7 +587,10 @@ def build_info(d, states=None):
         "sections": ["household", "friends"] + list(other.keys()),
         "household": hh, "friends": fr, "everyone": everyone,
         "music_by_person": music_by_person,
-        "places": prune(d["places"]),
+        "places": places,
+        "places_text": "\n".join(f"{pl.get('name', pk)}" + (f" ({pl['zone']})" if pl.get("zone") else "")
+                                 + (f": {', '.join(pl['people_here'])} here now" if pl.get("people_here") else "")
+                                 for pk, pl in places.items() if isinstance(pl, dict)),
         "status": status,
         "status_text": "\n".join(f"{everyone[k].get('name', k)}: {v['text']}" for k, v in status.items() if v.get("text")),
         "birthdays": bdays,
@@ -714,13 +780,22 @@ async def get_suggest(r):
     new, found = await loop.run_in_executor(None, suggest_links, d, key, states)
     return web.json_response({"ok": True, "new": new, "found": found})
 
+async def get_zone_suggest(r):
+    key, name = r.query.get("place", ""), r.query.get("name", "")
+    loop = asyncio.get_running_loop()
+    d = await loop.run_in_executor(None, load)
+    states = await loop.run_in_executor(None, ha_states)
+    z = suggest_zone(d, key, states, name or None)  # works before the place is saved: matched by its name
+    name = (states.get(z) or {}).get("attributes", {}).get("friendly_name") if z else None
+    return web.json_response({"ok": True, "zone": z, "name": name})
+
 async def get_preview(r):
     """What the info sensor says about each person right now (for the page)."""
     loop = asyncio.get_running_loop()
     d = await loop.run_in_executor(None, load)
     states = await loop.run_in_executor(None, ha_states)
     _, attrs = build_info(d, states)
-    return web.json_response({"status": attrs["status"], "birthdays": attrs["birthdays"],
+    return web.json_response({"status": attrs["status"], "birthdays": attrs["birthdays"], "places": attrs["places"],
                               "birthdays_text": attrs["birthdays_text"]})
 
 async def get_settings(r):
@@ -772,6 +847,7 @@ app.router.add_get("/api/settings", get_settings)
 app.router.add_get("/api/entities", get_entities)
 app.router.add_get("/api/suggest", get_suggest)
 app.router.add_get("/api/preview", get_preview)
+app.router.add_get("/api/zone_suggest", get_zone_suggest)
 app.router.add_post("/api/settings", post_settings)
 app.on_startup.append(start_bg)
 web.run_app(app, host="0.0.0.0", port=8099)
