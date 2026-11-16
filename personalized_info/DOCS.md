@@ -49,3 +49,12 @@ Add **Birthday** to a person (1998-05-06, or 05-06 without the year). The info s
 
 The **Quick add** buttons add fields other add-ons and AI prompts can use: nickname, say name as (how a voice should say it), pronouns, favorite teams, games they play, PSN ID, shows and movies, work schedule, usual bedtime and wake time. Blank fields stay out of the sensor.
 
+## Places and zones
+
+Open a place on the **Places** tab and set its **Home Assistant zone** (or tap **Find matching zone**). Then, for anyone linked to their `person` on the People tab:
+
+- their status says where they are by the place's name and what it is to them, for example **at Bitcoin Mine (work)** or **at Our House (home)**
+- the place lists who's there (`people_here` on the place, and `places_text` on the info sensor)
+
+Home Assistant reports a person in a zone by the zone's name, and `home` for `zone.home`, so the zone has to exist in Home Assistant (make one with Zone Creator if it doesn't).
+

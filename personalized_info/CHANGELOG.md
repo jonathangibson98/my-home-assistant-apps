@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0
+
+- **Places link to Home Assistant zones.** Every place (old ones too) has a **Home Assistant zone** picker at the top of its card, and **Find matching zone** picks the zone with the same name (or `zone.home` for the place your household calls home).
+- When someone linked on the People tab is in a place's zone, their status names the place and what it is to them: "at Bitcoin Mine (work)" instead of the zone's own name. Their `now` gets `place`, `place_key` and `place_role`, and that place is marked `here_now` in their places.
+- Each place in the sensor gets `people_here`, and there's a new `places_text` attribute ("Bitcoin Mine (zone.bitcoin_mine): Jon here now"). The Places tab shows who's at each place.
+
 ## 0.4.0
 
 - **Linked to your other add-ons.** Each person has a **Home Assistant** section: their person, phone, phone notifications, asleep (Sleep Tracker), at work and work hours (Work Hours Tracker), game console (PS5 Status), calendar and location sensor. **Find automatically** fills them in from the names those add-ons and the phone app use.
