@@ -25,13 +25,13 @@ Open a person and go to **Home Assistant** at the bottom of their card. Tap **Fi
 
 | Role | Usually | From |
 |---|---|---|
-| Person | `person.jon` | Home Assistant |
+| Person | `person.alex` | Home Assistant |
 | Phone | `device_tracker.jons_iphone` | the Companion app (its `_battery_level` sensor is used too) |
 | Phone notifications | `notify.mobile_app_jons_iphone` | the Companion app |
-| Asleep | `binary_sensor.jon_asleep` | Sleep Tracker |
-| At work / Work hours | `binary_sensor.jon_at_work` / `sensor.jon_hours` | Work Hours Tracker |
+| Asleep | `binary_sensor.alex_asleep` | Sleep Tracker |
+| At work / Work hours | `binary_sensor.alex_at_work` / `sensor.alex_hours` | Work Hours Tracker |
 | Game console | `media_player.ps5_512` | PS5 Status |
-| Calendar | `calendar.jon` | any calendar |
+| Calendar | `calendar.alex` | any calendar |
 | Location sensor | your location sensor | Location Hub |
 
 The info sensor then has, for each linked person:
@@ -43,7 +43,7 @@ It's checked every minute and only sent to Home Assistant when something changed
 
 ## Birthdays
 
-Add **Birthday** to a person (1998-05-06, or 05-06 without the year). The info sensor gets `birthdays` (sorted by days until, with the age they're turning when the year is known), `birthdays_today` and `birthdays_text`. Use them in AI announcements, for example a Birthday Announce automation that runs when `birthdays_today` isn't empty.
+Add **Birthday** to a person (2000-01-15, or 01-15 without the year). The info sensor gets `birthdays` (sorted by days until, with the age they're turning when the year is known), `birthdays_today` and `birthdays_text`. Use them in AI announcements, for example a Birthday Announce automation that runs when `birthdays_today` isn't empty.
 
 ## Quick add fields
 
@@ -53,7 +53,7 @@ The **Quick add** buttons add fields other add-ons and AI prompts can use: nickn
 
 Open a place on the **Places** tab and set its **Home Assistant zone** (or tap **Find matching zone**). Then, for anyone linked to their `person` on the People tab:
 
-- their status says where they are by the place's name and what it is to them, for example **at Bitcoin Mine (work)** or **at Our House (home)**
+- their status says where they are by the place's name and what it is to them, for example **at Office (work)** or **at Our House (home)**
 - the place lists who's there (`people_here` on the place, and `places_text` on the info sensor)
 
 Home Assistant reports a person in a zone by the zone's name, and `home` for `zone.home`, so the zone has to exist in Home Assistant (make one with Zone Creator if it doesn't).

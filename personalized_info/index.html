@@ -104,7 +104,7 @@ const QUICK = {
   usual_bedtime: ['Usual bedtime', ''], usual_wake_time: ['Usual wake time', '']
 };
 const HINTS = {
-  birthday: '1998-05-06, or 05-06 without the year. Used for birthday announcements and the countdown.',
+  birthday: '2000-01-15, or 01-15 without the year. Used for birthday announcements and the countdown.',
   dob: 'Used for birthday announcements, the countdown and their age.',
   say_name_as: 'How a voice should say the name, if it gets it wrong (for example "M J").',
   psn_id: 'Their PlayStation Network online ID.',
@@ -183,7 +183,7 @@ function fields(obj, skip = []) {
       const inp = h('input', {type: 'text', value: v ?? '',
         oninput: e => { obj[k] = e.target.value; touch(); }});
       if (k === 'zone') { inp.setAttribute('list', 'zones'); inp.placeholder = 'zone.work'; }
-      if (k === 'birthday') inp.placeholder = '1998-05-06';
+      if (k === 'birthday') inp.placeholder = '2000-01-15';
       wrap.append(inp);
     }
     if (HINTS[k]) wrap.append(h('div', {className: 'hint', textContent: HINTS[k]}));
@@ -456,7 +456,7 @@ function places() {
 /* ---------- Music tab (the only place music is edited) ---------- */
 function music() {
   const f = h('div');
-  f.append(h('p', {className: 'note', textContent: 'Everything music lives here and saves to music.yaml. Each person\'s genres and artists also appear on that person in the info sensor. The profile name has to match the person\'s key (jon, mj, and so on).'}));
+  f.append(h('p', {className: 'note', textContent: 'Everything music lives here and saves to music.yaml. Each person\'s genres and artists also appear on that person in the info sensor. The profile name has to match the person\'s key (alex, sam, and so on).'}));
   const isPerson = k => (D.household[k] && typeof D.household[k] === 'object')
                      || (D.friends[k] && typeof D.friends[k] === 'object');
   const ids = ['shared', ...Object.keys(D.household), ...Object.keys(D.friends), ...Object.keys(D.music)]

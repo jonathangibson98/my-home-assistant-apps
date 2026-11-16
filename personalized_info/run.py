@@ -138,7 +138,7 @@ def clean_music(m):
     m = m.get("music", m)
     if isinstance(m, dict) and "by_person" in m:
         out = {"shared": {"genres": [],
-                          "artists": flat(m.get("jon_and_mj_favorites", {}).get("artists", []))}}
+                          "artists": flat(m.get("shared_favorites", {}).get("artists", []))}}
         for k, v in m["by_person"].items():
             out[k] = {"genres": [g for g in v if g != "other"] if isinstance(v, dict) else [],
                       "artists": flat(v)}
@@ -405,7 +405,7 @@ MONTHS = {m.lower(): i for i, m in enumerate(["January", "February", "March", "A
                                               "September", "October", "November", "December"], 1)}
 
 def parse_birthday(v):
-    """(year or None, month, day) from 1998-05-06, 05-06, 5/6/1998, May 6 1998, May 6..."""
+    """(year or None, month, day) from 2000-01-15, 01-15, 1/15/2000, Jan 15 2000, Jan 15..."""
     t = str(v or "").strip()
     m = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})$", t) or re.match(r"^()(\d{1,2})-(\d{1,2})$", t)
     if m:
@@ -805,7 +805,7 @@ async def index(r):
     return web.FileResponse("/index.html")
 
 async def get_data(r):
-    # a hand-edited date (birthday: 1998-05-06 without quotes) loads as a date object: send it as text
+    # a hand-edited date (birthday: 2000-01-15 without quotes) loads as a date object: send it as text
     return web.json_response(load(), dumps=lambda o: json.dumps(o, default=str))
 
 async def post_data(r):

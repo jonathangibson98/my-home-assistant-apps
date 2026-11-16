@@ -6,7 +6,7 @@
   what the AppDaemon `PresenceSensors` app did (`sensor.arrived_home`), inside the add-on, and for **any zone**,
   not only home.
 - Every zone gets a sensor, `sensor.arrived_<zone>` (Home is `sensor.arrived_home`). The state is who arrived:
-  `jon_home`, `jon_mj_work`, or a **group name** you set for an exact set of people. People who arrive at the
+  `alex_home`, `alex_sam_work`, or a **group name** you set for an exact set of people. People who arrive at the
   same place within the **group window** count as one group.
 - After the **clear time** the sensor returns to `no one arriving`. With nobody at the place it shows `nobody home`
   (Home) or `nobody here` (any other zone). Each sensor has a `<person>_<zone>` true/false attribute per person.

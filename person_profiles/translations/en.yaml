@@ -1,7 +1,7 @@
 configuration:
   people:
     name: People
-    description: Person entities to build profiles for (example person.jon). Leave empty to use every person.
+    description: Person entities to build profiles for (example person.alex). Leave empty to use every person.
   update_interval_seconds:
     name: Update interval (seconds)
     description: How often the sensors are refreshed.

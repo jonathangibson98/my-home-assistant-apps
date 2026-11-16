@@ -669,7 +669,7 @@ def render_add():
         "<div class='card'><h3>Add Apple ID</h3><form method='post' action='add'>"
         "<input type='text' name='username' placeholder='Apple ID email' autocapitalize='off' autocomplete='off'>"
         "<input type='password' name='password' placeholder='Password' autocomplete='off'>"
-        "<input type='text' name='label' placeholder='Tab name (optional, like Jon or MJ)' autocomplete='off'>"
+        "<input type='text' name='label' placeholder='Tab name (optional, like Alex or Sam)' autocomplete='off'>"
         "<button>Add account</button></form></div>"
     )
 

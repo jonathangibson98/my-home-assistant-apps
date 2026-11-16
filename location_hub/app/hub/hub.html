@@ -135,7 +135,7 @@ function placesV(){
       <div class="hint">None selected means every day.</div>
       <div class="row">${fld("From",inp(K("start"),p.start,"time"))}${fld("Until",inp(K("end"),p.end,"time"))}</div>
       ${fld("Notification title",inp(K("title"),p.title),"Use {who}, {place} and {present} to fill in names.")}
-      ${fld("Extra details for the message",`<textarea data-k="${K("extra")}">${esc(p.extra)}</textarea>`,"Example: Include our friends Aaron and Tyler.")}
+      ${fld("Extra details for the message",`<textarea data-k="${K("extra")}">${esc(p.extra)}</textarea>`,"Example: Include our friends Jordan and Drew.")}
       ${fld("Custom style for this place",`<textarea data-k="${K("custom_prompt")}">${esc(p.custom_prompt)}</textarea>`,"Leave blank to use the global style.")}
       <div class="btns"><button class="b" data-act="prev" data-i="${i}">Preview</button><button class="b" data-act="send" data-i="${i}">Send test</button><button class="b" data-act="dup" data-i="${i}">Duplicate</button><button class="b del" data-act="del" data-i="${i}">Delete</button></div>
       <div id="res-${p.id}"></div></div>`:""}</div>`}).join("");
@@ -145,7 +145,7 @@ function peopleV(){
   return `<p class="hint" style="margin:0 0 10px">Track anything whose state shows a zone name: a person, a device tracker, or a sensor.</p>`+
   cfg.people.map((p,i)=>`<div class="card"><div class="bd" style="border:0">
     ${fld("Name",inp(`people.${i}.name`,p.name))}
-    ${fld("Entity",inp(`people.${i}.entity_id`,p.entity_id,"text",'list="trk" autocapitalize="none" placeholder="person.jon"'))}
+    ${fld("Entity",inp(`people.${i}.entity_id`,p.entity_id,"text",'list="trk" autocapitalize="none" placeholder="person.alex"'))}
     ${fld("Notes for the message writer",`<textarea data-k="people.${i}.notes">${esc(p.notes)}</textarea>`,"Optional. Quirks, jokes, nicknames.")}
     <div class="btns"><button class="b del" data-act="delp" data-i="${i}">Remove</button></div></div></div>`).join("")+
   `<button class="b add" data-act="addperson">Add a person or sensor</button>`;
@@ -199,7 +199,7 @@ function devicesV(){
     <div class="hint">Unique ID: ${esc(s.unique_id)} · Mode: ${esc(s.mode)}</div></div></div>
   <p class="hint" style="margin:0 0 10px">One row per person. The sensor's state is how many are home; anyone away shows as City, State.</p>`+
   loc.devices.map((d,i)=>`<div class="card"><div class="bd" style="border:0">
-    <div class="row">${fld("Label",inp(`loc.devices.${i}.label`,d.label,"text",'placeholder="Jon"'))}${fld("Entity",inp(`loc.devices.${i}.entity_id`,d.entity_id,"text",'list="trk" autocapitalize="none" placeholder="device_tracker.jon_phone"'))}</div>
+    <div class="row">${fld("Label",inp(`loc.devices.${i}.label`,d.label,"text",'placeholder="Alex"'))}${fld("Entity",inp(`loc.devices.${i}.entity_id`,d.entity_id,"text",'list="trk" autocapitalize="none" placeholder="device_tracker.alex_phone"'))}</div>
     ${fld("Home state override (optional)",inp(`loc.devices.${i}.home_state`,d.home_state,"text",'autocapitalize="none" placeholder="home"'),"Only if the entity reports something other than home, like on or present.")}
     <div class="btns"><button class="b del" data-act="deld" data-i="${i}">Remove</button></div></div></div>`).join("")+
   `<button class="b add" data-act="adddev">Add a device</button>`;
@@ -208,8 +208,8 @@ function devicesV(){
 function trackersV(){
   return `<p class="hint" style="margin:0 0 10px">Each row turns a sensor into a device_tracker. When the sensor's state matches the home state it is Home at your house (zone.home); any other state is Away; unavailable or unknown is ignored. Separate several home states with commas.</p>`+
   loc.trackers.map((r,i)=>`<div class="card"><div class="bd" style="border:0">
-    ${fld("Name",inp(`loc.trackers.${i}.label`,r.label,"text",'placeholder="MJ"'))}
-    ${fld("Source sensor",inp(`loc.trackers.${i}.entity_id`,r.entity_id,"text",'list="tap" autocapitalize="none" placeholder="sensor.mj_location"'))}
+    ${fld("Name",inp(`loc.trackers.${i}.label`,r.label,"text",'placeholder="Sam"'))}
+    ${fld("Source sensor",inp(`loc.trackers.${i}.entity_id`,r.entity_id,"text",'list="tap" autocapitalize="none" placeholder="sensor.sam_location"'))}
     ${fld("Home state (default: home)",inp(`loc.trackers.${i}.home_state`,r.home_state,"text",'autocapitalize="none" placeholder="home"'))}
     <div class="hd" style="padding:12px 0 0;cursor:default"><b>Show as switch<small>Only works if the source is an input_boolean or switch</small></b>${sw(`loc.trackers.${i}.toggle`,r.toggle)}</div>
     <div class="hint">Device tracker ID: ${esc(r.tracker_id||"(created on save)")}</div>
@@ -226,7 +226,7 @@ function cardV(){
   <p class="hint" style="margin:0 0 10px">Built from the people on the Devices tab. Add a person there and save, then they show up here. Tap entity: blank for none; an input_boolean toggles on tap. Picture: blank is automatic.</p>`+
   c.rows.map((r,i)=>`<div class="card"><div class="bd" style="border:0"><b style="display:block;margin-top:12px">${esc(r.label)}</b>
     ${fld("Group",sel(`loc.card.rows.${i}.group`,G,r.group))}
-    ${fld("Tap entity",inp(`loc.card.rows.${i}.entity`,r.entity,"text",'list="tap" autocapitalize="none" placeholder="person.jon"'))}
+    ${fld("Tap entity",inp(`loc.card.rows.${i}.entity`,r.entity,"text",'list="tap" autocapitalize="none" placeholder="person.alex"'))}
     ${fld("Picture (optional)",inp(`loc.card.rows.${i}.picture`,r.picture,"text",'placeholder="blank = automatic"'))}</div></div>`).join("")+
   `<div class="card"><div class="bd" style="border:0"><b style="display:block;margin-top:12px">Card YAML</b>
     <div class="hint">Refreshes when you save. In your dashboard: Edit, Add card, Manual, paste. Needs Mushroom and Bubble Card from HACS.</div>
@@ -291,7 +291,7 @@ function arrPlacesV(){
       ${fld("Zone",sel(K("zone"),zn,p.zone),"Zones come from Settings → Areas, labels &amp; zones → Zones. Each zone can be added once.")}
       <label class="f">Group names (optional)</label>
       ${p.combos.map((c,j)=>`<div class="card" style="margin-top:8px"><div class="bd" style="border:0">
-        ${fld("Sensor state for exactly these people",inp(`${K("combos")}.${j}.name`,c.name,"text",'autocapitalize="none" placeholder="jon_mj_home"'))}
+        ${fld("Sensor state for exactly these people",inp(`${K("combos")}.${j}.name`,c.name,"text",'autocapitalize="none" placeholder="alex_sam_home"'))}
         <div class="chips">${arr.people.map(x=>`<label class="chip"><input type="checkbox" data-cp="${i}.${j}" value="${esc(x.id)}" ${c.people.includes(x.id)?"checked":""}>${esc(x.label)}</label>`).join("")||'<span class="hint">Add people on Location → Devices first.</span>'}</div>
         <div class="btns"><button class="b del" data-act="arr-delcombo" data-i="${i}" data-j="${j}">Remove group</button></div></div></div>`).join("")}
       <div class="btns"><button class="b" data-act="arr-addcombo" data-i="${i}">Add a group</button><button class="b del" data-act="arr-delplace" data-i="${i}">Remove place</button></div>

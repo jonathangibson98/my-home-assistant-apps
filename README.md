@@ -1,4 +1,4 @@
-# Jon's Home Assistant Apps
+# Custom Home Assistant Apps
 
 A collection of custom Home Assistant add-ons (apps). Add this repository once and every app below shows up in the Add-on Store.
 

@@ -14,8 +14,8 @@ map:
   - homeassistant_config:rw
 options:
   core_people:
-    - jon
-    - mj
+    - alex
+    - sam
     - nova
   mqtt_host: ""
   mqtt_port: 1883

@@ -8,7 +8,7 @@ Builds one profile sensor for each person in Home Assistant from every entity li
 
 | Entity | What it holds |
 | --- | --- |
-| `sensor.person_profile_<name>` | One per person. State is a short line like "Jon: home, battery 82%". Attributes hold location, trackers, battery, related entities and AI results. |
+| `sensor.person_profile_<name>` | One per person. State is a short line like "Alex: home, battery 82%". Attributes hold location, trackers, battery, related entities and AI results. |
 | `sensor.person_profiles` | State is the number of people. The `profiles` attribute lists one summary per person. |
 
 ## How entities are linked to a person
@@ -27,8 +27,8 @@ Builds one profile sensor for each person in Home Assistant from every entity li
 Read a value in a template:
 
 ```jinja
-{{ state_attr('sensor.person_profile_jon', 'ai_summary') }}
-{{ state_attr('sensor.person_profile_jon', 'battery') }}
+{{ state_attr('sensor.person_profile_alex', 'ai_summary') }}
+{{ state_attr('sensor.person_profile_alex', 'battery') }}
 ```
 
 See [DOCS.md](DOCS.md) for every option, events and examples.
