@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.2
+
+- Removed personal names, places and home-specific entity IDs from the defaults, examples and docs, so new installs start clean.
+
 ## 0.5.1
 
 - **No more duplicate fields.** When something better covers a field, it's hidden on the People tab and left out of the sensor, with a **Remove them** button to clear it out of the file:

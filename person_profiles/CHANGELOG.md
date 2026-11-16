@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5
+
+- Removed personal names, places and home-specific entity IDs from the defaults, examples and docs, so new installs start clean.
+
 ## 0.1.4
 
 - Fix: Home Assistant event handlers run as tracked background tasks so they cannot be garbage-collected before they finish.

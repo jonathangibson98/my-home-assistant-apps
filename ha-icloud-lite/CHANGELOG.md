@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.6.3
+
+- Removed personal names, places and home-specific entity IDs from the defaults, examples and docs, so new installs start clean.
+
 ## 2.6.2
 - Fix: the image build failed for amd64 because the Dockerfile defaulted to the aarch64 base image. It now uses the multi-platform Home Assistant base image.
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.4.1
+
+- Removed personal names, places and home-specific entity IDs from the defaults, examples and docs, so new installs start clean.
+
 ## 3.4.0
 
 - **New Arrivals section** (home page tiles, or the Arrivals button at the top of the Location Hub page). It does
