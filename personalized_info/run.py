@@ -748,12 +748,67 @@ def publish_all(only_changes=False):
     except Exception as e:
         print("Publish failed:", e, flush=True)
 
+# ---------- the default AI Task for all add-ons ----------
+# Picked on the page (or from the select entity in Home Assistant). Published as select.default_ai_task, which the
+# other add-ons read when their own ai_task_entity option is empty.
+DEFAULT_AI_TOPIC = f"{BASE}/default_ai"
+
+def default_ai():
+    return str((SET.get("ai") or {}).get("default") or "")
+
+def ai_choices():
+    out = []
+    try:
+        for st in ha_get("/states"):
+            if st["entity_id"].startswith("ai_task."):
+                f = int((st.get("attributes") or {}).get("supported_features") or 0)
+                out.append({"id": st["entity_id"], "name": (st.get("attributes") or {}).get("friendly_name") or st["entity_id"],
+                            "images": bool(f & 4), "attachments": bool(f & 2)})
+    except Exception as e:
+        print("Could not list AI Task entities:", e, flush=True)
+    return out
+
+def publish_default_ai(choices=None):
+    choices = ai_choices() if choices is None else choices
+    cur = default_ai() or "auto"
+    attrs = {"role": "default_ai_task", "ai_task_entity": default_ai() or (choices[0]["id"] if choices else ""),
+             "set_in": "Personalized Info"}
+    try:
+        if client is not None and mq_ready:
+            opts = ["auto"] + [c["id"] for c in choices]
+            if cur not in opts:
+                opts.append(cur)
+            client.publish(f"homeassistant/select/{BASE}/default_ai_task/config", json.dumps({
+                "name": "Default AI Task", "unique_id": f"{BASE}_default_ai_task", "default_entity_id": "select.default_ai_task",
+                "options": opts, "state_topic": f"{DEFAULT_AI_TOPIC}/state", "command_topic": f"{DEFAULT_AI_TOPIC}/set",
+                "json_attributes_topic": f"{DEFAULT_AI_TOPIC}/attributes", "availability_topic": f"{BASE}/status",
+                "icon": "mdi:robot-outline", "entity_category": "config"}), qos=1, retain=True)
+            client.publish(f"{DEFAULT_AI_TOPIC}/state", cur, qos=1, retain=True)
+            client.publish(f"{DEFAULT_AI_TOPIC}/attributes", json.dumps(attrs), qos=1, retain=True)
+        else:
+            rest_post("sensor.default_ai_task", cur, dict(attrs, friendly_name="Default AI Task", icon="mdi:robot-outline"))
+    except Exception as e:
+        print("Could not publish the default AI Task:", e, flush=True)
+
+def set_default_ai(eid):
+    eid = str(eid or "").strip()
+    if eid in ("auto", "none"):
+        eid = ""
+    if eid and not re.fullmatch(r"ai_task\.[a-z0-9_]+", eid):
+        raise ValueError("Pick an ai_task entity")
+    SET.setdefault("ai", {})["default"] = eid
+    save_settings(SET)
+    print("Default AI Task:", eid or "auto (first one)", flush=True)
+    publish_default_ai()
+
 def on_connect(c, u, flags, *a):
     global mq_ready
     mq_ready = True
     print("Connected to MQTT broker", flush=True)
     c.subscribe("homeassistant/status")
+    c.subscribe(f"{DEFAULT_AI_TOPIC}/set")
     publish_all()
+    publish_default_ai()
 
 def on_disconnect(c, u, *a):
     global mq_ready
@@ -761,8 +816,15 @@ def on_disconnect(c, u, *a):
     print("Disconnected from MQTT broker", flush=True)
 
 def on_message(c, u, msg):
+    if msg.topic == f"{DEFAULT_AI_TOPIC}/set":
+        try:
+            set_default_ai(msg.payload.decode("utf-8", "replace"))
+        except Exception as e:
+            print("Default AI Task not changed:", e, flush=True)
+        return
     if msg.payload == b"online":  # HA just restarted
         publish_all()
+        publish_default_ai()
 
 def start_mqtt():
     global client, mq_warned
@@ -863,6 +925,8 @@ AI_ENTITY = str(OPT.get("ai_task_entity") or "").strip()
 def ai_entity():
     if AI_ENTITY:
         return AI_ENTITY
+    if default_ai():
+        return default_ai()
     for s in ha_get("/states"):
         if s["entity_id"].startswith("ai_task."):
             return s["entity_id"]
@@ -950,6 +1014,20 @@ def ai_job(b):
                                % (person.get("name", key), people_text({key: person})))}
     raise ValueError("Unknown AI action")
 
+async def get_ai_default(r):
+    loop = asyncio.get_running_loop()
+    ch = await loop.run_in_executor(None, ai_choices)
+    return web.json_response({"default": default_ai(), "option": AI_ENTITY, "choices": ch,
+                              "entity": "select.default_ai_task" if client is not None else "sensor.default_ai_task"})
+
+async def post_ai_default(r):
+    try:
+        b = await r.json()
+        await asyncio.get_running_loop().run_in_executor(None, set_default_ai, b.get("entity"))
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)})
+    return web.json_response({"ok": True, "default": default_ai()})
+
 async def post_ai(r):
     try:
         b = await r.json()
@@ -978,6 +1056,8 @@ async def start_bg(app):
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, start_mqtt)
     await loop.run_in_executor(None, publish_all)
+    if client is None:
+        await loop.run_in_executor(None, publish_default_ai)
     async def tick():
         n = 0
         while True:
@@ -987,6 +1067,8 @@ async def start_bg(app):
                 await loop.run_in_executor(None, start_mqtt)
             # every minute: republish if anyone's live status changed; every 10 minutes regardless
             await loop.run_in_executor(None, publish_all, n % 10 != 0)
+            if n % 10 == 0:
+                await loop.run_in_executor(None, publish_default_ai)
     _spawn(tick())
 
 _BG_TASKS: set = set()  # keep references so background tasks are not garbage-collected mid-run
@@ -1010,5 +1092,7 @@ app.router.add_get("/api/preview", get_preview)
 app.router.add_get("/api/zone_suggest", get_zone_suggest)
 app.router.add_post("/api/settings", post_settings)
 app.router.add_post("/api/ai", post_ai)
+app.router.add_get("/api/ai_default", get_ai_default)
+app.router.add_post("/api/ai_default", post_ai_default)
 app.on_startup.append(start_bg)
 web.run_app(app, host="0.0.0.0", port=8099)
