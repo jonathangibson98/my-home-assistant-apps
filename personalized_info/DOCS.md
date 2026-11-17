@@ -71,6 +71,12 @@ Some fields repeat what a linked place or the birthday already says. Those are h
 
 **Remove them** deletes them from the file. A home location the home place doesn't have yet becomes that place's address.
 
+## Default AI for all add-ons
+
+**✨ Default AI** at the top of the page sets the AI Task entity every add-on uses when its own `ai_task_entity` option is empty: Personalized Info, Creator & AI Builder, Pi Health Monitor, Photo Hub, Sleep Tracker, Work Hours, Team Tracker Lite, Release Tracker, Mobile Files and iCloud Lite. **Automatic** uses the first AI Task Home Assistant has.
+
+It's also an entity in Home Assistant, `select.default_ai_task` (`sensor.default_ai_task` without an MQTT broker), so you can switch it from a dashboard or an automation.
+
 ## AI help
 
 Each person (and place) has an **✨ AI help** row. It uses a Home Assistant AI Task entity: set `ai_task_entity`, or leave it empty to use the first one. Nothing changes until you tap something, and it all still needs **Save changes**.

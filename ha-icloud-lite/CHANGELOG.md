@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.9.1 - 2026-11-17
+
+- With `ai_task_entity` empty, Ask AI uses your **default AI** picked in Personalized Info (`select.default_ai_task`).
+
 ## 2.9.0 - 2026-11-17
 
 - **✨ Ask AI** on each account: when something's wrong it explains the problem and what to do (2FA, password, Apple's login block); when it's fine, ask about your devices ("which phone needs charging?", "what hasn't updated lately?"). Uses your Home Assistant AI Task (`ai_task_entity`, empty picks one).
