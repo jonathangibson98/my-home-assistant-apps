@@ -25,7 +25,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-vi
 button.on,button.pri{background:var(--acc)}
 button.del{background:var(--red);padding:4px 10px;font-size:14px}
 button.ghost{background:transparent;border:1px dashed var(--line);color:var(--dim)}
-#sensors-panel{max-width:820px;margin:0 auto;padding:10px 10px 0}
+#sensors-panel,#ai-default{max-width:820px;margin:0 auto;padding:10px 10px 0}
 main{padding:4px 10px 0;max-width:820px;margin:auto}
 h2{margin:22px 0 8px;font-size:17px;font-weight:600;color:var(--dim)}
 p.note{color:var(--dim);font-size:14px;margin:12px 0}
@@ -712,6 +712,7 @@ window.__hbAddon = "personalized_info";
 <!-- /ha-theme -->
 
 
+<section id="ai-default"></section>
 <section id="sensors-panel"></section>
 
 <nav>
@@ -1146,6 +1147,38 @@ function music() {
   return f;
 }
 
+/* ---------- Default AI Task for all add-ons (top of page) ---------- */
+let AID = null, aidOpen = false;
+async function loadAiDefault() {
+  try { AID = await (await fetch('api/ai_default')).json(); } catch (e) { AID = null; }
+  aiDefaultPanel();
+}
+function aiDefaultPanel() {
+  const box = $('#ai-default');
+  if (!AID) { box.replaceChildren(); return; }
+  const name = id => (AID.choices.find(c => c.id === id) || {name: id}).name;
+  const sel = h('select', {onchange: async e => {
+    msg.textContent = 'Saving…';
+    try {
+      const r = await (await fetch('api/ai_default', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({entity: e.target.value})})).json();
+      if (!r.ok) { msg.textContent = r.error; return; }
+      AID.default = r.default; aiDefaultPanel(); status('Default AI saved', 'ok');
+    } catch (x) { msg.textContent = 'Saving failed.'; }
+  }},
+    h('option', {value: '', textContent: 'Automatic (first one: ' + (AID.choices[0] ? AID.choices[0].name : 'none found') + ')'}),
+    ...AID.choices.map(c => h('option', {value: c.id, textContent: c.name + '  (' + c.id + ')' + (c.images ? ' · can make pictures' : '')})));
+  sel.value = AID.default || '';
+  const msg = h('div', {className: 'meta'});
+  const now = AID.default || (AID.choices[0] && AID.choices[0].id) || 'none';
+  box.replaceChildren(h('details', {open: aidOpen, ontoggle: e => { aidOpen = e.target.open; }},
+    h('summary', {}, '✨ Default AI', h('span', {className: 'now', textContent: '  ' + name(now)})),
+    h('div', {},
+      h('p', {className: 'note', textContent: 'The AI Task every add-on uses unless its own ai_task_entity option is set: Personalized Info, Creator, Pi Health, Photo Hub, Sleep Tracker, Work Hours, Team Tracker, Release Tracker, Mobile Files and iCloud Lite.'}),
+      h('label', {textContent: 'Use this AI for everything'}), sel, msg,
+      AID.option ? h('div', {className: 'hint', textContent: 'This add-on\'s own ai_task_entity option (' + AID.option + ') still wins here.'}) : null,
+      h('div', {className: 'hint', textContent: 'Also in Home Assistant as ' + AID.entity + ', so you can change it from a dashboard or an automation.'}))));
+}
+
 /* ---------- Sensors section (top of page) ---------- */
 let sensorsOpen = true;
 
@@ -1361,7 +1394,7 @@ fetch('api/data').then(r => r.json()).then(d => {
   for (const k of ['household', 'friends', 'music', 'places', 'other']) D[k] = D[k] || {};
   status('Loaded', 'ok');
   draw();
-  loadSensors();
+  loadSensors(); loadAiDefault();
   loadEntities();
   loadLive();
   setInterval(loadLive, 60000);
