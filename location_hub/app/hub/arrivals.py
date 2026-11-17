@@ -5,7 +5,7 @@ so it works for every zone in Home Assistant:
 
 * People come from Location > Devices, so there is nothing to type twice.
 * Each zone gets a sensor, sensor.arrived_<zone> (zone.home gives sensor.arrived_home, as before).
-  Its state is who arrived: "jon_home", "jon_mj_work", or a group name you chose.
+  Its state is who arrived: "alex_home", "alex_sam_work", or a group name you chose.
 * People who arrive at the same place within `window_seconds` count as one group.
 * After `reset_after_seconds` the sensor goes back to "no one arriving". When nobody is at the
   place it shows "nobody home" (home) or "nobody here" (any other place).

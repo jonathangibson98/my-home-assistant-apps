@@ -1,4 +1,4 @@
-# Jon's Home Assistant Apps
+# Custom Home Assistant Apps
 
 A collection of custom Home Assistant add-ons (apps). Add this repository once and every app below shows up in the Add-on Store.
 
@@ -20,7 +20,7 @@ All apps support `aarch64` (Raspberry Pi 4/5) and `amd64`.
 | **Person Profiles** | [`person_profiles`](person_profiles) | Builds one profile sensor per person from every entity linked to them, with optional AI summaries. | Nothing (an `ai_task` entity or conversation agent for AI summaries) |
 | **Personalized Info** | [`personalized_info`](personalized_info) | Edit everyone's info and music preferences from a phone-friendly UI. Saved to one readable YAML file with automatic backups. | Nothing (MQTT optional) |
 | **Photo Hub** | [`photo_shuffle`](photo_shuffle) | Folder shuffles and random Unsplash photos, all published as image entities. Manage everything from one web UI. | MQTT (an Unsplash key for Unsplash collections) |
-| **Release Tracker** | [`release-tracker`](release-tracker) | Pick the TV shows, movies, video games and DLC you care about and get sensors for what is coming out and when. | Free TMDB API key (TV/movies); free Twitch Client ID and Secret for IGDB (games/DLC); MQTT |
+| **Release Tracker** | [`release-tracker`](release-tracker) | Track anything with a release date, like TV shows, movies, video games and DLC, albums and artists, celebrities, tech launches, merch drops, events and sales, and get one sensor for what is coming out and when. | Free TMDB API key (TV, movies, celebrities); free Twitch Client ID and Secret for IGDB (games/DLC); MQTT. Music and custom items need nothing. |
 | **SVG Maker** | [`svg_maker`](svg_maker) | Turn photos into clean, scalable SVG icons and vector files from the sidebar. Runs fully local. | Nothing |
 | **Team Tracker Lite** | [`team_tracker_lite`](team_tracker_lite) | One lightweight live sports sensor. Pick any team from a menu, with a calendar of every game for your saved teams. | MQTT |
 | **Work Hours Tracker** | [`work_hours`](work_hours) | Logs how long each person spends in the work zones you pick for them, saved as one file per person, with MQTT sensors. | Home Assistant zones (MQTT optional) |

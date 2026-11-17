@@ -25,33 +25,14 @@ def place(pid, name, zone, who, mode="any", dwell=5, title="", extra="", days=No
 
 DEFAULT = {
     "settings": {
-        "enabled": True, "mention_present": True, "ai_entity": "ai_task.gemini_pro_ai_task", "notify_service": "notify.household",
+        "enabled": True, "mention_present": True, "ai_entity": "ai_task.google_ai_task", "notify_service": "notify.notify",
         "timezone": "America/New_York", "max_chars": 256, "cooldown_min": 10, "style": DEFAULT_STYLE,
-        "fallback": "{who} just pulled up to {place}!", "context_entity": "sensor.combined_info",
+        "fallback": "{who} just pulled up to {place}!", "context_entity": "",
         "context_attribute": "content", "locations_entity": "",
     },
-    "people": [
-        {"id": "jon", "name": "Jon", "entity_id": "person.jon", "notes": ""},
-        {"id": "mj", "name": "MJ", "entity_id": "person.mj", "notes": ""},
-        {"id": "aaron", "name": "Aaron", "entity_id": "person.aaron", "notes": ""},
-        {"id": "mikala", "name": "Mikala", "entity_id": "person.mikala", "notes": ""},
-        {"id": "noah", "name": "Noah", "entity_id": "person.noah", "notes": ""},
-    ],
+    "people": [],
     "places": [
-        place("beer_belly_us", "Beer Belly's (Jon + MJ)", "zone.beer_bellys", ["jon", "mj"], "all", 60,
-              "Beer Bellys!!", "Include our friends Aaron and Tyler. Beer Belly's is our favorite bar in Anderson, SC."),
-        place("beer_belly_aaron", "Beer Belly's (Aaron)", "zone.beer_bellys", ["aaron"], "any", 10,
-              "Beer Bellys!!", "Beer Belly's is Aaron's favorite bar in Anderson, SC."),
-        place("mj_parents", "MJ's Parents' House", "zone.mjs_parents", [], "any", 5, "Welcome to the House!!"),
-        place("mikala_house", "Mikala's House", "zone.mikalas_house", ["mikala"], "any", 3, "Mikala made it Home!!"),
-        place("our_house", "Our House", "zone.home", ["noah"], "any", 0, "Welcome Noah to Our House!!"),
-        place("alli_house", "Alli's House", "zone.allis_house", [], "any", 5, "Welcome to Alli's House!!",
-              "Alli's house is in Anderson, SC."),
-        place("work_morning", "Jon's Work (morning)", "zone.work", ["jon", "mj"], "all", 5,
-              "You finally made it to work!!", "They are arriving at Jon's work in the morning.",
-              [0, 1, 2, 3, 4], "07:30", "09:30"),
-        place("work_afternoon", "Jon's Work (MJ, afternoon)", "zone.work", ["mj"], "any", 5, "MJ is here!!",
-              "MJ is arriving at Jon's work in Anderson, SC.", [0, 1, 2, 3, 4], "12:30", "17:30"),
+        place("home", "Home", "zone.home", [], "any", 0, "Welcome Home!!"),
     ],
 }
 

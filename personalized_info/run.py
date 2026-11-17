@@ -15,6 +15,17 @@ BASE = "personalized_info"
 DEFAULTS = {"info": "Personalized Info", "music": "Personalized Music"}
 ICONS = {"info": "mdi:account-group", "music": "mdi:music"}
 
+# Each person can be linked to their entities in Home Assistant, so the info sensor also says what they're doing
+# right now (where they are, asleep, at work, gaming...). Role names match the other add-ons: Sleep Tracker makes
+# binary_sensor.<person>_asleep, Work Hours binary_sensor.<person>_at_work and sensor.<person>_hours, PS5 Status a
+# media player, the phone app a device tracker, battery sensor and notify service.
+LINK_ROLES = {
+    "person": "Person", "phone": "Phone (device tracker)", "notify": "Phone notifications", "asleep": "Asleep",
+    "at_work": "At work", "work_hours": "Work hours", "gaming": "Game console", "calendar": "Calendar",
+    "location": "Location sensor",
+}
+LIVE_EVERY = 60  # seconds between live status checks (published only when something changed)
+
 OPT = json.load(open("/data/options.json"))
 CORE = [str(p).lower() for p in OPT.get("core_people", [])]
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
@@ -127,7 +138,7 @@ def clean_music(m):
     m = m.get("music", m)
     if isinstance(m, dict) and "by_person" in m:
         out = {"shared": {"genres": [],
-                          "artists": flat(m.get("jon_and_mj_favorites", {}).get("artists", []))}}
+                          "artists": flat(m.get("shared_favorites", {}).get("artists", []))}}
         for k, v in m["by_person"].items():
             out[k] = {"genres": [g for g in v if g != "other"] if isinstance(v, dict) else [],
                       "artists": flat(v)}
@@ -215,6 +226,299 @@ def load():
         save(d)
     return d
 
+# ---------- Home Assistant states (for linked entities) ----------
+def ha_get(path):
+    req = urllib.request.Request(f"http://supervisor/core/api{path}", headers={"Authorization": f"Bearer {TOKEN}"})
+    return json.load(urllib.request.urlopen(req, timeout=10))
+
+def ha_states():
+    try:
+        return {s["entity_id"]: s for s in ha_get("/states")}
+    except Exception as e:
+        print("Could not read Home Assistant states:", e, flush=True)
+        return {}
+
+def notify_services():
+    try:
+        for d in ha_get("/services"):
+            if d.get("domain") == "notify":
+                return ["notify." + k for k in d.get("services", {})]
+    except Exception:
+        pass
+    return []
+
+def ago(ts):
+    """'since 11:42 PM' from an ISO time."""
+    try:
+        t = datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00")).astimezone()
+        return t.strftime("%I:%M %p").lstrip("0")
+    except Exception:
+        return None
+
+def zone_of(state, states):
+    """A person's state names their zone: "home" is zone.home, any other zone shows its friendly name."""
+    if not state or state in ("not_home", "unknown", "unavailable"):
+        return None
+    if state == "home":
+        return "zone.home"
+    return next((e for e, z in states.items() if e.startswith("zone.")
+                 and ((z.get("attributes") or {}).get("friendly_name") == state or e == "zone." + slug(state))), None)
+
+def zone_places(d):
+    """zone entity -> place key, for places linked to a zone."""
+    out = {}
+    for k, pl in (d.get("places") or {}).items():
+        z = str((pl or {}).get("zone") or "").strip() if isinstance(pl, dict) else ""
+        if z.startswith("zone.") and z not in out:
+            out[z] = k
+    return out
+
+def suggest_zone(d, key, states, name=None):
+    """Best-guess zone for a place: by name, or zone.home for the place a household member calls home."""
+    pl = dict((d.get("places") or {}).get(key) or {})
+    if name:
+        pl["name"] = name
+    words = lambda t: {w for w in re.findall(r"[a-z0-9]+", str(t).lower()) if w not in ("the", "s", "of", "and")}
+    want = words(pl.get("name") or key) | words(key)
+    best, score = None, 0
+    for e, z in states.items():
+        if not e.startswith("zone."):
+            continue
+        have = words((z.get("attributes") or {}).get("friendly_name", "")) | words(e.split(".", 1)[1])
+        sc = len(want & have)
+        if sc > score:
+            best, score = e, sc
+    if not best and "zone.home" in states:
+        for p in d["household"].values():
+            if isinstance(p, dict) and isinstance(p.get("places"), dict) and p["places"].get("home") == key:
+                return "zone.home"
+    return best
+
+def live_status(d, p, states):
+    """What a linked person is doing right now, from their linked entities. None when nothing is linked."""
+    links = p.get("links") if isinstance(p, dict) else None
+    if not isinstance(links, dict) or not states:
+        return None
+    st = lambda role: states.get(str(links.get(role) or ""))
+    out, words = {}, []
+    s = st("person") or st("phone")
+    if s:
+        where = s["state"]
+        zone = zone_of(where, states)
+        where = "home" if where == "home" else "away" if where == "not_home" else \
+            (states.get(zone) or {}).get("attributes", {}).get("friendly_name", where) if zone else where
+        out["location"] = where
+        if zone:
+            out["zone"] = zone
+        key = zone_places(d).get(zone) if zone else None
+        place = (d.get("places") or {}).get(key) if key else None
+        if place:  # a place linked to this zone: say its name, and which of their places it is
+            out["place"] = place.get("name") or key
+            out["place_key"] = key
+            mine = [lbl for lbl, k in (p.get("places") or {}).items() if k == key] if isinstance(p.get("places"), dict) else []
+            if mine:
+                out["place_role"] = mine[0]
+            words.append(f"at {out['place']}" + (f" ({pretty_label(mine[0])})" if mine and slug(mine[0]) != slug(out['place']) else ""))
+        else:
+            words.append(where)
+    s = st("location")
+    if s and s["state"] not in ("unknown", "unavailable", ""):
+        out["location_detail"] = s["state"]
+    s = st("asleep")
+    if s and s["state"] in ("on", "off"):
+        out["asleep"] = s["state"] == "on"
+        if out["asleep"]:
+            since = (s.get("attributes") or {}).get("fell_asleep") or s.get("last_changed")
+            out["asleep_since"] = ago(since)
+            words.append("asleep" + (f" since {out['asleep_since']}" if out["asleep_since"] else ""))
+    s = st("at_work")
+    if s and s["state"] in ("on", "off"):
+        out["at_work"] = s["state"] == "on"
+        if out["at_work"]:
+            words.append("at work")
+    s = st("work_hours")
+    if s and s["state"] not in ("unknown", "unavailable"):
+        out["work_hours"] = s["state"]
+    s = st("gaming")
+    if s:
+        a = s.get("attributes") or {}
+        if s["state"] == "playing" and a.get("media_title"):
+            out["playing"] = a["media_title"]
+            words.append(f"playing {a['media_title']}")
+        else:
+            out["console"] = s["state"]
+    s = st("calendar")
+    if s and s["state"] == "on":
+        out["busy_with"] = (s.get("attributes") or {}).get("message")
+        if out["busy_with"]:
+            words.append(f"busy: {out['busy_with']}")
+    phone = str(links.get("phone") or "")
+    if phone.startswith("device_tracker."):
+        b = states.get(f"sensor.{phone.split('.', 1)[1]}_battery_level")
+        if b and b["state"] not in ("unknown", "unavailable"):
+            out["phone_battery"] = b["state"]
+            words.append(f"phone {b['state']}%")
+    out["text"] = " · ".join(words)
+    return out or None
+
+def pretty_label(t):
+    return str(t).replace("_", " ")
+
+def suggest_links(d, key, states):
+    """Find a person's entities by the names the other add-ons and the phone app use."""
+    p = d["household"].get(key) or d["friends"].get(key) or {}
+    links = dict(p.get("links") or {}) if isinstance(p.get("links"), dict) else {}
+    name = slug(p.get("name") or key)
+    person = links.get("person") or next((e for e in (f"person.{key}", f"person.{name}") if e in states), None)
+    if not person:
+        person = next((e for e, s in states.items() if e.startswith("person.")
+                       and slug((s.get("attributes") or {}).get("friendly_name", "")) in (key, name)), None)
+    found = {}
+    if person:
+        found["person"] = person
+    ps = person.split(".", 1)[1] if person else name
+    trackers = list(((states.get(person) or {}).get("attributes") or {}).get("device_trackers") or []) if person else []
+    phone = links.get("phone") or next((t for t in trackers if any(x in t for x in ("iphone", "phone", "pixel", "galaxy"))), None) \
+        or next((t for t in trackers if f"sensor.{t.split('.', 1)[1]}_battery_level" in states), None)
+    if phone:
+        found["phone"] = phone
+        base = phone.split(".", 1)[1]
+        svc = f"notify.mobile_app_{base}"
+        if svc in notify_services():
+            found["notify"] = svc
+    for role, ids in (("asleep", [f"binary_sensor.{ps}_asleep", f"binary_sensor.{key}_asleep"]),
+                      ("at_work", [f"binary_sensor.{ps}_at_work", f"binary_sensor.{key}_at_work"]),
+                      ("work_hours", [f"sensor.{ps}_hours", f"sensor.{key}_hours"]),
+                      ("calendar", [f"calendar.{ps}", f"calendar.{key}"]),
+                      ("location", [f"sensor.{ps}_location", f"sensor.{key}_location"])):
+        hit = next((e for e in ids if e in states), None)
+        if hit:
+            found[role] = hit
+    consoles = [e for e in states if e.startswith("media_player.") and any(x in e for x in ("ps5", "playstation", "xbox"))]
+    mine = [e for e in consoles if ps in e or key in e]
+    if mine:
+        found["gaming"] = mine[0]
+    return {r: e for r, e in found.items() if not links.get(r)}, found
+
+# ---------- birthdays ----------
+MONTHS = {m.lower(): i for i, m in enumerate(["January", "February", "March", "April", "May", "June", "July", "August",
+                                              "September", "October", "November", "December"], 1)}
+
+def parse_birthday(v):
+    """(year or None, month, day) from 2000-01-15, 01-15, 1/15/2000, Jan 15 2000, Jan 15..."""
+    t = str(v or "").strip()
+    m = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})$", t) or re.match(r"^()(\d{1,2})-(\d{1,2})$", t)
+    if m:
+        y, mo, da = m.group(1), int(m.group(2)), int(m.group(3))
+    else:
+        m = re.match(r"^(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?$", t)
+        if m:
+            mo, da, y = int(m.group(1)), int(m.group(2)), m.group(3) or ""
+            if len(y) == 2:
+                y = ("19" if int(y) > 30 else "20") + y
+        else:
+            m = re.match(r"^([A-Za-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})?$", t)
+            if not m or m.group(1).lower()[:3] not in {k[:3] for k in MONTHS}:
+                return None
+            mo = next(i for k, i in MONTHS.items() if k[:3] == m.group(1).lower()[:3])
+            da, y = int(m.group(2)), m.group(3) or ""
+    try:
+        datetime.date(2000, mo, da)
+    except ValueError:
+        return None
+    return (int(y) if y else None), mo, da
+
+BIRTHDAY_KEYS = ("birthday", "dob", "date_of_birth", "birth_date", "birthdate")
+
+def birthday_of(p):
+    """(field name, (year, month, day)) from whichever birthday field the person uses, or (None, None)."""
+    for key in BIRTHDAY_KEYS:
+        if p.get(key):
+            b = parse_birthday(p[key])
+            if b:
+                return key, b
+    return None, None
+
+def age_of(b):
+    if not b or not b[0]:
+        return None
+    y, mo, da = b
+    t = datetime.date.today()
+    return t.year - y - ((t.month, t.day) < (mo, da))
+
+# Fields that something better already covers. They're left out of the sensor (so the AI never gets a stale
+# duplicate) and the page offers to remove them.
+HOME_FIELDS = re.compile(r"^(home|home_?(location|address|town|city|area)|address|lives_?(in|at)?|residence)$")
+WORK_FIELDS = re.compile(r"^(work_?(location|address|place|site)|workplace|works_at|job_location|office_location)$")
+
+def linked_place(d, p, labels):
+    links = p.get("places") if isinstance(p.get("places"), dict) else {}
+    for label, key in links.items():
+        if re.fullmatch(labels, slug(label)):
+            pl = (d.get("places") or {}).get(key)
+            if isinstance(pl, dict) and (str(pl.get("zone") or "").startswith("zone.") or str(pl.get("address") or "").strip()):
+                return key, pl
+    return None, None
+
+def covered_fields(d, p):
+    """{field: why it's covered} for one person."""
+    if not isinstance(p, dict):
+        return {}
+    out = {}
+    for rx, labels, what in ((HOME_FIELDS, r"home", "home"), (WORK_FIELDS, r"work|job|office", "work")):
+        key, pl = linked_place(d, p, labels)
+        if not pl:
+            continue
+        how = "zone" if str(pl.get("zone") or "").startswith("zone.") else "address"
+        for f in p:
+            if rx.match(slug(f)) and f not in out:
+                out[f] = f"{pl.get('name') or key} ({what} place with a {how})"
+    used, b = birthday_of(p)
+    if used:
+        for f in BIRTHDAY_KEYS:
+            if f != used and f in p:
+                out[f] = f"the {used.replace('_', ' ')} field"
+        if b[0] and "age" in p:
+            out["age"] = f"their {used.replace('_', ' ')} (age is worked out from it)"
+    return out
+
+def birthdays(d):
+    today = datetime.date.today()
+    out = []
+    for g in ("household", "friends"):
+        for k, p in d[g].items():
+            if not isinstance(p, dict):
+                continue
+            _, b = birthday_of(p)
+            if not b:
+                continue
+            y, mo, da = b
+            def on(year):  # Feb 29 falls on Feb 28 in other years
+                try:
+                    return datetime.date(year, mo, da)
+                except ValueError:
+                    return datetime.date(year, 2, 28)
+            nxt = on(today.year)
+            if nxt < today:
+                nxt = on(today.year + 1)
+            item = {"key": k, "name": p.get("name", k), "group": g, "date": nxt.isoformat(),
+                    "days": (nxt - today).days}
+            if y:
+                item["turning"] = nxt.year - y
+                item["age"] = item["turning"] - (1 if nxt != today else 0)
+            out.append(item)
+    out.sort(key=lambda x: x["days"])
+    return out
+
+def birthdays_text(items):
+    parts = []
+    for b in items[:8]:
+        when = "today" if b["days"] == 0 else "tomorrow" if b["days"] == 1 else f"in {b['days']} days"
+        parts.append(f"{b['name']} {'turns ' + str(b['turning']) if b.get('turning') else 'has a birthday'} {when}"
+                     + ("" if b["days"] < 2 else " (%s %d)" % (datetime.date.fromisoformat(b["date"]).strftime("%b"),
+                                                      datetime.date.fromisoformat(b["date"]).day)))
+    return ". ".join(parts) + ("." if parts else "")
+
 # ---------- sensor content ----------
 def count_facts(o):
     if isinstance(o, dict):
@@ -245,7 +549,9 @@ def people_text(people, only=None):
         if not isinstance(data, dict):
             continue
         header = str(data.get("name", key)).upper()
-        blocks.append("\n".join([header] + to_text(data, 1)))
+        shown = {k: v for k, v in data.items() if k not in ("entities", "now")}
+        now = (data.get("now") or {}).get("text")
+        blocks.append("\n".join([header] + ([f"  right now: {now}"] if now else []) + to_text(shown, 1)))
     return "\n\n".join(blocks)
 
 def pname(d, k):
@@ -269,8 +575,8 @@ def prune(o):
         return [x for x in (prune(i) for i in o) if x not in empty]
     return o
 
-def resolve_places(d, p):
-    """Turn a person's place links (label: place key) into the full place info."""
+def resolve_places(d, p, now=None):
+    """Turn a person's place links (label: place key) into the full place info, marking the one they're at."""
     links = p.get("places")
     if not isinstance(links, dict):
         return None
@@ -278,18 +584,30 @@ def resolve_places(d, p):
     for label, key in links.items():
         pl = d["places"].get(key)
         out[label] = {"key": key, **prune(pl)} if isinstance(pl, dict) else {"key": key, "missing": True}
+        if now and now.get("place_key") == key:
+            out[label]["here_now"] = True
     return out or None
 
-def with_extras(d, group):
-    """Copy of a group (household/friends) with each person's music and full place info."""
+def with_extras(d, group, states=None):
+    """Copy of a group (household/friends) with each person's music, full place info and what they're doing now.
+    Blank fields (like an unfilled birthday) stay out."""
     out = {}
     for k, p in group.items():
         if not isinstance(p, dict):
             out[k] = p
             continue
-        q = dict(p)
+        q = prune({f: v for f, v in p.items() if f not in covered_fields(d, p)})
         q.pop("places", None)
-        pl = resolve_places(d, p)
+        _, b = birthday_of(p)
+        if age_of(b) is not None:
+            q["age"] = age_of(b)
+        links = q.pop("links", None)
+        if links:
+            q["entities"] = links
+        now = live_status(d, p, states or {})
+        if now:
+            q["now"] = now
+        pl = resolve_places(d, p, now)
         if pl:
             q["places"] = pl
         m = person_music(d, k)
@@ -298,10 +616,10 @@ def with_extras(d, group):
         out[k] = q
     return out
 
-def build_info(d):
+def build_info(d, states=None):
     raw_hh, raw_fr, other = d["household"], d["friends"], d["other"]
-    total = count_facts({"household": raw_hh, "friends": raw_fr, **other})
-    hh, fr = with_extras(d, raw_hh), with_extras(d, raw_fr)
+    total = count_facts({"household": prune(raw_hh), "friends": prune(raw_fr), **other})
+    hh, fr = with_extras(d, raw_hh, states), with_extras(d, raw_fr, states)
     now = datetime.datetime.now()
     ts = f"{now.strftime('%m/%d/%y')} - {now.strftime('%I:%M%p').lstrip('0').lower()}"
     everyone = {}
@@ -312,14 +630,31 @@ def build_info(d):
         if isinstance(v, dict):
             everyone[k] = {"group": "friends", **v}
     music_by_person = {k: v["music"] for k, v in everyone.items() if "music" in v}
+    status = {k: v["now"] for k, v in everyone.items() if v.get("now")}
+    places = prune(d["places"])
+    for pk, pl in places.items():
+        if isinstance(pl, dict):
+            here = [everyone[k].get("name", k) for k, v in status.items() if v.get("place_key") == pk]
+            if here:
+                pl["people_here"] = here
+    bdays = birthdays(d)
     attrs = {
         "total_facts": total, "last_update": ts,
         "household_count": len(hh), "friends_count": len(fr),
         "sections": ["household", "friends"] + list(other.keys()),
         "household": hh, "friends": fr, "everyone": everyone,
         "music_by_person": music_by_person,
-        "places": prune(d["places"]),
-        "core_text": people_text(hh, only=CORE),
+        "places": places,
+        "places_text": "\n".join(f"{pl.get('name', pk)}" + (f" ({pl['zone']})" if pl.get("zone") else "")
+                                 + (f": {', '.join(pl['people_here'])} here now" if pl.get("people_here") else "")
+                                 for pk, pl in places.items() if isinstance(pl, dict)),
+        "status": status,
+        "status_text": "\n".join(f"{everyone[k].get('name', k)}: {v['text']}" for k, v in status.items() if v.get("text")),
+        "birthdays": bdays,
+        "birthdays_today": [b["name"] for b in bdays if b["days"] == 0],
+        "birthdays_text": birthdays_text(bdays),
+        "entities": {k: v["entities"] for k, v in everyone.items() if v.get("entities")},
+        "core_text": people_text({k: v for k, v in hh.items() if k in CORE}),
         "household_text": people_text(hh),
         "friends_text": people_text(fr),
     }
@@ -348,6 +683,7 @@ def build_music(d):
     }
 
 BUILDERS = {"info": build_info, "music": build_music}
+last_sent = {}
 
 # ---------- MQTT (with REST fallback) ----------
 client = None
@@ -373,12 +709,19 @@ def rest_post(eid, state, attrs):
         headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"})
     urllib.request.urlopen(req, timeout=10).read()
 
-def publish_all():
+def publish_all(only_changes=False):
     try:
         d = load()
-        built = {k: fn(d) for k, fn in BUILDERS.items()}
+        states = ha_states() if any(isinstance(p, dict) and p.get("links") for g in ("household", "friends")
+                                    for p in d[g].values()) else {}
+        built = {"info": build_info(d, states), "music": build_music(d)}
     except Exception as e:
         print("Build failed:", e, flush=True)
+        return
+    # the live status changes often; only send when something besides the timestamp changed
+    sig = json.dumps({k: (v[1] if k != "info" else {a: b for a, b in v[1].items() if a != "last_update"})
+                      for k, v in built.items()}, sort_keys=True, default=str)
+    if only_changes and last_sent.get("sig") == sig:
         return
     try:
         if client is not None:
@@ -392,6 +735,7 @@ def publish_all():
                 client.publish(f"{BASE}/{k}/attributes",
                                json.dumps(attrs, ensure_ascii=False, default=str),
                                qos=1, retain=True)
+            last_sent["sig"] = sig
             print("MQTT sensors published", flush=True)
         else:
             for k, (state, attrs) in built.items():
@@ -399,6 +743,7 @@ def publish_all():
                 a["friendly_name"] = SET[k]["name"]
                 a["icon"] = ICONS[k]
                 rest_post(SET[k]["entity_id"], state, a)
+            last_sent["sig"] = sig
             print("REST sensors published (no unique ID)", flush=True)
     except Exception as e:
         print("Publish failed:", e, flush=True)
@@ -460,7 +805,8 @@ async def index(r):
     return web.FileResponse("/index.html")
 
 async def get_data(r):
-    return web.json_response(load())
+    # a hand-edited date (birthday: 2000-01-15 without quotes) loads as a date object: send it as text
+    return web.json_response(load(), dumps=lambda o: json.dumps(o, default=str))
 
 async def post_data(r):
     d = await r.json()
@@ -469,6 +815,47 @@ async def post_data(r):
     save(d)
     publish_all()
     return web.json_response({"ok": True})
+
+async def get_entities(r):
+    """Entities and notify services for the pickers, plus the link roles."""
+    loop = asyncio.get_running_loop()
+    states = await loop.run_in_executor(None, ha_states)
+    keep = ("person.", "device_tracker.", "binary_sensor.", "sensor.", "media_player.", "calendar.", "zone.")
+    ents = [{"id": e, "name": (s.get("attributes") or {}).get("friendly_name", e)} for e, s in sorted(states.items())
+            if e.startswith(keep)]
+    svcs = await loop.run_in_executor(None, notify_services)
+    ents += [{"id": s, "name": "Notify service"} for s in svcs]
+    return web.json_response({"entities": ents, "roles": LINK_ROLES})
+
+async def get_suggest(r):
+    key = r.query.get("person", "")
+    loop = asyncio.get_running_loop()
+    d = await loop.run_in_executor(None, load)
+    if key not in d["household"] and key not in d["friends"]:
+        return web.json_response({"ok": False, "error": "Save the person first."})
+    states = await loop.run_in_executor(None, ha_states)
+    new, found = await loop.run_in_executor(None, suggest_links, d, key, states)
+    return web.json_response({"ok": True, "new": new, "found": found})
+
+async def get_zone_suggest(r):
+    key, name = r.query.get("place", ""), r.query.get("name", "")
+    loop = asyncio.get_running_loop()
+    d = await loop.run_in_executor(None, load)
+    states = await loop.run_in_executor(None, ha_states)
+    z = suggest_zone(d, key, states, name or None)  # works before the place is saved: matched by its name
+    name = (states.get(z) or {}).get("attributes", {}).get("friendly_name") if z else None
+    return web.json_response({"ok": True, "zone": z, "name": name})
+
+async def get_preview(r):
+    """What the info sensor says about each person right now (for the page)."""
+    loop = asyncio.get_running_loop()
+    d = await loop.run_in_executor(None, load)
+    states = await loop.run_in_executor(None, ha_states)
+    _, attrs = build_info(d, states)
+    covered = {k: c for g in ("household", "friends") for k, p in d[g].items() if (c := covered_fields(d, p))}
+    return web.json_response({"status": attrs["status"], "birthdays": attrs["birthdays"], "places": attrs["places"],
+                              "covered": covered,
+                              "birthdays_text": attrs["birthdays_text"]})
 
 async def get_settings(r):
     out = {k: {"name": SET[k]["name"], "entity_id": SET[k]["entity_id"],
@@ -493,12 +880,12 @@ async def start_bg(app):
     async def tick():
         n = 0
         while True:
-            await asyncio.sleep(60)
+            await asyncio.sleep(LIVE_EVERY)
             n += 1
             if client is None:
                 await loop.run_in_executor(None, start_mqtt)
-            if n % 10 == 0:
-                await loop.run_in_executor(None, publish_all)
+            # every minute: republish if anyone's live status changed; every 10 minutes regardless
+            await loop.run_in_executor(None, publish_all, n % 10 != 0)
     _spawn(tick())
 
 _BG_TASKS: set = set()  # keep references so background tasks are not garbage-collected mid-run
@@ -516,6 +903,10 @@ app.router.add_get("/", index)
 app.router.add_get("/api/data", get_data)
 app.router.add_post("/api/data", post_data)
 app.router.add_get("/api/settings", get_settings)
+app.router.add_get("/api/entities", get_entities)
+app.router.add_get("/api/suggest", get_suggest)
+app.router.add_get("/api/preview", get_preview)
+app.router.add_get("/api/zone_suggest", get_zone_suggest)
 app.router.add_post("/api/settings", post_settings)
 app.on_startup.append(start_bg)
 web.run_app(app, host="0.0.0.0", port=8099)

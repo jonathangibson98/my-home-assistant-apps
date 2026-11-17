@@ -1,12 +1,20 @@
 # Changelog
 
+## 3.5.0 - 2026-11-16
+
+- **Follows your Home Assistant theme.** The web UI now uses the colors of whatever theme Home Assistant is showing, light or dark, and changes live when you switch. Themes with a dashboard wallpaper and frosted-glass cards (like Apple / Liquid Glass themes) carry over too: wallpaper behind, see-through blurred cards, matching corners. Opened outside Home Assistant it keeps its own look.
+
+## 3.4.1
+
+- Removed personal names, places and home-specific entity IDs from the defaults, examples and docs, so new installs start clean.
+
 ## 3.4.0
 
 - **New Arrivals section** (home page tiles, or the Arrivals button at the top of the Location Hub page). It does
   what the AppDaemon `PresenceSensors` app did (`sensor.arrived_home`), inside the add-on, and for **any zone**,
   not only home.
 - Every zone gets a sensor, `sensor.arrived_<zone>` (Home is `sensor.arrived_home`). The state is who arrived:
-  `jon_home`, `jon_mj_work`, or a **group name** you set for an exact set of people. People who arrive at the
+  `alex_home`, `alex_sam_work`, or a **group name** you set for an exact set of people. People who arrive at the
   same place within the **group window** count as one group.
 - After the **clear time** the sensor returns to `no one arriving`. With nobody at the place it shows `nobody home`
   (Home) or `nobody here` (any other zone). Each sensor has a `<person>_<zone>` true/false attribute per person.
