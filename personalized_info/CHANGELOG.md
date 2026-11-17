@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.1 - 2026-11-17
+
+- **✨ Default AI** at the top of the page: pick the AI Task every add-on uses when its own `ai_task_entity` is empty (Personalized Info, Creator, Pi Health, Photo Hub, Sleep Tracker, Work Hours, Team Tracker, Release Tracker, Mobile Files, iCloud Lite). It's also a Home Assistant entity, `select.default_ai_task` (or `sensor.default_ai_task` without MQTT), so a dashboard or automation can change it.
+
 ## 0.8.0 - 2026-11-17
 
 - **AI help**, using a Home Assistant AI Task entity (`ai_task_entity`, empty picks one). It works on what's on the page, saved or not, and only adds something when you tap it:
