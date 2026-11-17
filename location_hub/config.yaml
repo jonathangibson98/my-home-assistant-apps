@@ -1,5 +1,5 @@
 name: "Location Hub"
-version: "3.5.0"
+version: "3.6.0"
 slug: location_hub
 # Prebuilt images from your GitHub package (built by .github/workflows/create.yml when you push a new version to main).
 # Home Assistant fills in {arch}, then downloads this instead of building on the Pi.
@@ -41,6 +41,7 @@ options:
   mqtt_port: 1883
   mqtt_username: ""
   mqtt_password: ""
+  wallpaper: ""
 schema:
   sensor_name: str
   sync_entity_id: bool
@@ -55,3 +56,4 @@ schema:
   mqtt_port: int?
   mqtt_username: str?
   mqtt_password: password?
+  wallpaper: str?

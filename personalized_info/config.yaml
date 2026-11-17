@@ -1,5 +1,5 @@
 name: Personalized Info
-version: "0.6.0"
+version: "0.7.0"
 slug: personalized_info
 image: "ghcr.io/jonathangibson98/{arch}-addon-personalized_info"
 description: Edit everyone's info and music in one place
@@ -21,6 +21,7 @@ options:
   mqtt_port: 1883
   mqtt_username: ""
   mqtt_password: ""
+  wallpaper: ""
 schema:
   core_people:
     - str
@@ -28,3 +29,4 @@ schema:
   mqtt_port: port?
   mqtt_username: str?
   mqtt_password: password?
+  wallpaper: str?
