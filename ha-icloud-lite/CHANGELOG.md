@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.7.1 - 2026-11-16
+
+- Updated pyicloud to 2026.10.1 (newer Apple login handling). Its new built-in background polling is turned off, since iCloud Lite already refreshes on your interval, so Apple isn't asked twice as often.
+
 ## 2.7.0 - 2026-11-16
 
 - **Follows your Home Assistant theme.** The web UI now uses the colors of whatever theme Home Assistant is showing, light or dark, and changes live when you switch. Themes with a dashboard wallpaper and frosted-glass cards (like Apple / Liquid Glass themes) carry over too: wallpaper behind, see-through blurred cards, matching corners. Opened outside Home Assistant it keeps its own look.
