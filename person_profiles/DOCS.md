@@ -3,7 +3,7 @@
 ## Sensors
 
 ### `sensor.person_profile_<name>`
-State: a short rule-based line, for example `Jon: home, battery 82%`.
+State: a short rule-based line, for example `Alex: home, battery 82%`.
 
 Attributes:
 
@@ -45,15 +45,15 @@ Example:
 
 ```yaml
 people:
-  - person.jon
+  - person.alex
 ai_task_entity: ai_task.my_assistant
 ai_interval_minutes: 60
 exclude_entity_patterns:
   - sensor.*_uptime
 person_extras:
-  - person: person.jon
+  - person: person.alex
     entities:
-      - sensor.jon_work_laptop
+      - sensor.alex_work_laptop
 ```
 
 ## Events
@@ -69,7 +69,7 @@ Ask the AI a question about a person.
 ```yaml
 event: person_profile_ask
 event_data:
-  person: person.jon
+  person: person.alex
   question: "Is he usually home by 6pm?"
   request_id: abc123
 ```

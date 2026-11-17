@@ -35,8 +35,8 @@ def load_devices():
                 return json.load(f)
         except Exception:
             pass
-    # Default initial device if file doesn't exist yet
-    return [{"label": "Jon", "entity_id": "device_tracker.jon_phone", "home_state": "home"}]
+    # No devices until you add them in the UI
+    return []
 
 def save_devices(entities):
     with open(DEVICES_PATH, "w") as f:
@@ -382,7 +382,7 @@ async def publish(s, count, attrs):
 
 def refresh_entities_map():
     # Labels, entity IDs, and home-state overrides are all forced to lowercase.
-    # Spaces in labels become underscores ("MJ Phone" -> "mj_phone").
+    # Spaces in labels become underscores ("Sam Phone" -> "sam_phone").
     entities = load_devices()
     return {
         e["label"].strip().lower().replace(" ", "_"): (
@@ -667,21 +667,7 @@ async def listen(s):
                 await safe_update_trackers(s)
 
 # ---------------- Dashboard card generator ----------------
-CARD_SEED = {
-    "jon": ("household", "person.jon"),
-    "mj": ("household", "person.mj"),
-    "nova": ("household", "input_boolean.nova_here"),
-    "blake": ("household", "input_boolean.blake_here"),
-    "von": ("friends", "input_boolean.von_here"),
-    "justin": ("friends", "person.justin"),
-    "alli": ("friends", "input_boolean.alli_here"),
-    "tyler": ("friends", "input_boolean.tyler_here"),
-    "mikala": ("friends", "person.mikala"),
-    "noah": ("friends", "person.noah"),
-    "aaron": ("friends", "person.aaron"),
-    "derek": ("friends", "input_boolean.d_here"),
-    "steph": ("friends", "input_boolean.steph_here"),
-}
+CARD_SEED = {}  # e.g. {"alex": ("household", "person.alex")}
 CARD_GROUPS = ("household", "friends", "hidden")
 
 def card_key(label):

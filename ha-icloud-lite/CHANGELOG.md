@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.7.0 - 2026-11-16
+
+- **Follows your Home Assistant theme.** The web UI now uses the colors of whatever theme Home Assistant is showing, light or dark, and changes live when you switch. Themes with a dashboard wallpaper and frosted-glass cards (like Apple / Liquid Glass themes) carry over too: wallpaper behind, see-through blurred cards, matching corners. Opened outside Home Assistant it keeps its own look.
+
+## 2.6.3
+
+- Removed personal names, places and home-specific entity IDs from the defaults, examples and docs, so new installs start clean.
+
 ## 2.6.2
 - Fix: the image build failed for amd64 because the Dockerfile defaulted to the aarch64 base image. It now uses the multi-platform Home Assistant base image.
 
