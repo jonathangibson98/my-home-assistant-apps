@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.8.0 - 2026-11-16
+
+- **Pick the web UI wallpaper.** New **Wallpaper** option on the Configuration tab. Leave it empty to use your Home Assistant theme's wallpaper, enter `none` for no wallpaper, or point it at your own image: drop it in `/config/www` and enter the file name (e.g. `wallpaper.jpg`), `/local/wallpaper.jpg`, or a full `https://` link.
+
 ## 2.7.1 - 2026-11-16
 
 - Updated pyicloud to 2026.10.1 (newer Apple login handling). Its new built-in background polling is turned off, since iCloud Lite already refreshes on your interval, so Apple isn't asked twice as often.
