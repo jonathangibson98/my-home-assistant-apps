@@ -55,6 +55,8 @@ input[type=checkbox]{width:22px;height:22px}
 .now{font-weight:400;color:var(--ok);font-size:14px}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 .chips button{font-size:13px;padding:6px 10px;background:var(--accsoft)}
+.ha.ai textarea{margin-top:8px}.answer{white-space:pre-wrap;margin-top:10px;line-height:1.5}
+.pickrow{display:flex;gap:8px;align-items:flex-start;margin:6px 0;font-size:14px;color:var(--txt)}.pickrow input{width:auto;margin-top:3px}
 .ha{border-left:2px solid var(--acc);margin:14px 0 4px 6px;padding-left:10px}
 .ha .rl{display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center;margin-top:8px}
 .ha .rl label{margin:0}
@@ -717,6 +719,7 @@ window.__hbAddon = "personalized_info";
   <button data-t="music" onclick="go('music')">Music</button>
   <button data-t="places" onclick="go('places')">Places</button>
   <button data-t="other" onclick="go('other')">Other</button>
+  <button data-t="ask" onclick="go('ask')">&#10024; Ask</button>
 </nav>
 
 <main id="main"></main>
@@ -857,7 +860,7 @@ function people() {
       const now = (LIVE.status[k] || {}).text;
       const title = h('span', {}, p.name || k, now ? h('span', {className: 'now', textContent: '  ' + now}) : null);
       f.append(card(g + k, title,
-        h('div', {}, coveredNote(k, p), fields(p, [...Object.keys(RESERVED), ...Object.keys(covered(k, p))]), quickAdd(p), adder(p, RESERVED), placeLinks(p), haLinks(g, k, p)),
+        h('div', {}, coveredNote(k, p), fields(p, [...Object.keys(RESERVED), ...Object.keys(covered(k, p))]), quickAdd(p), adder(p, RESERVED), aiBox(g, k, p), placeLinks(p), haLinks(g, k, p)),
         h('div', {className: 'add'},
           h('button', {className: 'del', textContent: 'Delete person', onclick: () => {
             if (confirm('Delete ' + (p.name || k) + ' and their music?')) {
@@ -1052,7 +1055,7 @@ function places() {
       h('div', {},
         h('div', {className: 'meta', textContent: 'Used by: ' + (used.length ? used.join(', ') : 'nobody yet')}),
         zoneRow(k, pl, here),
-        fields(pl, ['zone']), adder(pl, {zone: 'The zone is set at the top of the place.'})),
+        fields(pl, ['zone']), adder(pl, {zone: 'The zone is set at the top of the place.'}), placeAi(k, pl)),
       h('div', {className: 'add'},
         pl.hours ? null : h('button', {textContent: '+ Weekly hours', onclick: () => {
           pl.hours = blankHours(); touch(); draw();
@@ -1213,6 +1216,102 @@ function other() {
   return f;
 }
 
+/* ---------- AI help (your Home Assistant AI Task) ---------- */
+async function ai(body) {
+  try { return await (await fetch('api/ai', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(Object.assign({data: D}, body))})).json(); }
+  catch (e) { return {ok: false, error: 'Could not reach the app: ' + e.message}; }
+}
+const emptyFor = kind => kind === 'list' ? [] : '';
+function fieldChips(target, list, msg) {
+  return h('div', {className: 'chips'}, list.map(f => h('button', {title: f.why || '', textContent: '+ ' + (f.label || pretty(f.field)), onclick: e => {
+    if (!(f.field in target)) target[f.field] = emptyFor(f.kind);
+    e.target.remove(); touch(); msg.textContent = 'Added. Fill it in, then Save.';
+    setTimeout(draw, 600);
+  }})));
+}
+function aiBox(g, k, p) {
+  const box = h('div', {className: 'ha ai'}), out = h('div'), msg = h('div', {className: 'meta'});
+  const busy = t => { msg.textContent = t; };
+  const needSave = () => false;
+  const notes = h('textarea', {placeholder: 'Paste or type notes about ' + (p.name || k) + ', e.g. "Loves the Panthers and Call of Duty, birthday March 3rd, works nights at the hospital"'});
+  notes.hidden = true;
+  box.append(h('label', {textContent: '✨ AI help'}),
+    h('div', {className: 'chips'},
+      h('button', {textContent: 'Suggest fields', onclick: async () => {
+        if (needSave()) return; busy('Thinking…'); out.replaceChildren();
+        const r = await ai({action: 'suggest', group: g, key: k});
+        if (!r.ok) { busy(r.error); return; }
+        busy(r.fields.length ? 'Tap the ones you want (hover for why):' : 'Nothing to add, they look complete.');
+        out.replaceChildren(fieldChips(p, r.fields, msg));
+      }}),
+      h('button', {textContent: 'Fill from notes', onclick: () => { notes.hidden = !notes.hidden; if (!notes.hidden) notes.focus(); goBtn.hidden = notes.hidden; }}),
+      h('button', {textContent: 'Tidy fields', onclick: async () => {
+        if (needSave()) return; busy('Looking for duplicates and unclear names…'); out.replaceChildren();
+        const r = await ai({action: 'tidy', group: g, key: k});
+        if (!r.ok) { busy(r.error); return; }
+        const n = Object.keys(r.rename).length + r.remove.length;
+        if (!n) { busy('Already tidy. ' + (r.notes || '')); return; }
+        busy(r.notes || 'Suggested changes:');
+        out.replaceChildren(h('div', {className: 'meta'}, ...Object.entries(r.rename).map(([a, b]) => h('div', {textContent: 'Rename ' + pretty(a) + ' → ' + pretty(b)})),
+          ...r.remove.map(a => h('div', {textContent: 'Remove ' + pretty(a) + (p[a] === '' || (Array.isArray(p[a]) && !p[a].length) ? ' (empty)' : ': ' + JSON.stringify(p[a]).slice(0, 60))}))),
+          h('div', {className: 'add'}, h('button', {textContent: 'Apply', onclick: () => {
+            for (const [a, b] of Object.entries(r.rename)) { if (!(b in p)) p[b] = p[a]; else if (Array.isArray(p[b]) && Array.isArray(p[a])) p[b] = [...new Set([...p[b], ...p[a]])]; delete p[a]; }
+            for (const a of r.remove) delete p[a];
+            touch(); draw(); status('Tidied. Check it, then Save.', 'warn');
+          }})));
+      }}),
+      h('button', {textContent: 'Gift ideas', onclick: async () => {
+        if (needSave()) return; busy('Thinking…');
+        const r = await ai({action: 'gifts', group: g, key: k});
+        busy(r.ok ? '' : r.error); out.replaceChildren(r.ok ? h('div', {className: 'answer', textContent: r.text}) : '');
+      }})),
+    notes);
+  const goBtn = h('button', {textContent: 'Turn notes into fields', hidden: true, onclick: async () => {
+    if (needSave()) return; busy('Reading your notes…'); out.replaceChildren();
+    const r = await ai({action: 'notes', group: g, key: k, notes: notes.value});
+    if (!r.ok) { busy(r.error); return; }
+    const f = r.fields, keys = Object.keys(f);
+    if (!keys.length) { busy('Nothing to add from those notes.'); return; }
+    busy('Found these. Untick anything wrong, then Add:');
+    const pick = {};
+    out.replaceChildren(...keys.map(x => { pick[x] = true; const cur = p[x];
+      return h('label', {className: 'pickrow'}, h('input', {type: 'checkbox', checked: true, onchange: e => { pick[x] = e.target.checked; }}),
+        h('span', {textContent: pretty(x) + ': ' + (Array.isArray(f[x]) ? f[x].join(', ') : typeof f[x] === 'object' ? JSON.stringify(f[x]) : f[x]) + (cur !== undefined && JSON.stringify(cur) !== JSON.stringify(f[x]) ? '  (replaces ' + JSON.stringify(cur).slice(0, 40) + ')' : '')})); }),
+      h('div', {className: 'add'}, h('button', {textContent: 'Add', onclick: () => {
+        for (const x of keys) if (pick[x]) {
+          if (Array.isArray(p[x]) && Array.isArray(f[x])) p[x] = [...new Set([...p[x], ...f[x]])]; else p[x] = f[x];
+        }
+        notes.value = ''; touch(); draw(); status('Added from notes. Check them, then Save.', 'warn');
+      }})));
+  }});
+  box.append(h('div', {className: 'add'}, goBtn), msg, out);
+  return box;
+}
+function placeAi(k, pl) {
+  const msg = h('div', {className: 'meta'}), out = h('div');
+  return h('div', {className: 'ha ai'}, h('label', {textContent: '✨ AI help'}),
+    h('div', {className: 'chips'}, h('button', {textContent: 'Suggest fields', onclick: async () => {
+      msg.textContent = 'Thinking…';
+      const r = await ai({action: 'place_fields', key: k});
+      if (!r.ok) { msg.textContent = r.error; return; }
+      msg.textContent = r.fields.length ? 'Tap the ones you want:' : 'Nothing to add.';
+      out.replaceChildren(fieldChips(pl, r.fields, msg));
+    }})), msg, out);
+}
+function askTab() {
+  const f = h('div'), q = h('textarea', {placeholder: "e.g. Whose birthday is next? What should I get Sam? Who's into the Panthers? What's missing that the voice assistant could use?"});
+  const out = h('div', {className: 'answer'}), msg = h('div', {className: 'meta'});
+  const go = async () => {
+    msg.textContent = 'Thinking…'; out.textContent = '';
+    const r = await ai({action: 'ask', question: q.value});
+    msg.textContent = r.ok ? '' : r.error; out.textContent = r.ok ? r.text : '';
+  };
+  f.append(h('p', {className: 'note', textContent: 'Ask anything about the people, places and music saved here. Your Home Assistant AI Task answers from what is on this page.'}),
+    q, h('div', {className: 'chips'}, ...["Whose birthday is next?", "What info is missing for the voice assistant?", "Who likes the same things?", "Summarize the household"].map(t => h('button', {textContent: t, onclick: () => { q.value = t; go(); }}))),
+    h('div', {className: 'add'}, h('button', {className: 'pri', textContent: 'Ask', onclick: go})), msg, out);
+  return f;
+}
+
 /* ---------- shell ---------- */
 function go(t) { tab = t; adding = false; draw(); window.scrollTo(0, 0); }
 
@@ -1221,6 +1320,7 @@ function draw() {
   const view = tab === 'people' ? people()
     : tab === 'music' ? music()
     : tab === 'places' ? places()
+    : tab === 'ask' ? askTab()
     : other();
   $('#main').replaceChildren(view);
   document.querySelectorAll('nav button').forEach(b => {

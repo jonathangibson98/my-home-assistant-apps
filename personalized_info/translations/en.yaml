@@ -18,3 +18,6 @@ configuration:
     name: Wallpaper
     description: >-
       Background image for this add-on's web UI. Leave empty to use your Home Assistant theme's wallpaper, "none" for no wallpaper, or an image: put it in /config/www and enter its file name (pic.jpg) or /local/pic.jpg, or a full https:// link.
+  ai_task_entity:
+    name: AI Task entity (optional)
+    description: The AI Task entity behind the AI help buttons and the Ask tab. Leave empty to use the first one Home Assistant has.

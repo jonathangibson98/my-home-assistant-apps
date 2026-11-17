@@ -857,6 +857,107 @@ async def get_preview(r):
                               "covered": covered,
                               "birthdays_text": attrs["birthdays_text"]})
 
+# ---------- AI help (Home Assistant AI Task) ----------
+AI_ENTITY = str(OPT.get("ai_task_entity") or "").strip()
+
+def ai_entity():
+    if AI_ENTITY:
+        return AI_ENTITY
+    for s in ha_get("/states"):
+        if s["entity_id"].startswith("ai_task."):
+            return s["entity_id"]
+    raise RuntimeError("No AI Task entity found. Add one (Google Gemini, OpenAI, Anthropic, Ollama) or set ai_task_entity.")
+
+def ai_ask(prompt, name="Personalized Info"):
+    body = json.dumps({"entity_id": ai_entity(), "task_name": name, "instructions": prompt}).encode()
+    req = urllib.request.Request("http://supervisor/core/api/services/ai_task/generate_data?return_response", data=body, method="POST",
+                                 headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=180) as resp:
+        out = (json.load(resp).get("service_response") or {}).get("data")
+    return out if isinstance(out, str) else json.dumps(out)
+
+def ai_json(prompt):
+    t = re.sub(r"^```(?:json)?\s*|\s*```$", "", ai_ask(prompt).strip())
+    i, j = t.find("{"), t.rfind("}")
+    return json.loads(t[i:j + 1] if i >= 0 and j > i else t)
+
+def all_field_names(d):
+    seen = {}
+    for g in ("household", "friends"):
+        for p in (d.get(g) or {}).values():
+            if isinstance(p, dict):
+                for k in p:
+                    seen[k] = seen.get(k, 0) + 1
+    return sorted(seen, key=lambda k: -seen[k])
+
+def ai_job(b):
+    d = load()
+    if isinstance(b.get("data"), dict) and all(k in b["data"] for k in ("household", "friends")):
+        d = b["data"]  # what's on the page right now, saved or not
+    action = b.get("action")
+    group, key = b.get("group") or "household", b.get("key") or ""
+    if action == "ask":
+        q = str(b.get("question") or "").strip()[:1500]
+        if not q:
+            raise ValueError("Ask something first.")
+        ctx = people_text({**(d.get("household") or {}), **(d.get("friends") or {})})
+        return {"text": ai_ask("Here is what this household keeps about its people:\n\n" + ctx[:30000] +
+                               "\n\nToday is " + datetime.date.today().isoformat() + ". Answer briefly and kindly, using only this info "
+                               "(say so if it isn't there): " + q)}
+    if action == "place_fields":
+        pl = (d.get("places") or {}).get(key)
+        if not isinstance(pl, dict):
+            raise ValueError("That place doesn't exist (save first).")
+        out = ai_json("A home-automation app keeps notes about places for an AI assistant. Suggest up to 6 useful NEW fields "
+                      "for this place that it doesn't have yet (no guessing of private facts). Reply ONLY with JSON "
+                      '{"fields": [{"field": "snake_case_name", "label": "Label", "kind": "text|list", "why": "one short reason"}]}.\n\n'
+                      "Place: " + json.dumps(pl, default=str)[:4000])
+        return {"fields": [f for f in out.get("fields", []) if isinstance(f, dict) and f.get("field") and f["field"] not in pl][:6]}
+    person = (d.get(group) or {}).get(key)
+    if not isinstance(person, dict):
+        raise ValueError("That person doesn't exist yet (save first).")
+    shown = {k: v for k, v in person.items() if k not in ("links",)}
+    if action == "suggest":
+        out = ai_json("A home-automation app keeps notes about people so its voice assistant and dashboards can be personal "
+                      "(birthdays, nicknames, favorite teams, games, shows, routines...). Suggest up to 8 useful NEW fields for "
+                      "this person that they don't have yet. Prefer field names other people already use (listed below) so "
+                      "everyone matches. Don't invent values. Reply ONLY with JSON "
+                      '{"fields": [{"field": "snake_case_name", "label": "Label", "kind": "text|list", "why": "one short reason"}]}.'
+                      "\n\nGroup: %s\nField names others use: %s\nThis person now: %s"
+                      % (group, ", ".join(all_field_names(d)[:60]), json.dumps(shown, default=str)[:6000]))
+        return {"fields": [f for f in out.get("fields", []) if isinstance(f, dict) and f.get("field") and f["field"] not in person][:8]}
+    if action == "notes":
+        notes = str(b.get("notes") or "").strip()[:6000]
+        if not notes:
+            raise ValueError("Paste or type some notes first.")
+        out = ai_json("Turn these notes about %s into fields for a person record. Use ONLY facts in the notes. Prefer these "
+                      "existing field names when they fit: %s. Lists for several items, dates as YYYY-MM-DD (or MM-DD with no year). "
+                      'Reply ONLY with JSON {"fields": {"snake_case_name": value, ...}}.\n\nNotes:\n%s\n\nWhat we already have: %s'
+                      % (person.get("name", key), ", ".join(all_field_names(d)[:60]), notes, json.dumps(shown, default=str)[:4000]))
+        f = out.get("fields") if isinstance(out.get("fields"), dict) else {}
+        return {"fields": {re.sub(r"[^a-z0-9_]", "_", str(k).lower()): v for k, v in f.items() if k not in ("links", "music", "places")}}
+    if action == "tidy":
+        out = ai_json("Tidy this person record. Find fields that mean the same thing (merge them), unclear names (rename to "
+                      "clear snake_case, matching names others use where possible), and empty or junk fields (remove). Never "
+                      "touch links, music or places. Reply ONLY with JSON "
+                      '{"rename": {"old": "new"}, "remove": ["field"], "notes": "one sentence"}.\n\n'
+                      "Field names others use: %s\nRecord: %s" % (", ".join(all_field_names(d)[:60]), json.dumps(shown, default=str)[:6000]))
+        ren = {k: v for k, v in (out.get("rename") or {}).items() if k in person and k not in ("links", "music", "places") and isinstance(v, str)}
+        rem = [k for k in (out.get("remove") or []) if k in person and k not in ("links", "music", "places")]
+        return {"rename": ren, "remove": rem, "notes": str(out.get("notes") or "")}
+    if action == "gifts":
+        return {"text": ai_ask("Suggest 6 gift ideas for %s based only on this info, each with a short reason. Plain list.\n\n%s"
+                               % (person.get("name", key), people_text({key: person})))}
+    raise ValueError("Unknown AI action")
+
+async def post_ai(r):
+    try:
+        b = await r.json()
+        out = await asyncio.get_running_loop().run_in_executor(None, ai_job, b)
+        return web.json_response({"ok": True, **out})
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)})
+
 async def get_settings(r):
     out = {k: {"name": SET[k]["name"], "entity_id": SET[k]["entity_id"],
                "unique_id": SET[k]["unique_id"]} for k in DEFAULTS}
@@ -908,5 +1009,6 @@ app.router.add_get("/api/suggest", get_suggest)
 app.router.add_get("/api/preview", get_preview)
 app.router.add_get("/api/zone_suggest", get_zone_suggest)
 app.router.add_post("/api/settings", post_settings)
+app.router.add_post("/api/ai", post_ai)
 app.on_startup.append(start_bg)
 web.run_app(app, host="0.0.0.0", port=8099)
