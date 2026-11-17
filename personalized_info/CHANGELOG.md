@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0 - 2026-11-17
+
+- **AI help**, using a Home Assistant AI Task entity (`ai_task_entity`, empty picks one). It works on what's on the page, saved or not, and only adds something when you tap it:
+  - **Suggest fields** for a person (and for a place): useful fields they don't have yet, preferring names other people already use so everyone matches. Hover a suggestion for why.
+  - **Fill from notes**: paste or type anything about someone and it becomes fields. Untick anything wrong before adding.
+  - **Tidy fields**: finds duplicate or unclear fields and suggests merges, renames and removals.
+  - **Gift ideas** from what's saved about someone.
+  - New **Ask** tab: questions about everyone ("whose birthday is next?", "what info is missing for the voice assistant?").
+
 ## 0.7.2 - 2026-11-17
 
 - **Easier to read over wallpapers.** The page checks how bright the wallpaper is and tints behind the text just enough to keep it readable: bright wallpapers get more, dark ones barely any.

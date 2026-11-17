@@ -71,3 +71,14 @@ Some fields repeat what a linked place or the birthday already says. Those are h
 
 **Remove them** deletes them from the file. A home location the home place doesn't have yet becomes that place's address.
 
+## AI help
+
+Each person (and place) has an **✨ AI help** row. It uses a Home Assistant AI Task entity: set `ai_task_entity`, or leave it empty to use the first one. Nothing changes until you tap something, and it all still needs **Save changes**.
+
+- **Suggest fields**: fields worth adding, matched to the names other people use.
+- **Fill from notes**: free text in, fields out. Untick anything wrong, then **Add**.
+- **Tidy fields**: merge duplicates, rename unclear fields, drop empty ones.
+- **Gift ideas** for someone, from what's saved.
+- **Ask** tab: ask anything about the people, places and music here.
+
+What's on the page is sent to your AI provider when you use these.
