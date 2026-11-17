@@ -1,6 +1,6 @@
 {
   "name": "iCloud Lite",
-  "version": "2.8.0",
+  "version": "2.8.1",
   "slug": "icloud_lite",
   "image": "ghcr.io/jonathangibson98/{arch}-addon-icloud_lite",
   "description": "Track Apple devices from multiple iCloud accounts via MQTT",
