@@ -31,3 +31,7 @@ Each device shows up as a `device_tracker` plus a battery sensor. Home Assistant
 - Passwords are stored in this add-on's private `/data` folder.
 - A failed login is retried only every 30 minutes, so Apple doesn't lock the account. Use **Retry login** in the UI to force it.
 - Apple asks for a new 2FA code every so often. The account card will show it.
+
+## Ask AI
+
+Each account has an **Ask AI** box. If the account has a problem it explains it and what to do; otherwise ask anything about the tracked devices. It uses a Home Assistant AI Task entity (`ai_task_entity`; empty uses the first one) and sends the account status and device list (with locations) to your AI provider.

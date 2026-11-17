@@ -1,6 +1,6 @@
 {
   "name": "iCloud Lite",
-  "version": "2.8.2",
+  "version": "2.9.0",
   "slug": "icloud_lite",
   "image": "ghcr.io/jonathangibson98/{arch}-addon-icloud_lite",
   "description": "Track Apple devices from multiple iCloud accounts via MQTT",
@@ -24,7 +24,8 @@
     "mqtt_password": "",
     "log_level": "info",
     "log_pyicloud": false,
-    "wallpaper": ""
+    "wallpaper": "",
+    "ai_task_entity": ""
   },
   "schema": {
     "mqtt_host": "str?",
@@ -33,6 +34,7 @@
     "mqtt_password": "password?",
     "log_level": "list(debug|info|warning|error)?",
     "log_pyicloud": "bool?",
-    "wallpaper": "str?"
+    "wallpaper": "str?",
+    "ai_task_entity": "str?"
   }
 }

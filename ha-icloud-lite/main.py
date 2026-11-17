@@ -1140,6 +1140,7 @@ body{font-family:-apple-system,system-ui,sans-serif;background:#111827;color:#e5
 h1{font-size:1.5em;margin:0 0 4px}h3{margin:0 0 8px}
 .card{background:#252b3b;border-radius:16px;padding:16px;margin:14px 0}
 .muted{color:#9ca3af;font-size:.88em}.ok{color:#4ade80}.warn{color:#fbbf24}.bad{color:#f87171}
+.aiout{white-space:pre-wrap;margin-top:10px;line-height:1.5}
 .tabs{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}
 a.tab{flex:1 1 120px;text-align:center;padding:14px 10px;border-radius:12px;background:#394057;color:#e5e7eb;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 a.tab.active{background:#5b7fe8;color:#fff}
@@ -1305,6 +1306,16 @@ def render_account(acct, zones=()):
             "was first created. To change it, use Settings, Entities.</div></div>"
         )
 
+    trouble = acct.status != "ok" or failing
+    ans = getattr(acct, "ai_answer", "")
+    out.append(
+        "<div class='card'><h3>\u2728 Ask AI</h3>"
+        f"<form method='post' action='ai'>{hidden}"
+        + ("<div class='muted'>Explains what's wrong with this account and what to do.</div><input type='hidden' name='q' value=''>"
+           if trouble else "<input type='text' name='q' placeholder='Which phone needs charging? Who hasn\u2019t updated lately?' autocomplete='off'>")
+        + f"<button class='grey'>{'Explain the problem' if trouble else 'Ask'}</button></form>"
+        + (f"<div class='aiout'>{esc(ans)}</div>" if ans else "") + "</div>"
+    )
     out.append(
         "<div class='card'>"
         f"<form method='post' action='remove' onsubmit=\"return confirm('Remove this account and its entities?')\">{hidden}"
@@ -1500,6 +1511,35 @@ def build_web(app_state):
             acct.status, acct.api, acct.next_login = "login", None, 0
             app_state.save()
         return go(acct.id if acct else None)
+
+    @routes.post("/ai")
+    async def ai(request):
+        data, acct = await get_acct(request)
+        if not acct:
+            return go()
+        import ha_ai
+        devs = []
+        for d in acct.selected or list(acct.devices)[:12]:
+            info = acct.info.get(d, {})
+            loc = info.get("location") or {}
+            devs.append("%s: %s, location %s" % (acct.names.get(d) or acct.devices.get(d, d), describe(info) if info else "not reported",
+                        "%.4f,%.4f" % (loc["latitude"], loc["longitude"]) if loc.get("latitude") else "none"))
+        q = str(data.get("q") or "").strip()[:500]
+        prompt = ("A Home Assistant add-on tracks Apple devices through iCloud (pyicloud). Account status: %s. Last message: %s. "
+                  "Login retries blocked: %s. Update interval %s min, fast near zones %s s.\nDevices:\n%s\n\n"
+                  % (acct.status, acct.message or "none", acct.throttle_count or 0, acct.interval, acct.fast_interval, "\n".join(devs) or "none"))
+        prompt += ("Answer this briefly and plainly: " + q) if q else (
+            "Explain in plain words what is wrong and exactly what to do in this add-on (2FA code, password, waiting out an "
+            "Apple rate limit, etc.). Short. If nothing is wrong, say so.")
+        try:
+            ent = json.loads((DATA / "options.json").read_text()).get("ai_task_entity") or ""
+        except Exception:  # noqa: BLE001
+            ent = ""
+        try:
+            acct.ai_answer = await asyncio.get_running_loop().run_in_executor(None, ha_ai.ask, prompt, ent, "iCloud Lite")
+        except Exception as e:  # noqa: BLE001
+            acct.ai_answer = str(e)
+        return go(acct.id)
 
     @routes.post("/remove")
     async def remove(request):
