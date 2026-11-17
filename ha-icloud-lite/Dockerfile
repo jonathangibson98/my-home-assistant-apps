@@ -8,7 +8,7 @@ COPY requirements.txt .
 RUN python3 -m venv /venv \
     && /venv/bin/pip install --no-cache-dir -r requirements.txt
 
-COPY main.py run.sh ./
+COPY main.py run.sh ha_ai.py ./
 RUN chmod a+x /app/run.sh
 
 CMD ["/app/run.sh"]
