@@ -1,4 +1,4 @@
-import asyncio, datetime, json, os, re, shutil, time, urllib.request
+import asyncio, datetime, json, os, random, re, shutil, time, urllib.request
 import yaml
 import paho.mqtt.client as mqtt
 from aiohttp import web
@@ -809,6 +809,8 @@ def on_connect(c, u, flags, *a):
     c.subscribe(f"{DEFAULT_AI_TOPIC}/set")
     publish_all()
     publish_default_ai()
+    for w in ("interests", "artists"):
+        publish_shuffle(w)
 
 def on_disconnect(c, u, *a):
     global mq_ready
@@ -1052,12 +1054,172 @@ async def post_settings(r):
     publish_all()
     return web.json_response({"ok": True})
 
+# ---------- shuffle sensors (were the interests_shuffle and artist_shuffle AppDaemon apps) ----------
+SHUFFLE_DEFAULTS = {
+    "interests": {"enabled": False, "entity_id": "sensor.random_interest", "name": "Random Interest", "every_minutes": 10,
+                  "fields": ["hobbies", "interests", "games", "shows_and_movies", "favorite_teams", "sports"],
+                  "wildcard_entity": "", "wildcard_percent": 15, "exclude": [], "everyone_if_nobody_home": True},
+    "artists": {"enabled": False, "entity_id": "sensor.random_artist", "name": "Random Artist", "every_minutes": 15,
+                "on_arrival": True, "include_shared": True, "exclude": [], "everyone_if_nobody_home": True},
+    "locations_sensor": "", "home_states": ["home"],
+}
+SHUF = {"interests": None, "artists": None, "due": {"interests": 0, "artists": 0}, "home": None}
+
+def shuffle_settings():
+    cur = SET.get("shuffle") or {}
+    out = json.loads(json.dumps(SHUFFLE_DEFAULTS))
+    for k, v in cur.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k].update(v)
+        else:
+            out[k] = v
+    return out
+
+def people_at_home(d, states, cfg):
+    """Keys of people who are home: from their linked person entity, or from a locations sensor (one attribute per person)."""
+    homes = {str(x).lower() for x in cfg.get("home_states") or ["home"]}
+    loc = (states.get(cfg.get("locations_sensor") or "") or {}).get("attributes") or {}
+    out = set()
+    for g in ("household", "friends"):
+        for k, p in (d.get(g) or {}).items():
+            if not isinstance(p, dict):
+                continue
+            st = live_status(d, p, states) or {}
+            if st.get("zone") == "zone.home" or str(st.get("location") or "").lower() in homes or st.get("place_role") == "home":
+                out.add(k)
+            elif str(loc.get(k) or loc.get(p.get("name", "")) or "").lower() in homes:
+                out.add(k)
+    return out
+
+def as_list(v):
+    if isinstance(v, list):
+        return [str(x) for x in v if str(x).strip()]
+    if isinstance(v, str) and v.strip():
+        return [x.strip() for x in re.split(r"[\n,]", v) if x.strip()]
+    return []
+
+def pick_interest(d, states, cfg, home):
+    c = cfg["interests"]
+    ex = {slug(x) for x in c["exclude"]}
+    wild = c.get("wildcard_entity")
+    if wild and random.randint(1, 100) <= int(c.get("wildcard_percent") or 0):
+        opts = ((states.get(wild) or {}).get("attributes") or {}).get("options") or []
+        if opts:
+            return random.choice(opts), {"name": "Wildcard", "source": wild, "icon": "mdi:dice-multiple"}
+    keys = [k for k in home if slug(k) not in ex] or ([k for g in ("household", "friends") for k in d.get(g, {}) if slug(k) not in ex]
+                                                       if c.get("everyone_if_nobody_home") else [])
+    pool = []
+    for k in keys:
+        p = d["household"].get(k) or d["friends"].get(k) or {}
+        if not isinstance(p, dict) or slug(p.get("name", k)) in ex:
+            continue
+        for f in c["fields"]:
+            for item in as_list(p.get(f)):
+                pool.append((item, {"name": p.get("name", k), "person": k, "field": f, "icon": "mdi:star-shooting"}))
+    if not pool:
+        return None
+    return random.choice(pool)
+
+def pick_artist(d, cfg, home):
+    c = cfg["artists"]
+    ex = {slug(x) for x in c["exclude"]}
+    keys = [k for k in home if slug(k) not in ex]
+    if not keys and c.get("everyone_if_nobody_home"):
+        keys = [k for k in d["music"] if k != "shared" and slug(k) not in ex]
+    if c.get("include_shared") and "shared" in d["music"]:
+        keys = keys + ["shared"]
+    pool = []
+    for k in keys:
+        m = d["music"].get(k)
+        if isinstance(m, dict):
+            for a in as_list(m.get("artists")):
+                pool.append((a, {"name": pname(d, k) if k != "shared" else "Everyone", "person": k, "genres": as_list(m.get("genres")), "icon": "mdi:music-note"}))
+    return random.choice(pool) if pool else None
+
+def publish_shuffle(which):
+    cfg = shuffle_settings()[which]
+    val = SHUF.get(which)
+    if not val:
+        return
+    state, attrs = val
+    oid = cfg["entity_id"].split(".", 1)[-1]
+    try:
+        if client is not None and mq_ready:
+            client.publish(f"homeassistant/sensor/{BASE}/shuffle_{which}/config", json.dumps({
+                "name": cfg["name"], "unique_id": f"{BASE}_shuffle_{which}", "default_entity_id": cfg["entity_id"],
+                "state_topic": f"{BASE}/shuffle_{which}/state", "json_attributes_topic": f"{BASE}/shuffle_{which}/attributes",
+                "availability_topic": f"{BASE}/status", "icon": attrs.get("icon") or "mdi:dice-multiple"}), qos=1, retain=True)
+            client.publish(f"{BASE}/shuffle_{which}/state", str(state)[:250], qos=1, retain=True)
+            client.publish(f"{BASE}/shuffle_{which}/attributes", json.dumps(attrs, ensure_ascii=False), qos=1, retain=True)
+        else:
+            rest_post(f"sensor.{oid}", str(state)[:250], dict(attrs, friendly_name=cfg["name"]))
+    except Exception as e:
+        print("Shuffle publish failed:", e, flush=True)
+
+def shuffle(which, d=None, states=None):
+    cfg = shuffle_settings()
+    d = d or load()
+    states = states if states is not None else ha_states()
+    home = people_at_home(d, states, cfg)
+    got = pick_interest(d, states, cfg, home) if which == "interests" else pick_artist(d, cfg, home)
+    if got:
+        SHUF[which] = got
+        publish_shuffle(which)
+    SHUF["due"][which] = time.time() + max(1, int(cfg[which]["every_minutes"])) * 60
+    return got
+
+def shuffle_tick():
+    """Every minute: reshuffle what's due, and the artist right away when someone gets home."""
+    cfg = shuffle_settings()
+    if not (cfg["interests"]["enabled"] or cfg["artists"]["enabled"]):
+        return
+    d, states = load(), ha_states()
+    home = people_at_home(d, states, cfg)
+    arrived = SHUF["home"] is not None and bool(home - SHUF["home"])
+    SHUF["home"] = home
+    for which in ("interests", "artists"):
+        if not cfg[which]["enabled"]:
+            continue
+        if time.time() >= SHUF["due"][which] or (which == "artists" and arrived and cfg["artists"]["on_arrival"]):
+            shuffle(which, d, states)
+
+async def get_shuffle(r):
+    return web.json_response({"settings": shuffle_settings(),
+                              "now": {k: ({"state": SHUF[k][0], "attributes": SHUF[k][1]} if SHUF[k] else None) for k in ("interests", "artists")},
+                              "fields": all_field_names(load())[:80]})
+
+async def post_shuffle(r):
+    b = await r.json()
+    cur = shuffle_settings()
+    for k in ("interests", "artists"):
+        if isinstance(b.get(k), dict):
+            cur[k].update({kk: vv for kk, vv in b[k].items() if kk in SHUFFLE_DEFAULTS[k]})
+            cur[k]["entity_id"] = "sensor." + slug(str(cur[k]["entity_id"]).split(".", 1)[-1] or k)
+    for k in ("locations_sensor", "home_states"):
+        if k in b:
+            cur[k] = b[k]
+    SET["shuffle"] = cur
+    save_settings(SET)
+    for k in ("interests", "artists"):
+        SHUF["due"][k] = 0  # pick right away with the new settings
+    await asyncio.get_running_loop().run_in_executor(None, shuffle_tick)
+    return await get_shuffle(r)
+
+async def post_shuffle_now(r):
+    which = (await r.json()).get("which")
+    if which not in ("interests", "artists"):
+        return web.json_response({"ok": False})
+    got = await asyncio.get_running_loop().run_in_executor(None, shuffle, which)
+    return web.json_response({"ok": bool(got), "state": got[0] if got else None, "attributes": got[1] if got else None,
+                              "error": None if got else "Nothing to pick from (check the fields and who's home)."})
+
 async def start_bg(app):
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, start_mqtt)
     await loop.run_in_executor(None, publish_all)
     if client is None:
         await loop.run_in_executor(None, publish_default_ai)
+    await loop.run_in_executor(None, shuffle_tick)
     async def tick():
         n = 0
         while True:
@@ -1069,6 +1231,7 @@ async def start_bg(app):
             await loop.run_in_executor(None, publish_all, n % 10 != 0)
             if n % 10 == 0:
                 await loop.run_in_executor(None, publish_default_ai)
+            await loop.run_in_executor(None, shuffle_tick)
     _spawn(tick())
 
 _BG_TASKS: set = set()  # keep references so background tasks are not garbage-collected mid-run
@@ -1094,5 +1257,8 @@ app.router.add_post("/api/settings", post_settings)
 app.router.add_post("/api/ai", post_ai)
 app.router.add_get("/api/ai_default", get_ai_default)
 app.router.add_post("/api/ai_default", post_ai_default)
+app.router.add_get("/api/shuffle", get_shuffle)
+app.router.add_post("/api/shuffle", post_shuffle)
+app.router.add_post("/api/shuffle/now", post_shuffle_now)
 app.on_startup.append(start_bg)
 web.run_app(app, host="0.0.0.0", port=8099)

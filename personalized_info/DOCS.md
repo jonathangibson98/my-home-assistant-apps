@@ -88,3 +88,14 @@ Each person (and place) has an **✨ AI help** row. It uses a Home Assistant AI 
 - **Ask** tab: ask anything about the people, places and music here.
 
 What's on the page is sent to your AI provider when you use these.
+
+## Shuffle sensors
+
+**🎲 Shuffle sensors** at the top of the page make random picks for dashboards and announcements (they replace the `interests_shuffle` and `artist_shuffle` AppDaemon apps):
+
+- **Random interest** (default `sensor.random_interest`): state = an item from the fields you list (hobbies, games, favorite teams…) of someone who's home; attributes `name`, `person`, `field`. With a **wildcard** entity (an input_select), it sometimes picks one of its options instead (`name: Wildcard`).
+- **Random artist** (default `sensor.random_artist`): state = an artist from the music of the people who are home, plus the shared list; attributes `name`, `genres`. It picks again when someone gets home (checked every minute).
+
+Who's home: each person's linked person entity (People tab → Home Assistant), or a **locations sensor** with one attribute per person (for example `alex: Home`), with the states that count as home. Leave out pets or guests by name.
+
+Moving from AppDaemon: remove the two apps from `apps.yaml`, restart Home Assistant once so the old sensors are gone, then turn these on so they take the same entity IDs.

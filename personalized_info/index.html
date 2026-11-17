@@ -25,7 +25,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-vi
 button.on,button.pri{background:var(--acc)}
 button.del{background:var(--red);padding:4px 10px;font-size:14px}
 button.ghost{background:transparent;border:1px dashed var(--line);color:var(--dim)}
-#sensors-panel,#ai-default{max-width:820px;margin:0 auto;padding:10px 10px 0}
+#sensors-panel,#ai-default,#shuffle-panel{max-width:820px;margin:0 auto;padding:10px 10px 0}
 main{padding:4px 10px 0;max-width:820px;margin:auto}
 h2{margin:22px 0 8px;font-size:17px;font-weight:600;color:var(--dim)}
 p.note{color:var(--dim);font-size:14px;margin:12px 0}
@@ -713,6 +713,7 @@ window.__hbAddon = "personalized_info";
 
 
 <section id="ai-default"></section>
+<section id="shuffle-panel"></section>
 <section id="sensors-panel"></section>
 
 <nav>
@@ -1179,6 +1180,55 @@ function aiDefaultPanel() {
       h('div', {className: 'hint', textContent: 'Also in Home Assistant as ' + AID.entity + ', so you can change it from a dashboard or an automation.'}))));
 }
 
+/* ---------- Shuffle sensors (were AppDaemon apps) ---------- */
+let SH = null, shOpen = false;
+async function loadShuffle() { try { SH = await (await fetch('api/shuffle')).json(); } catch (e) { SH = null; } shufflePanel(); }
+function shufflePanel() {
+  const box = $('#shuffle-panel');
+  if (!SH) { box.replaceChildren(); return; }
+  const s = SH.settings, I = s.interests, A = s.artists, msg = h('div', {className: 'meta'});
+  const now = k => SH.now[k] ? SH.now[k].state + ' (' + SH.now[k].attributes.name + ')' : 'nothing yet';
+  const chk = (obj, key, label) => h('label', {className: 'pickrow'}, h('input', {type: 'checkbox', checked: !!obj[key], onchange: e => { obj[key] = e.target.checked; }}), h('span', {textContent: label}));
+  const txt = (obj, key, label, ph, list) => [h('label', {textContent: label}), h('input', {type: 'text', value: Array.isArray(obj[key]) ? obj[key].join(', ') : (obj[key] ?? ''), placeholder: ph || '',
+    oninput: e => { obj[key] = list ? e.target.value.split(',').map(x => x.trim()).filter(Boolean) : e.target.value; }})];
+  const num = (obj, key, label) => [h('label', {textContent: label}), h('input', {type: 'number', value: obj[key], min: 0, oninput: e => { obj[key] = +e.target.value; }})];
+  const nowBtn = which => h('button', {textContent: 'Shuffle now', onclick: async () => {
+    const r = await (await fetch('api/shuffle/now', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({which})})).json();
+    if (r.ok) { SH.now[which] = {state: r.state, attributes: r.attributes}; shufflePanel(); } else msg.textContent = r.error;
+  }});
+  box.replaceChildren(h('details', {open: shOpen, ontoggle: e => { shOpen = e.target.open; }},
+    h('summary', {}, '🎲 Shuffle sensors', h('span', {className: 'now', textContent: '  ' + (I.enabled || A.enabled ? 'on' : 'off')})),
+    h('div', {},
+      h('p', {className: 'note', textContent: 'Random picks for dashboards and announcements, from the people who are home (were the interests_shuffle and artist_shuffle AppDaemon apps).'}),
+      h('h2', {textContent: 'Random interest'}), chk(I, 'enabled', 'Make ' + I.entity_id),
+      h('div', {className: 'meta', textContent: 'Now: ' + now('interests')}),
+      ...num(I, 'every_minutes', 'New pick every (minutes)'),
+      ...txt(I, 'fields', 'Fields to pick from (comma separated)', 'hobbies, games, favorite_teams', true),
+      h('div', {className: 'hint', textContent: 'Fields people have: ' + SH.fields.join(', ')}),
+      ...txt(I, 'wildcard_entity', 'Wildcard: sometimes pick an option from (optional)', 'input_select.fact_topics'),
+      ...num(I, 'wildcard_percent', 'Wildcard chance (%)'),
+      ...txt(I, 'exclude', 'Leave out (comma separated)', 'pets, guests', true),
+      ...txt(I, 'entity_id', 'Entity ID', 'sensor.random_interest'),
+      h('div', {className: 'add'}, nowBtn('interests')),
+      h('h2', {textContent: 'Random artist'}), chk(A, 'enabled', 'Make ' + A.entity_id),
+      h('div', {className: 'meta', textContent: 'Now: ' + now('artists')}),
+      ...num(A, 'every_minutes', 'New pick every (minutes)'),
+      chk(A, 'on_arrival', 'New pick when someone gets home'), chk(A, 'include_shared', 'Include the shared artists'),
+      ...txt(A, 'exclude', 'Leave out (comma separated)', '', true),
+      ...txt(A, 'entity_id', 'Entity ID', 'sensor.random_artist'),
+      h('div', {className: 'add'}, nowBtn('artists')),
+      h('h2', {textContent: "Who's home"}),
+      h('div', {className: 'hint', textContent: "From each person's linked person entity (People tab, Home Assistant section). Or name a sensor with one attribute per person:"}),
+      ...txt(s, 'locations_sensor', 'Locations sensor (optional)', 'sensor.everybodys_locations'),
+      ...txt(s, 'home_states', 'Counts as home (comma separated)', 'home', true),
+      chk(I, 'everyone_if_nobody_home', 'Pick from everyone when nobody is home'),
+      h('div', {className: 'add'}, h('button', {className: 'pri', textContent: 'Save', onclick: async () => {
+        A.everyone_if_nobody_home = I.everyone_if_nobody_home;
+        try { SH = await (await fetch('api/shuffle', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(s)})).json(); shufflePanel(); status('Shuffle settings saved', 'ok'); }
+        catch (e) { msg.textContent = 'Saving failed.'; }
+      }})), msg)));
+}
+
 /* ---------- Sensors section (top of page) ---------- */
 let sensorsOpen = true;
 
@@ -1394,7 +1444,7 @@ fetch('api/data').then(r => r.json()).then(d => {
   for (const k of ['household', 'friends', 'music', 'places', 'other']) D[k] = D[k] || {};
   status('Loaded', 'ok');
   draw();
-  loadSensors(); loadAiDefault();
+  loadSensors(); loadAiDefault(); loadShuffle();
   loadEntities();
   loadLive();
   setInterval(loadLive, 60000);

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.0 - 2026-11-17
+
+- **🎲 Shuffle sensors** (replace the `interests_shuffle` and `artist_shuffle` AppDaemon apps):
+  - **Random interest** (`sensor.random_interest`): every few minutes, a random hobby, game, show, team… (fields you pick) from someone who's home, with their `name`. A **wildcard** can sometimes pick from a helper's options instead (for example `input_select.fact_topics`).
+  - **Random artist** (`sensor.random_artist`): a random artist from the music of the people who are home (plus the shared list), with `name` and `genres`. Picks again when someone gets home.
+  - "Home" comes from each person's linked person entity, or from a locations sensor with one attribute per person. Leave out pets or guests. **Shuffle now** buttons.
+
 ## 0.8.1 - 2026-11-17
 
 - **✨ Default AI** at the top of the page: pick the AI Task every add-on uses when its own `ai_task_entity` is empty (Personalized Info, Creator, Pi Health, Photo Hub, Sleep Tracker, Work Hours, Team Tracker, Release Tracker, Mobile Files, iCloud Lite). It's also a Home Assistant entity, `select.default_ai_task` (or `sensor.default_ai_task` without MQTT), so a dashboard or automation can change it.
