@@ -132,7 +132,9 @@ class Account:
         log.info("%s: logging in", self.tag)
         try:
             self.api = PyiCloudService(
-                self.username, self.password, cookie_directory=str(COOKIES), with_family=True
+                self.username, self.password, cookie_directory=str(COOKIES), with_family=True,
+                # iCloud Lite refreshes on its own schedule; stop pyicloud polling Apple in the background too
+                refresh_interval=None,
             )
             if self.api.requires_2fa:
                 self.status = "needs_2fa"
