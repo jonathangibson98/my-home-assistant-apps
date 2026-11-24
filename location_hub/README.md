@@ -6,7 +6,7 @@ Everyone's location sensor for Home Assistant, clickable switches, device tracke
 - One sensor with everyone's `Home` / `City, State` / zone name (or the place name once someone has stayed put for a set time), and a count of who is home. **You choose its name and entity ID** in the Configuration tab (or on the Location page) and Home Assistant follows when you change it
 - Switches: tap `input_boolean` / `switch` entities to flip them
 - Sensors to Device Trackers: turn any sensor into a real `device_tracker`
-- Dashboard card: generates a Mushroom card (with Bubble separator) to paste into a dashboard
+- Dashboard card: generates a Mushroom card (with Bubble separator) to paste into a dashboard, with a live preview and a tap-to-pick picture chooser (upload from your phone, Home Assistant pictures or your images)
 
 **Arrivals**
 - A sensor per zone (`sensor.arrived_home`, `sensor.arrived_work`, ...) that shows who just arrived, with optional group names, plus `sensor.latest_arrival` and a `location_hub_arrival` event for automations

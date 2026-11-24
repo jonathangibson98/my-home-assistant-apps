@@ -50,6 +50,39 @@ button.b.del{color:var(--bad)}
 .seg button.on{background:var(--acc);color:#1a1300;border-color:var(--acc)}
 .sw.vis{pointer-events:none}
 .sw.on i{background:var(--acc)}.sw.on i:after{left:21px}
+
+/* dashboard card tab: live preview, people rows, picture picker */
+.pgt{font-size:12px;color:var(--dim);margin:10px 0 6px;font-weight:700;letter-spacing:.02em}
+.pg{display:grid;gap:8px}
+.pt{position:relative;display:flex;flex-direction:column;align-items:center;text-align:center;gap:2px;padding:8px 4px;border-radius:12px;background:rgba(255,255,255,.05);min-width:0}
+.pt b{font-size:12px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pt small{font-size:11px;color:var(--dim);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pt .dot{position:absolute;top:6px;right:calc(50% - 30px);width:12px;height:12px;border-radius:50%;border:2px solid #1a1a2e;background:var(--bad)}
+.pt .dot.ok{background:var(--ok)}
+.psep{height:2px;background:var(--line);border-radius:2px;margin:2px 0 4px}
+.av{position:relative;display:grid;place-items:center;width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,.12);overflow:hidden;flex:none;font-size:15px}
+.av img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.av.lg{width:64px;height:64px}
+.cp{display:flex;align-items:center;gap:12px}
+.cpm{flex:1;min-width:0}
+.avb{position:relative;flex:none;background:none;border:0;padding:0;color:var(--txt);display:flex;flex-direction:column;align-items:center;gap:3px}
+.avb .av{width:60px;height:60px}.avb i{font-style:normal;font-size:11px;color:var(--acc)}
+.gseg{display:flex;gap:6px;margin-top:8px}
+.gseg button{flex:1;background:none;border:1px solid var(--line);color:var(--dim);border-radius:999px;padding:7px 4px;font:inherit;font-size:13px}
+.gseg button.on{background:var(--acc);border-color:var(--acc);color:#1a1300;font-weight:700}
+details.dt{border-top:1px solid var(--line);padding:0 14px}
+details.dt>summary{cursor:pointer;color:var(--dim);font-size:13px;padding:10px 0;list-style:none}
+details.dt[open]{padding-bottom:12px}
+#picov{position:fixed;inset:0;z-index:30;display:flex;align-items:flex-end;justify-content:center}
+#picov .bk{position:absolute;inset:0;background:rgba(0,0,0,.6)}
+#picov .sheet{position:relative;width:100%;max-width:560px;max-height:86vh;overflow:auto;background:#1a1a2e;border:1px solid var(--line);border-radius:18px 18px 0 0;padding:16px 14px calc(18px + env(safe-area-inset-bottom,0px))}
+#picov h3{margin:0 0 2px;font-size:18px}
+#picov .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:8px;margin-top:8px}
+.po{display:flex;flex-direction:column;align-items:center;gap:4px;background:rgba(255,255,255,.05);border:2px solid transparent;border-radius:12px;padding:8px 4px;color:var(--txt);min-width:0}
+.po.on{border-color:var(--acc)}
+.po small{font-size:11px;color:var(--dim);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sec{font-size:12px;color:var(--dim);font-weight:700;margin:16px 0 0;letter-spacing:.02em}
+label.up{display:inline-block;cursor:pointer;background:var(--acc);color:#1a1300;border:1px solid var(--acc);border-radius:10px;padding:10px 16px;font-size:14px;font-weight:700}
 </style></head>
 <body>
 <!-- ha-theme v1.3.0: copied from .shared/ha-theme.js, edit it there -->
@@ -754,6 +787,7 @@ function render(){
   if(tab==="backup")loadBackup();
   if(tab==="log")loadLog();
   if(tab==="switches")loadSwitches();
+  if(tab==="card")cardRefresh();
   if(tab==="arr_live")loadArrLive();
 }
 
@@ -863,21 +897,86 @@ function trackersV(){
   `<button class="b add" data-act="addtrk">Add a sensor</button>`;
 }
 /* ---------- Location: dashboard card ---------- */
+let cardLive={tiles:[],yaml:"",sensor:""},cardTimer=0,pic={i:0,data:null,msg:""};
+const GROUPS=[["household","Household"],["friends","Friends"],["hidden","Hidden"]];
+const initials=n=>(n||"?").trim().split(/\s+/).map(w=>w[0]||"").join("").slice(0,2).toUpperCase();
+const liveOf=k=>cardLive.tiles.find(t=>t.key===k)||{};
+const avIn=t=>`<b>${esc(initials(t.label))}</b>${t.picture?`<img src="${esc(t.picture)}" alt="" onerror="this.remove()">`:""}`;
+const tileH=(r,t)=>`<div class="pt"><span class="av">${avIn({label:r.label,picture:t.picture})}</span><span class="dot ${t.home?"ok":""}"></span><b>${esc(r.label)}</b><small>${esc(t.secondary||"no location yet")}</small></div>`;
+function previewH(){
+  const c=loc.card,grp=(g,title)=>{
+    const L=c.rows.filter(r=>r.group===g);
+    return L.length?`<div class="pgt">${esc(title)}</div><div class="pg" style="grid-template-columns:repeat(${c.columns||4},minmax(0,1fr))">${L.map(r=>tileH(r,liveOf(r.key))).join("")}</div>`:"";
+  };
+  const body=grp("household",c.household_title)+grp("friends",c.friends_title);
+  return (c.separator?'<div class="psep"></div>':"")+(body||'<div class="hint">Nobody is on the card yet. Add devices on the Devices tab, or move someone out of Hidden.</div>');
+}
+const cardSoon=()=>{clearTimeout(cardTimer);cardTimer=setTimeout(cardRefresh,350)};
+async function cardRefresh(){
+  if(tab!=="card")return;
+  try{cardLive=await api("api/hub/card/preview",loc.card)}catch(e){const p=$("#cprev");if(p)p.innerHTML=`<div class="hint">Preview unavailable: ${esc(e.message)}</div>`;return}
+  if(tab!=="card")return;
+  const p=$("#cprev");if(p)p.innerHTML=previewH();
+  const y=$("#yaml");if(y)y.value=cardLive.yaml;
+  document.querySelectorAll("[data-av]").forEach(n=>{const r=loc.card.rows.find(x=>x.key===n.dataset.av);if(r)n.innerHTML=avIn({label:r.label,picture:liveOf(r.key).picture})});
+}
 function cardV(){
-  const c=loc.card,K=f=>`loc.card.${f}`,G=[["household","Household"],["friends","Friends"],["hidden","Hidden (left out)"]];
-  return `<div class="card"><div class="bd" style="border:0">
+  const c=loc.card,K=f=>`loc.card.${f}`;
+  return `<div class="card"><div class="bd" style="border:0;padding-top:12px"><b>Preview</b>
+    <div class="hint">How the card will look. It updates as you change things, and shows where everyone is right now.</div><div id="cprev">${previewH()}</div></div></div>
+  <div class="sec" style="margin:4px 0 8px">PEOPLE</div>`+
+  (c.rows.length?c.rows.map((r,i)=>{const t=liveOf(r.key);return `<div class="card"><div class="cp" style="padding:12px 14px">
+    <button class="avb" data-act="pickpic" data-i="${i}" aria-label="Change picture for ${esc(r.label)}"><span class="av" data-av="${esc(r.key)}">${avIn({label:r.label,picture:t.picture||r.picture})}</span><i>Change</i></button>
+    <div class="cpm"><b>${esc(r.label)}</b><div class="gseg">${GROUPS.map(([g,l])=>`<button class="${r.group===g?"on":""}" data-act="grp" data-i="${i}" data-g="${g}">${l}</button>`).join("")}</div></div></div>
+    <details class="dt"><summary>Tap action: ${esc(r.entity||"none")}</summary>
+      ${fld("Tap entity",inp(`loc.card.rows.${i}.entity`,r.entity,"text",'list="tap" autocapitalize="none" placeholder="person.alex"'),"Blank for none. An input_boolean toggles when tapped.")}</details></div>`}).join(""):`<div class="card"><div class="ev">No people yet. Add devices on the Devices tab and save, then they show up here.</div></div>`)+
+  `<details class="card dt" style="margin-top:6px"><summary>Titles, columns and separator</summary>
     <div class="row">${fld("Household title",inp(K("household_title"),c.household_title))}${fld("Friends title",inp(K("friends_title"),c.friends_title))}</div>
     ${fld("Columns",inp(K("columns"),c.columns,"number",'min="1" max="8" inputmode="numeric"'))}
-    <div class="hd" style="padding:12px 0 0;cursor:default"><b>Bubble separator<small>Adds the Bubble Card separator on top</small></b>${sw(K("separator"),c.separator)}</div></div></div>
-  <p class="hint" style="margin:0 0 10px">Built from the people on the Devices tab. Add a person there and save, then they show up here. Tap entity: blank for none; an input_boolean toggles on tap. Picture: blank is automatic.</p>`+
-  c.rows.map((r,i)=>`<div class="card"><div class="bd" style="border:0"><b style="display:block;margin-top:12px">${esc(r.label)}</b>
-    ${fld("Group",sel(`loc.card.rows.${i}.group`,G,r.group))}
-    ${fld("Tap entity",inp(`loc.card.rows.${i}.entity`,r.entity,"text",'list="tap" autocapitalize="none" placeholder="person.alex"'))}
-    ${fld("Picture (optional)",inp(`loc.card.rows.${i}.picture`,r.picture,"text",'placeholder="blank = automatic"'))}</div></div>`).join("")+
-  `<div class="card"><div class="bd" style="border:0"><b style="display:block;margin-top:12px">Card YAML</b>
-    <div class="hint">Refreshes when you save. In your dashboard: Edit, Add card, Manual, paste. Needs Mushroom and Bubble Card from HACS.</div>
-    <textarea id="yaml" readonly style="min-height:260px;font:12px/1.4 ui-monospace,monospace;white-space:pre">${esc(c.yaml)}</textarea>
-    <div class="btns"><button class="b pri" data-act="copy">Copy card YAML</button></div></div></div>`;
+    <div class="hd" style="padding:12px 0 0;cursor:default"><b>Bubble separator<small>Adds the Bubble Card separator on top</small></b>${sw(K("separator"),c.separator)}</div></details>
+  <details class="card dt"><summary>Card YAML (copy into your dashboard)</summary>
+    <div class="hint">In your dashboard: Edit, Add card, Manual, paste. Needs Mushroom and Bubble Card from HACS.</div>
+    <textarea id="yaml" readonly style="min-height:260px;font:12px/1.4 ui-monospace,monospace;white-space:pre">${esc(cardLive.yaml||c.yaml)}</textarea>
+    <div class="btns"><button class="b pri" data-act="copy">Copy card YAML</button></div></details>`;
+}
+/* picture picker: a sheet with Automatic, upload, a link, Home Assistant pictures and your images */
+function showPicker(){
+  /* the sheet is built once; later calls only refresh the message and the lists, so the upload button is never replaced mid-pick */
+  let ov=$("#picov");
+  if(!ov){
+    ov=document.createElement("div");ov.id="picov";document.body.append(ov);
+    const r=loc.card.rows[pic.i];
+    ov.innerHTML=`<div class="bk" data-act="picclose"></div><div class="sheet">
+      <h3>Picture for ${esc(r.label)}</h3><div class="hint">Tap one to use it. You can change it any time.</div>
+      <div id="picmsg"></div>
+      <div class="btns" style="margin-top:12px"><label class="b pri up">Upload from this device<input type="file" id="picfile" accept="image/*" hidden></label></div>
+      <div class="row" style="margin-top:10px"><input type="text" id="piclink" placeholder="or paste a picture link" autocapitalize="none"><button class="b" data-act="uselink" style="flex:none;margin-top:4px">Use link</button></div>
+      <div id="picgrids"></div>
+      <div class="btns"><button class="b" data-act="picclose">Close</button></div></div>`;
+  }
+  const r=loc.card.rows[pic.i],d=pic.data,cur=r.picture||"";
+  const opt=(url,label,thumb)=>`<button class="po ${url===cur?"on":""}" data-act="usepic" data-url="${esc(url)}"><span class="av lg">${thumb}</span><small>${esc(label)}</small></button>`;
+  const img=u=>`<img src="${esc(u)}" alt="" loading="lazy" onerror="this.remove()">`;
+  $("#picmsg").innerHTML=pic.msg?`<div class="res err">${esc(pic.msg)}</div>`:"";
+  const link=$("#piclink");
+  if(d&&link&&!link.value&&/^(https?:|\/)/.test(cur)&&![...d.people,...d.images].some(x=>x.url===cur))link.value=cur;
+  $("#picgrids").innerHTML=`<div class="sec">AUTOMATIC</div><div class="grid">${opt("","Automatic",`<b>auto</b>`)}</div>
+    <div class="hint">Automatic uses the picture Home Assistant has for the tap entity, or /local/person/${esc(r.key)}.png.</div>`+
+    (d?`${d.people.length?`<div class="sec">HOME ASSISTANT PEOPLE</div><div class="grid">${d.people.map(p=>opt(p.url,p.name,img(p.url))).join("")}</div>`:""}
+    <div class="sec">YOUR IMAGES</div>${d.images.length?`<div class="grid">${d.images.map(p=>opt(p.url,p.name.split("/").pop(),img(p.url))).join("")}</div>`:`<div class="hint">${d.www_ok?"No pictures in your www folder yet. Upload one above.":"The add-on can't see your Home Assistant config folder yet. Update and restart the add-on."}</div>`}`
+    :`<div class="hint" style="margin-top:14px">Loading pictures…</div>`);
+}
+async function openPicker(i){pic={i,data:null,msg:""};showPicker();try{pic.data=await api("api/hub/card/pictures")}catch(e){pic.data={people:[],images:[],www_ok:true};pic.msg=e.message}if($("#picov"))showPicker()}
+const closePicker=()=>{const o=$("#picov");if(o)o.remove()};
+function choosePic(url){loc.card.rows[pic.i].picture=url;mark("card");closePicker();render();cardSoon()}
+async function picUpload(file){
+  pic.msg="";const r=loc.card.rows[pic.i];
+  try{
+    const resp=await fetch(BASE+"api/hub/card/upload?key="+encodeURIComponent(r.key),{method:"POST",body:(()=>{const f=new FormData();f.append("file",file);return f})()});
+    const j=await resp.json().catch(()=>({}));
+    if(!resp.ok)throw new Error(j.error||("HTTP "+resp.status));
+    choosePic(j.url);toast(j.restart_needed?"Saved. Restart Home Assistant once so /local works":"Picture saved");
+  }catch(e){pic.msg=e.message;showPicker()}
 }
 /* ---------- Backup ---------- */
 const bkLine=s=>`${s.devices} device${s.devices===1?"":"s"}, ${s.trackers} sensor tracker${s.trackers===1?"":"s"}, ${s.places} place${s.places===1?"":"s"}, ${s.people} ${s.people===1?"person":"people"}, ${s.arrivals||0} arrival place${(s.arrivals||0)===1?"":"s"}`;
@@ -976,6 +1075,7 @@ function setPath(path,val){
   const k=path.split("."),isLoc=k[0]==="loc",isArr=k[0]==="arr",ks=(isLoc||isArr)?k.slice(1):k;let o=isLoc?loc:isArr?arr:cfg;
   for(let i=0;i<ks.length-1;i++)o=o[ks[i]];
   o[ks[ks.length-1]]=val;mark(isLoc?ks[0]:isArr?"arrivals":"alerts");
+  if(path.startsWith("loc.card"))cardSoon();
 }
 async function save(quiet){
   const had=new Set(dirty);
@@ -999,6 +1099,7 @@ document.addEventListener("change",e=>{
     t.files[0].text().then(txt=>{let o;try{o=JSON.parse(txt)}catch(err){toast("That file is not valid JSON");return}bkRestore({data:o})});
     t.value="";return;
   }
+  if(t.id==="picfile"&&t.files[0]){picUpload(t.files[0]);t.value="";return}
   if(d.k&&t.type==="checkbox")setPath(d.k,t.checked);
   if(d.k&&/^arr\.places\.\d+\.zone$/.test(d.k))render();
   if(d.cp!==undefined){
@@ -1045,6 +1146,11 @@ document.addEventListener("click",async e=>{
     try{const r=await api("api/hub/arrivals/test",{zone:d.zone,people:ids});toast("Test arrival: "+r.state);loadArrLive()}
     catch(err){toast("Test failed: "+err.message)}
   }
+  if(d.act==="pickpic")openPicker(i);
+  if(d.act==="picclose")closePicker();
+  if(d.act==="usepic")choosePic(d.url);
+  if(d.act==="uselink"){const v=($("#piclink").value||"").trim();if(!v){pic.msg="Paste a picture link first.";showPicker()}else choosePic(v)}
+  if(d.act==="grp"){loc.card.rows[i].group=d.g;mark("card");render();cardSoon()}
   if(d.act==="adddev"){loc.devices.push({label:"",entity_id:"",home_state:""});mark("devices");render()}
   if(d.act==="deld"&&confirm("Remove this device?")){loc.devices.splice(i,1);mark("devices");render()}
   if(d.act==="addtrk"){loc.trackers.push({id:"",label:"",entity_id:"",home_state:"",toggle:false,tracker_id:""});mark("trackers");render()}

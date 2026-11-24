@@ -1,4 +1,5 @@
-import asyncio, json, os, logging, aiohttp, re, uuid, time
+import asyncio, hashlib, json, os, logging, aiohttp, re, uuid, time
+from urllib.parse import quote
 from aiohttp import web
 from math import radians, sin, cos, sqrt, atan2
 
@@ -16,6 +17,9 @@ DEVICES_PATH = os.path.join(DATA_DIR, "devices.json")
 SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")
 TRACKERS_PATH = os.path.join(DATA_DIR, "trackers.json")
 CARD_PATH = os.path.join(DATA_DIR, "card.json")
+# Home Assistant's www folder (served as /local/...). Needs the add-on's homeassistant_config mapping.
+WWW_DIR = os.environ.get("MT_WWW", "/homeassistant/www")
+PIC_SUBDIR = "location_hub"
 
 def load_options():
     try:
@@ -896,8 +900,8 @@ async def handle_get_card(request):
     card["yaml"] = build_card_yaml(card)
     return web.json_response(card)
 
-async def handle_post_card(request):
-    data = await request.json()
+def clean_card(data):
+    """The card settings from the web page, tidied up and ready to save."""
     rows = []
     for r in data.get("rows", []):
         key = (r.get("key") or "").strip()
@@ -914,15 +918,156 @@ async def handle_post_card(request):
         cols = int(data.get("columns", 4))
     except Exception:
         cols = 4
-    save_card({
+    return {
         "household_title": (data.get("household_title") or "").strip(),
         "friends_title": (data.get("friends_title") or "").strip(),
         "columns": max(1, min(8, cols)),
         "separator": bool(data.get("separator", True)),
         "rows": rows,
-    })
+    }
+
+async def handle_post_card(request):
+    save_card(clean_card(await request.json()))
     logging.info("Updated dashboard card settings via Web UI")
     return web.json_response({"status": "ok"})
+
+# ---------------- Card preview and picture picker ----------------
+def merged_card(data):
+    """The saved card with the page's unsaved edits laid over it, so the preview shows what you are doing."""
+    base = load_card()
+    edit = clean_card(data)
+    by_key = {r["key"]: r for r in edit["rows"]}
+    rows = []
+    for r in base["rows"]:
+        e = by_key.get(r["key"])
+        rows.append(dict(r, **{k: e[k] for k in ("group", "entity", "picture")}) if e else r)
+    return {
+        "household_title": edit["household_title"] or base["household_title"],
+        "friends_title": edit["friends_title"] or base["friends_title"],
+        "columns": edit["columns"], "separator": edit["separator"], "rows": rows,
+    }
+
+async def handle_card_preview(request):
+    """What the card would show right now: each tile's picture, place and home badge, plus the YAML."""
+    s = request.app["session"]
+    card = merged_card(await request.json())
+    sensor = entity_id()
+    attrs = {}
+    try:
+        st = await state(s, sensor)
+        attrs = (st or {}).get("attributes") or {}
+    except Exception:
+        pass
+    tiles = []
+    for r in card["rows"]:
+        pic, source = r["picture"], "chosen"
+        if "{{" in pic:
+            pic, source = "", "template"
+        if not pic:
+            ent = r["entity"]
+            if ent.startswith("person."):
+                try:
+                    pic = ((await state(s, ent)) or {}).get("attributes", {}).get("entity_picture") or ""
+                except Exception:
+                    pic = ""
+                source = "person" if pic else "none"
+            else:
+                pic, source = "/local/person/" + r["key"] + ".png", "default"
+        loc = attrs.get(r["key"])
+        tiles.append({"key": r["key"], "label": r["label"], "group": r["group"], "picture": pic, "source": source,
+                      "secondary": "" if loc is None else str(loc), "home": loc == "Home",
+                      "toggle": r["entity"].startswith("input_boolean.")})
+    return web.json_response({"tiles": tiles, "yaml": build_card_yaml(card), "sensor": sensor})
+
+IMG_MAGIC = ((b"\xff\xd8\xff", "jpg"), (b"\x89PNG\r\n\x1a\n", "png"), (b"GIF8", "gif"))
+
+def sniff_image(data):
+    """File extension from the first bytes, or "" when it is not a picture we accept."""
+    for magic, ext in IMG_MAGIC:
+        if data.startswith(magic):
+            return ext
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return ""
+
+def list_www_images(limit=300):
+    """Pictures in Home Assistant's www folder, newest first, as /local/ links."""
+    out = []
+    base = os.path.realpath(WWW_DIR)
+    if not os.path.isdir(base):
+        return out
+    for root, dirs, files in os.walk(base):
+        depth = os.path.relpath(root, base).count(os.sep) + (0 if root == base else 1)
+        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("community", "hacsfiles", "node_modules") and depth < 3]
+        for f in files:
+            if not f.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".gif")):
+                continue
+            full = os.path.join(root, f)
+            try:
+                st = os.stat(full)
+            except OSError:
+                continue
+            if st.st_size > 15 * 1024 * 1024:
+                continue
+            rel = os.path.relpath(full, base).replace(os.sep, "/")
+            out.append((st.st_mtime, {"name": rel, "url": "/local/" + quote(rel)}))
+    out.sort(key=lambda x: -x[0])
+    return [o[1] for o in out[:limit]]
+
+async def handle_card_pictures(request):
+    """Everything the picture picker can offer: Home Assistant people with a picture, and images in www."""
+    s = request.app["session"]
+    people = []
+    try:
+        async with s.get(f"{API}/states", headers=H) as r:
+            allst = await r.json() if r.status == 200 else []
+        for st in allst:
+            eid = st.get("entity_id", "")
+            pic = (st.get("attributes") or {}).get("entity_picture")
+            if eid.startswith("person.") and pic:
+                people.append({"id": eid, "name": st["attributes"].get("friendly_name", eid), "url": pic})
+    except Exception:
+        pass
+    people.sort(key=lambda x: x["name"].lower())
+    loop = asyncio.get_running_loop()
+    images = await loop.run_in_executor(None, list_www_images)
+    return web.json_response({"people": people, "images": images, "www_ok": os.path.isdir(WWW_DIR)})
+
+async def handle_card_upload(request):
+    """Save a picture picked on the phone into www/location_hub and hand back its /local/ link."""
+    try:
+        reader = await request.multipart()
+        field = await reader.next()
+        while field is not None and field.name != "file":
+            field = await reader.next()
+        if field is None:
+            return web.json_response({"error": "No picture came with the request."}, status=400)
+        data = bytearray()
+        while True:
+            chunk = await field.read_chunk(256 * 1024)
+            if not chunk:
+                break
+            data += chunk
+            if len(data) > 8 * 1024 * 1024:
+                return web.json_response({"error": "That picture is over 8 MB. Pick a smaller one."}, status=413)
+    except Exception as e:
+        return web.json_response({"error": "Could not read the upload: " + str(e)}, status=400)
+    data = bytes(data)
+    ext = sniff_image(data)
+    if not ext:
+        return web.json_response({"error": "Only JPG, PNG, WebP or GIF pictures work. (An iPhone HEIC photo needs to be sent as JPEG.)"}, status=400)
+    key = re.sub(r"[^a-z0-9_]", "", (request.query.get("key") or "").lower())[:40] or "person"
+    name = f"{key}-{hashlib.sha1(data).hexdigest()[:8]}.{ext}"
+    folder = os.path.join(WWW_DIR, PIC_SUBDIR)
+    fresh_www = not os.path.isdir(WWW_DIR)
+    try:
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, name), "wb") as f:
+            f.write(data)
+    except OSError as e:
+        return web.json_response({"error": "The add-on can't write to Home Assistant's www folder (" + str(e) + "). Update the add-on so it can see your config folder."}, status=500)
+    logging.info("Saved card picture %s", name)
+    return web.json_response({"url": "/local/" + PIC_SUBDIR + "/" + name, "restart_needed": fresh_www})
 
 async def handle_get_settings(request):
     ha_id = ""
@@ -977,6 +1122,9 @@ def add_routes(app):
     r.add_post('/api/hub/trackers', handle_post_trackers)
     r.add_get('/api/hub/card', handle_get_card)
     r.add_post('/api/hub/card', handle_post_card)
+    r.add_post('/api/hub/card/preview', handle_card_preview)
+    r.add_get('/api/hub/card/pictures', handle_card_pictures)
+    r.add_post('/api/hub/card/upload', handle_card_upload)
     r.add_get('/api/hub/switches', handle_get_switches)
     r.add_post('/api/hub/toggle', handle_toggle)
     r.add_get('/api/hub/settings', handle_get_settings)
