@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.7.0 - 2026-11-23
+
+- **Dashboard card tab, simpler and with a live preview.**
+  - **Preview** at the top shows the actual tiles (picture, name, where they are now, home dot), grouped and in your column count. It updates as you change anything, before you save.
+  - **Pick pictures with a tap.** Tap a person's picture, then choose **Automatic**, a picture from Home Assistant people, one of your images in the `www` folder, **Upload from this device** (a photo from your phone), or paste a link. No more typing paths.
+  - **Group buttons** (Household / Friends / Hidden) instead of a drop-down. The tap entity is tucked under each person, and titles, columns and the separator are under one fold-out.
+  - The **Card YAML** now refreshes live too, not only after saving. Everything the tab did before is still there.
+- **New access:** the add-on now sees your Home Assistant config folder, only to list pictures in `www` and save uploads to `www/location_hub/` (they show up as `/local/location_hub/...`). If you never had a `www` folder, restart Home Assistant once after your first upload so `/local` works.
+- Uploads accept JPG, PNG, WebP and GIF up to 8 MB.
+
 ## 3.6.2 - 2026-11-17
 
 - **Easier to read over wallpapers.** The page checks how bright the wallpaper is and tints behind the text just enough to keep it readable: bright wallpapers get more, dark ones barely any.

@@ -1,5 +1,5 @@
 name: "Location Hub"
-version: "3.6.2"
+version: "3.7.0"
 slug: location_hub
 # Prebuilt images from your GitHub package (built by .github/workflows/create.yml when you push a new version to main).
 # Home Assistant fills in {arch}, then downloads this instead of building on the Pi.
@@ -26,6 +26,10 @@ services:
 # Backups are saved under /share, which is kept when the add-on is uninstalled.
 map:
   - share:rw
+  # Lets the dashboard card picker list and save pictures in Home Assistant's www folder (/local/).
+  - type: homeassistant_config
+    read_only: false
+    path: /homeassistant
 
 options:
   sensor_name: "Location Tracker"
