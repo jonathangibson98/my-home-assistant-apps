@@ -25,7 +25,8 @@ services:
 
 # Backups are saved under /share, which is kept when the add-on is uninstalled.
 map:
-  - share:rw
+  - type: share
+    read_only: false
   # Lets the dashboard card picker list and save pictures in Home Assistant's www folder (/local/).
   - type: homeassistant_config
     read_only: false
