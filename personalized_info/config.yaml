@@ -1,8 +1,8 @@
 name: Personalized Info
-version: "0.10.1"
+version: "1.0.0"
 slug: personalized_info
 image: "ghcr.io/jonathangibson98/{arch}-addon-personalized_info"
-description: Edit everyone's info and music in one place, with AI that suggests fields, fills them from notes and answers questions
+description: "Everyone in one place: a profile for each person (pictures, about, work, health, vehicles, dates, likes and more), plus places, music, live status, sensors and AI help"
 arch: [aarch64, amd64]
 ingress: true
 panel_icon: mdi:account-group

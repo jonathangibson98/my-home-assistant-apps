@@ -17,8 +17,7 @@ All apps support `aarch64` (Raspberry Pi 4/5) and `amd64`.
 | **File Reader** | [`file_reader`](file_reader) | Web UI and MQTT file manager. Every text file in your folder becomes a Home Assistant sensor (last line as the state), plus an optional REST API for automations and logging. | MQTT |
 | **iCloud Lite** | [`ha-icloud-lite`](ha-icloud-lite) | Track Apple devices from multiple iCloud accounts. Each device becomes a `device_tracker` with a battery sensor. | MQTT |
 | **Location Hub** | [`location_hub`](location_hub) | A location history map (trails, playback, stops, places, heatmap) plus everyone's location sensor (you choose its name), switches, device trackers, a dashboard card generator and AI arrival alerts. One add-on, one sidebar entry. | MQTT; an `ai_task` entity and a `notify.*` service for alerts |
-| **Person Profiles** | [`person_profiles`](person_profiles) | Builds one profile sensor per person from every entity linked to them, with optional AI summaries. | Nothing (an `ai_task` entity or conversation agent for AI summaries) |
-| **Personalized Info** | [`personalized_info`](personalized_info) | Edit everyone's info and music preferences from a phone-friendly UI. Saved to one readable YAML file with automatic backups. | Nothing (MQTT optional) |
+| **Personalized Info** | [`personalized_info`](personalized_info) | Everyone in one place: a profile for each person (pictures, about, work, health, vehicles, dates, likes and more), plus places, music, live status and AI help. Saved to readable YAML files with automatic backups. | Nothing (MQTT optional) |
 | **Photo Hub** | [`photo_shuffle`](photo_shuffle) | Folder shuffles and random Unsplash photos, all published as image entities. Manage everything from one web UI. | MQTT (an Unsplash key for Unsplash collections) |
 | **Release Tracker** | [`release-tracker`](release-tracker) | Track anything with a release date, like TV shows, movies, video games and DLC, albums and artists, celebrities, tech launches, merch drops, events and sales, and get one sensor for what is coming out and when. | Free TMDB API key (TV, movies, celebrities); free Twitch Client ID and Secret for IGDB (games/DLC); MQTT. Music and custom items need nothing. |
 | **SVG Maker** | [`svg_maker`](svg_maker) | Turn photos into clean, scalable SVG icons and vector files from the sidebar. Runs fully local. | Nothing |
@@ -87,7 +86,6 @@ my-home-assistant-apps/
 ├── file_reader/
 ├── ha-icloud-lite/           (iCloud Lite, slug icloud_lite)
 ├── location_hub/
-├── person_profiles/
 ├── personalized_info/
 ├── photo_shuffle/            (Photo Hub)
 ├── release-tracker/          (slug release_tracker)

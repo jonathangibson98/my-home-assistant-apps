@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.0
+
+Personalized Info and Person Profiles are now one add-on. Everything you already saved here stays: the same files (`people.yaml`, `places.yaml`, `music.yaml` in `ai_memory`), the same sensors and the same settings are used.
+
+- The People tab is now a grid of people with their picture, where they are right now and how much of their profile is filled in. Tap someone to open everything about them.
+- Pictures: a person's Home Assistant picture shows by default. Add your own for anyone (household, friends and other notable people) from a photo or a link. They are saved in `www/personalized_info` so dashboards can use them (`entity_picture` on the sensors).
+- Pictures for places and zones: each place can have one. It shows on the Places tab, and as a small badge on a person while they are at that place.
+- Profile sections for every person: About, Contact, Work and school, Health, Daily routine, Likes, Sizes and gifts, Vehicles, Important dates, Family friends and pets, Memberships, Notes and custom fields. Contact, Health and Memberships start hidden from the sensors.
+- Your own fields, Quick add, AI help, Places and Home Assistant links are all still on each person, as their own sections.
+- Birthday, nickname, pronouns, favorite teams and games in the profile use the fields you already have, so nothing is entered twice.
+- Worked out: age, zodiac sign, birthday countdown and countdowns for important dates, family birthdays, vehicle due dates, renewals and checkups.
+- New sensor per person, `sensor.person_profile_<name>` (the same names Person Profiles used) with their profile, live status, picture, countdowns and an optional AI summary. `sensor.person_profiles` lists everyone. The info sensor also gets each person's `profile`, `zodiac` and `coming_up`.
+- The separate Person Profiles add-on is retired: uninstall it after updating. Its `person_profile_ask` and `person_profile_refresh` events are gone; use the Ask tab or the AI summary button instead.
+
 ## 0.10.1 - 2026-11-26
 
 - **Works with Work Hours' single sensor per person.** Link just the **Work hours** role (`sensor.<name>_hours`) and the info sensor now also knows whether they are at work, whether today is a day off, their next day off, their weekly schedule (`work_schedule`), today's shift, the next shift, and this week's and this pay period's hours (`work_*`), all read from that one sensor's attributes. The separate "At work" and "Day off" links still work if you use the older sensors.

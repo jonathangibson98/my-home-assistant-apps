@@ -17,7 +17,7 @@ body{margin:0;background:var(--bg);color:var(--txt);
   padding-bottom:calc(84px + env(safe-area-inset-bottom,0px))}
 nav{display:flex;gap:6px;padding:10px;position:sticky;top:0;background:var(--bg);z-index:5;
   border-bottom:1px solid var(--line)}
-nav button{flex:1;padding:10px 4px}
+nav button{flex:1;padding:10px 4px;min-width:0}
 button{background:var(--line);color:var(--txt);border:0;border-radius:8px;padding:10px 14px;
   font:inherit;font-size:15px;cursor:pointer}
 button:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-visible{
@@ -62,6 +62,26 @@ input[type=checkbox]{width:22px;height:22px}
 .ha .rl label{margin:0}
 .hint{font-size:12px;color:var(--dim);margin-top:6px}
 .bday{background:var(--card);border-radius:10px;padding:10px 12px;margin-top:10px;font-size:14px}
+h1{font-size:20px;margin:0 0 4px}
+.people{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.person{background:var(--card);border-radius:12px;padding:14px 10px;text-align:center;cursor:pointer;border:1px solid transparent;min-width:0}
+.person:hover,.person:focus-visible{border-color:var(--acc)}
+.person .note{margin:4px 0;min-height:1.2em;overflow-wrap:anywhere}
+.avatar{position:relative;width:64px;height:64px;border-radius:50%;background:var(--field);margin:0 auto 8px;display:flex;align-items:center;justify-content:center;font-size:26px;flex:none}
+.avatar>img:not(.badge){width:100%;height:100%;object-fit:cover;border-radius:50%}
+.avatar .badge{position:absolute;right:-6px;bottom:-4px;width:26px;height:26px;border-radius:50%;object-fit:cover;border:2px solid var(--card)}
+.avatar.sm{width:30px;height:30px;font-size:14px;margin:0 8px 0 0;display:inline-flex;vertical-align:middle}
+.avatar.big{width:88px;height:88px;font-size:36px;margin:0}
+.ttl{display:inline-flex;align-items:center}
+.phead{display:flex;gap:14px;align-items:center;margin:12px 0 4px}
+.bar{height:6px;background:var(--field);border-radius:3px;margin-top:8px;overflow:hidden}.bar i{display:block;height:100%;background:var(--ok)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px}
+.stat{background:var(--field);border-radius:8px;padding:8px 10px}.stat small{color:var(--dim);display:block;font-size:12px}
+.tagchips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+.chip{background:var(--field);border:1px solid var(--line);border-radius:999px;padding:3px 6px 3px 12px;font-size:14px;display:inline-flex;gap:6px;align-items:center}
+.chip b{cursor:pointer;color:var(--dim);font-weight:400;padding:0 4px}
+.item{background:var(--field);border-radius:8px;padding:8px 10px;margin-bottom:8px;border:1px solid var(--line)}
+input[type=date],input[type=time],input[type=url]{width:100%;background:var(--field);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:9px;font:inherit}
 </style>
 </head>
 <body>
@@ -712,9 +732,11 @@ window.__hbAddon = "personalized_info";
 <!-- /ha-theme -->
 
 
+<div id="settings" hidden>
 <section id="ai-default"></section>
 <section id="shuffle-panel"></section>
 <section id="sensors-panel"></section>
+</div>
 
 <nav>
   <button data-t="people" onclick="go('people')">People</button>
@@ -722,6 +744,7 @@ window.__hbAddon = "personalized_info";
   <button data-t="places" onclick="go('places')">Places</button>
   <button data-t="other" onclick="go('other')">Other</button>
   <button data-t="ask" onclick="go('ask')">&#10024; Ask</button>
+  <button data-t="settings" onclick="go('settings')" aria-label="Settings" title="Settings: default AI, shuffle sensors, house entities, sensor names">&#9881;&#65039;</button>
 </nav>
 
 <main id="main"></main>
@@ -745,7 +768,8 @@ const RESERVED = {
   music: 'Music is edited in the Music tab.',
   top_artists: 'Music is edited in the Music tab.',
   places: 'Places are linked in the Places section of the person. Add the places themselves in the Places tab.',
-  links: 'Linked entities are set in the Home Assistant section of the person.'
+  links: 'Linked entities are set in the Home Assistant section of the person.',
+  photo: 'The picture is set at the top of the person or place.'
 };
 // Fields the other add-ons and the AI announcements can use. Shown as quick-add buttons until a person has them.
 const QUICK = {
@@ -849,36 +873,222 @@ function card(id, title, body, extra) {
   }, typeof title === 'string' ? h('summary', {textContent: title}) : h('summary', {}, title), body, extra);
 }
 
-/* ---------- People tab (no music here) ---------- */
+/* ---------- People tab: a grid of people (picture, where they are now); tap one to open everything about them ---------- */
+let SCHEMA = [], PERSON = null;
+const PICS = {};  // pictures just uploaded, until the page is reloaded
+const initial = n => (String(n || '?').trim()[0] || '?').toUpperCase();
+const isUrl = v => /^(https?:\/\/|\/)/.test(v);
+const emptyVal = v => v === '' || v == null || v === false || (Array.isArray(v) && !v.length);
+
+function avatar(url, name, size) {
+  const a = h('div', {className: 'avatar ' + (size || '')});
+  if (url) {
+    const i = h('img', {src: url, alt: ''});
+    i.onerror = () => { i.remove(); a.textContent = initial(name); };
+    a.append(i);
+  } else a.textContent = initial(name);
+  return a;
+}
+function picOf(kind, k, obj, live) {
+  const v = String(obj.photo || '').trim();
+  if (isUrl(v)) return v;
+  if (v) return PICS[kind + '_' + k] || live || '';
+  return String(live || '').startsWith('img/') ? '' : (live || '');   // a picture they just removed
+}
+const personPic = (k, p) => picOf('person', k, p, ((LIVE.people || {})[k] || {}).picture);
+const placePic = (k, pl) => picOf('place', k, pl, (LIVE.place_pics || {})[k]);
+
+function shrink(file, max) {
+  return new Promise((ok, bad) => {
+    const u = URL.createObjectURL(file), i = new Image();
+    i.onload = () => {
+      const s = Math.min(1, max / Math.max(i.width, i.height)), c = document.createElement('canvas');
+      c.width = Math.round(i.width * s); c.height = Math.round(i.height * s);
+      c.getContext('2d').drawImage(i, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(u);
+      c.toBlob(b => b ? ok(b) : bad(new Error('no picture')), 'image/jpeg', 0.88);
+    };
+    i.onerror = () => { URL.revokeObjectURL(u); bad(new Error('not a picture')); };
+    i.src = u;
+  });
+}
+function photoRow(kind, key, obj) {
+  const file = h('input', {type: 'file', accept: 'image/*', hidden: true});
+  file.onchange = async () => {
+    const f = file.files[0];
+    if (!f) return;
+    status('Preparing the picture...');
+    try {
+      const blob = await shrink(f, 512);
+      const r = await (await fetch('api/photo?kind=' + kind + '&key=' + encodeURIComponent(key),
+        {method: 'POST', headers: {'Content-Type': blob.type}, body: blob})).json();
+      if (!r.ok) { status(r.error || 'Could not save the picture.', 'bad'); return; }
+      obj.photo = r.name; PICS[kind + '_' + key] = r.ui; touch(); draw();
+    } catch (e) { status('That picture could not be used.', 'bad'); }
+  };
+  return h('div', {className: 'add photorow'}, file,
+    h('button', {textContent: obj.photo ? 'Change picture' : 'Add a picture', onclick: () => file.click()}),
+    h('button', {textContent: 'Use a link', onclick: () => {
+      const u = prompt('Link to a picture (starts with https://)', isUrl(String(obj.photo || '')) ? obj.photo : '');
+      if (u && isUrl(u.trim())) { obj.photo = u.trim(); touch(); draw(); }
+    }}),
+    obj.photo ? h('button', {className: 'del', textContent: 'Remove picture', onclick: () => { delete obj.photo; touch(); draw(); }}) : null);
+}
+
 function people() {
+  if (PERSON) return personPage();
   const f = h('div');
-  f.append(h('p', {className: 'note', textContent: 'Music is edited in the Music tab and places in the Places tab. Both show up on each person in the sensor. Link someone to their Home Assistant entities and the sensor also says what they are doing right now.'}));
+  f.append(h('p', {className: 'note', textContent: 'Tap someone to fill in everything about them. Pictures come from their Home Assistant person, or add your own. Music is in the Music tab and places in the Places tab.'}));
   if (LIVE.birthdays_text) f.append(h('div', {className: 'bday', textContent: '🎂 ' + LIVE.birthdays_text}));
   for (const g of ['household', 'friends']) {
-    f.append(h('h2', {textContent: g === 'household' ? 'Household' : 'Friends'}));
+    f.append(h('h2', {textContent: g === 'household' ? 'Household' : 'Friends and notable people'}));
+    const grid = h('div', {className: 'people'});
     for (const k of Object.keys(D[g])) {
       const p = D[g][k];
       if (!p || typeof p !== 'object') continue;
-      const now = (LIVE.status[k] || {}).text;
-      const title = h('span', {}, p.name || k, now ? h('span', {className: 'now', textContent: '  ' + now}) : null);
-      f.append(card(g + k, title,
-        h('div', {}, coveredNote(k, p), fields(p, [...Object.keys(RESERVED), ...Object.keys(covered(k, p))]), quickAdd(p), adder(p, RESERVED), aiBox(g, k, p), placeLinks(p), haLinks(g, k, p)),
-        h('div', {className: 'add'},
-          h('button', {className: 'del', textContent: 'Delete person', onclick: () => {
-            if (confirm('Delete ' + (p.name || k) + ' and their music?')) {
-              delete D[g][k]; delete D.music[k]; touch(); draw();
-            }
-          }}))));
+      const st = LIVE.status[k] || {}, meta = (LIVE.people || {})[k] || {};
+      const av = avatar(personPic(k, p), p.name || k);
+      const pk = st.place_key && D.places[st.place_key];
+      if (pk && placePic(st.place_key, pk)) av.append(h('img', {className: 'badge', src: placePic(st.place_key, pk), alt: pk.name || st.place_key, title: pk.name || st.place_key}));
+      grid.append(h('div', {className: 'person', tabIndex: 0, role: 'button',
+        onclick: () => { PERSON = {g, k}; draw(); window.scrollTo(0, 0); },
+        onkeydown: e => { if (e.key === 'Enter') { PERSON = {g, k}; draw(); window.scrollTo(0, 0); } }},
+        av, h('div', {textContent: p.name || k}),
+        h('div', {className: 'note', textContent: st.text || ' '}),
+        h('div', {className: 'bar'}, h('i', {style: 'width:' + (meta.complete || 0) + '%'})),
+        h('div', {className: 'note', textContent: (meta.complete || 0) + '% filled in'})));
     }
-    f.append(h('div', {className: 'row'},
-      h('button', {className: 'ghost', textContent: '+ Add to ' + g, onclick: () => {
+    f.append(grid, h('div', {className: 'row'},
+      h('button', {className: 'ghost', textContent: '+ Add to ' + (g === 'household' ? 'household' : 'friends'), onclick: () => {
         const n = prompt('Name?');
         if (!n || !slug(n)) return;
         D[g][slug(n)] = {name: n};
-        open.add(g + slug(n));
+        PERSON = {g, k: slug(n)};
         touch(); draw();
       }})));
   }
+  return f;
+}
+
+/* widgets for the profile sections (built from /api/schema) */
+function tagsWidget(get, set) {
+  const box = h('div'), chips = h('div', {className: 'tagchips'});
+  const draw2 = () => {
+    chips.replaceChildren(...(get() || []).map((t, i) => h('span', {className: 'chip'}, t,
+      h('b', {textContent: '✕', role: 'button', title: 'Remove', onclick: () => { const a = (get() || []).slice(); a.splice(i, 1); set(a); draw2(); }}))));
+  };
+  const add = () => {
+    const parts = inp.value.split(',').map(x => x.trim()).filter(Boolean);
+    if (!parts.length) return;
+    const a = (get() || []).slice();
+    parts.forEach(x => { if (!a.some(y => y.toLowerCase() === x.toLowerCase())) a.push(x); });
+    set(a); inp.value = ''; draw2();
+  };
+  const inp = h('input', {type: 'text', placeholder: 'Type and press Enter (commas add several)',
+    onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); add(); } }, onblur: add});
+  draw2(); box.append(chips, inp); return box;
+}
+function itemsWidget(fd, get, set) {
+  const box = h('div'), list = h('div');
+  const draw2 = () => {
+    list.replaceChildren(...(get() || []).map((row, i) => {
+      const it = h('div', {className: 'item'});
+      fd.fields.forEach(sf => it.append(h('label', {textContent: sf.label}),
+        widget(sf, () => row[sf.key], v => { row[sf.key] = v; set(get()); })));
+      it.append(h('div', {className: 'add'}, h('button', {className: 'del', textContent: 'Remove', onclick: () => {
+        const a = (get() || []).slice(); a.splice(i, 1); set(a); draw2(); }})));
+      return it;
+    }));
+  };
+  box.append(list, h('div', {className: 'add'}, h('button', {className: 'ghost', textContent: '+ Add', onclick: () => {
+    const a = (get() || []).slice(), r = {};
+    fd.fields.forEach(sf => { r[sf.key] = sf.type === 'tags' ? [] : sf.type === 'check' ? false : ''; });
+    a.push(r); set(a); draw2();
+  }})));
+  draw2(); return box;
+}
+function widget(fd, get, set) {
+  const v = get(), t = fd.type;
+  if (t === 'long') return h('textarea', {value: v || '', oninput: e => set(e.target.value)});
+  if (t === 'select') {
+    const s = h('select', {onchange: e => set(e.target.value)}, ...fd.options.map(o => h('option', {value: o, textContent: o || '(not set)'})));
+    s.value = v || ''; return s;
+  }
+  if (t === 'check') return h('input', {type: 'checkbox', checked: !!v, onchange: e => set(e.target.checked)});
+  if (t === 'tags') return tagsWidget(get, set);
+  if (t === 'items') return itemsWidget(fd, get, set);
+  return h('input', {type: {date: 'date', time: 'time', url: 'url'}[t] || 'text', value: v || '', oninput: e => set(e.target.value)});
+}
+function sectionCard(sec, k, p, prof) {
+  const data = prof.data[sec.key] = prof.data[sec.key] || {};
+  const flags = prof.flags[sec.key] = prof.flags[sec.key] || {sensor: sec.sensor, ai: sec.ai};
+  const bound = fd => fd.legacy === 'birthday' ? (BIRTHDAY_KEYS.find(b => b in p) || 'birthday') : fd.legacy;
+  const get = fd => fd.legacy ? p[bound(fd)] : data[fd.key];
+  const set = (fd, v) => {
+    if (fd.legacy) { if (emptyVal(v)) delete p[bound(fd)]; else p[bound(fd)] = v; } else data[fd.key] = v;
+    touch();
+  };
+  const n = sec.fields.filter(fd => !emptyVal(get(fd))).length;
+  const body = h('div', {}, h('p', {className: 'note', textContent: sec.hint}),
+    h('label', {className: 'pickrow'}, h('input', {type: 'checkbox', checked: !!flags.sensor, onchange: e => { flags.sensor = e.target.checked; touch(); }}),
+      'Show on the sensors (and so to your AI tasks)'));
+  sec.fields.forEach(fd => body.append(h('label', {textContent: fd.label + (fd.hint ? ' (' + fd.hint + ')' : '')}),
+    widget(fd, () => get(fd), v => set(fd, v))));
+  return card('s' + k + sec.key, h('span', {}, sec.icon + ' ' + sec.title, n ? h('span', {className: 'now', textContent: '  ' + n + ' set'}) : null), body);
+}
+
+function statsCard(k, p) {
+  const m = (LIVE.people || {})[k] || {}, c = m.calc || {}, box = h('div', {className: 'panel'});
+  const stats = [];
+  if (c.age != null) stats.push(['Age', c.age]);
+  if (c.zodiac) stats.push(['Sign', c.zodiac]);
+  if (c.days_until_birthday != null) stats.push(['Birthday', c.birthday_today ? 'Today! 🎂' : 'in ' + c.days_until_birthday + ' days']);
+  stats.push(['Filled in', (m.complete || 0) + '%']);
+  box.append(h('div', {className: 'stats'}, stats.map(([a, b]) => h('div', {className: 'stat'}, h('small', {textContent: a}), String(b)))));
+  if ((c.dates_next_30_days || []).length) {
+    box.append(h('label', {textContent: 'Coming up in the next 30 days'}),
+      ...c.dates_next_30_days.map(e => h('div', {className: 'note', textContent: '• ' + e.label + ' · ' + (e.days_until ? 'in ' + e.days_until + ' days' : 'today') + ' (' + e.date + ')'})));
+  }
+  const ai = m.ai || {}, out = h('div'), msg = h('div', {className: 'meta'});
+  const show = a => {
+    out.replaceChildren();
+    if (a && a.summary) out.append(h('p', {textContent: a.summary}), ...(a.facts || []).map(x => h('div', {className: 'note', textContent: '• ' + x})), a.routine ? h('p', {className: 'note', textContent: a.routine}) : null);
+  };
+  show(ai);
+  box.append(h('label', {textContent: '✨ AI summary'}), out, h('div', {className: 'add'}, h('button', {textContent: ai.summary ? 'Refresh summary' : 'Write a summary', onclick: async e => {
+    if (dirty) { msg.textContent = 'Save first, then the AI reads what you saved.'; return; }
+    e.target.disabled = true; msg.textContent = 'Asking the AI...';
+    try {
+      const r = await (await fetch('api/profile_ai', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({person: k})})).json();
+      if (!r.ok) msg.textContent = r.error; else { show(r.ai); msg.textContent = 'Done. It is also on sensor.person_profile_' + k + '.'; ((LIVE.people = LIVE.people || {})[k] = LIVE.people[k] || {}).ai = r.ai; }
+    } catch (er) { msg.textContent = 'That failed. Check the app log.'; }
+    e.target.disabled = false;
+  }})), msg);
+  return box;
+}
+
+function personPage() {
+  const {g, k} = PERSON, p = (D[g] || {})[k];
+  if (!p) { PERSON = null; return people(); }
+  const prof = D.profiles[k] = D.profiles[k] || {data: {}, flags: {}};
+  prof.data = prof.data || {}; prof.flags = prof.flags || {};
+  const f = h('div'), now = (LIVE.status[k] || {}).text;
+  f.append(h('div', {className: 'row'}, h('button', {className: 'ghost', textContent: '← Everyone', onclick: () => { PERSON = null; draw(); window.scrollTo(0, 0); }})),
+    h('div', {className: 'phead'}, avatar(personPic(k, p), p.name || k, 'big'),
+      h('div', {}, h('h1', {textContent: p.name || k}), h('div', {className: 'note', textContent: now || 'Nothing live yet. Link their Home Assistant entities below.'}),
+        h('div', {className: 'meta', textContent: 'sensor.person_profile_' + k}))),
+    photoRow('person', k, p), statsCard(k, p));
+  SCHEMA.forEach(sec => f.append(sectionCard(sec, k, p, prof)));
+  f.append(card('more' + k, '✏️ Your own fields', h('div', {}, coveredNote(k, p),
+      fields(p, [...Object.keys(RESERVED), ...Object.keys(covered(k, p))]), quickAdd(p), adder(p, RESERVED))),
+    card('ai' + k, '✨ AI help', aiBox(g, k, p)),
+    card('pl' + k, '📍 Places', placeLinks(p)),
+    card('ha' + k, '🔗 Home Assistant', haLinks(g, k, p)),
+    h('div', {className: 'add'}, h('button', {className: 'del', textContent: 'Delete person', onclick: () => {
+      if (confirm('Delete ' + (p.name || k) + ', their profile and their music?')) {
+        delete D[g][k]; delete D.music[k]; delete D.profiles[k]; PERSON = null; touch(); draw(); window.scrollTo(0, 0);
+      }
+    }})));
   return f;
 }
 
@@ -1052,12 +1262,13 @@ function places() {
     if (!pl || typeof pl !== 'object') continue;
     const used = users(k);
     const here = ((LIVE.places || {})[k] || {}).people_here || [];
-    const title = h('span', {}, pl.name || k, here.length ? h('span', {className: 'now', textContent: '  ' + here.join(', ') + ' here'}) : null);
+    const title = h('span', {className: 'ttl'}, avatar(placePic(k, pl), pl.name || k, 'sm'), pl.name || k, here.length ? h('span', {className: 'now', textContent: '  ' + here.join(', ') + ' here'}) : null);
     f.append(card('p' + k, title,
       h('div', {},
         h('div', {className: 'meta', textContent: 'Used by: ' + (used.length ? used.join(', ') : 'nobody yet')}),
+        photoRow('place', k, pl),
         zoneRow(k, pl, here),
-        fields(pl, ['zone']), adder(pl, {zone: 'The zone is set at the top of the place.'}), placeAi(k, pl)),
+        fields(pl, ['zone', 'photo']), adder(pl, {zone: 'The zone is set at the top of the place.', photo: 'The picture is set at the top of the place.'}), placeAi(k, pl)),
       h('div', {className: 'add'},
         pl.hours ? null : h('button', {textContent: '+ Weekly hours', onclick: () => {
           pl.hours = blankHours(); touch(); draw();
@@ -1396,7 +1607,7 @@ function askTab() {
 }
 
 /* ---------- shell ---------- */
-function go(t) { tab = t; adding = false; draw(); window.scrollTo(0, 0); }
+function go(t) { tab = t; adding = false; if (t !== 'people') PERSON = null; draw(); window.scrollTo(0, 0); }
 
 function draw() {
   if (!D) return;
@@ -1404,8 +1615,10 @@ function draw() {
     : tab === 'music' ? music()
     : tab === 'places' ? places()
     : tab === 'ask' ? askTab()
+    : tab === 'settings' ? h('div')
     : other();
   $('#main').replaceChildren(view);
+  $('#settings').hidden = tab !== 'settings';
   document.querySelectorAll('nav button').forEach(b => {
     b.className = b.dataset.t === tab ? 'on' : '';
   });
@@ -1441,13 +1654,14 @@ window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); 
 
 fetch('api/data').then(r => r.json()).then(d => {
   D = d;
-  for (const k of ['household', 'friends', 'music', 'places', 'other']) D[k] = D[k] || {};
+  for (const k of ['household', 'friends', 'music', 'places', 'other', 'profiles']) D[k] = D[k] || {};
   status('Loaded', 'ok');
   draw();
   loadSensors(); loadAiDefault(); loadShuffle();
   loadEntities();
   loadLive();
   setInterval(loadLive, 60000);
+  fetch('api/schema').then(r => r.json()).then(sc => { SCHEMA = sc; draw(); }).catch(() => {});
 }).catch(() => status('Could not load data. Check the app log.', 'bad'));
 </script>
 </body>
