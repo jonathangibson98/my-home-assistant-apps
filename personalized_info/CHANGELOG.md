@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.0 - 2026-11-26
+
+- **Day off (Work Hours).** A new **Day off** link for each person. Link Work Hours' `binary_sensor.<name>_day_off` (**Find automatically** finds it) and the info sensor says when someone is off today (`off today (Thanksgiving)`), what their next day off is, and lists who is off today in `off_today` / `off_today_text`.
+- **More entities, for each person.** Under a person's Home Assistant section there is now **More entities**: link anything else (heart rate, steps, a car, a smart lock, a health sensor, a helper) with an optional label and extra attributes. **Find more** suggests entities named after them and the phone app's other sensors. The values go in the info sensor (`now.extra`) and, when "Say it" is ticked, in their one-line status. The phone's charging, activity, Wi-Fi and steps are picked up on their own.
+- **House entities.** A new panel at the top links things about the house itself (weather, alarm, house mode, garage door, locks, energy). They appear in the info sensor as `house` (values) and `house_text` (one line each), so an AI Task knows what is going on at home.
+- Every entity type can be picked now (lights, climate, locks, covers, helpers, todo lists, vacuums and more), not only sensors.
+
 ## 0.9.0 - 2026-11-17
 
 - **🎲 Shuffle sensors** (replace the `interests_shuffle` and `artist_shuffle` AppDaemon apps):

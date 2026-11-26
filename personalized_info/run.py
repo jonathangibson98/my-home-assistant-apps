@@ -1,6 +1,7 @@
 import asyncio, datetime, json, os, random, re, shutil, time, urllib.request
 import yaml
 import paho.mqtt.client as mqtt
+import extra_links as XL
 from aiohttp import web
 
 DIR = "/homeassistant/ai_memory"
@@ -22,8 +23,9 @@ ICONS = {"info": "mdi:account-group", "music": "mdi:music"}
 LINK_ROLES = {
     "person": "Person", "phone": "Phone (device tracker)", "notify": "Phone notifications", "asleep": "Asleep",
     "at_work": "At work", "work_hours": "Work hours", "gaming": "Game console", "calendar": "Calendar",
-    "location": "Location sensor",
+    "location": "Location sensor", "day_off": "Day off (Work Hours)",
 }
+HOUSE_KEY = "house"  # the house's own entity list lives in /data/settings.json under this name
 LIVE_EVERY = 60  # seconds between live status checks (published only when something changed)
 
 OPT = json.load(open("/data/options.json"))
@@ -352,12 +354,29 @@ def live_status(d, p, states):
         out["busy_with"] = (s.get("attributes") or {}).get("message")
         if out["busy_with"]:
             words.append(f"busy: {out['busy_with']}")
+    s = st("day_off")
+    if s and s["state"] in ("on", "off"):
+        a = s.get("attributes") or {}
+        out["day_off"] = s["state"] == "on"
+        if out["day_off"]:
+            out["day_off_reason"] = a.get("reason") or ""
+            words.append("off today" + (f" ({out['day_off_reason']})" if out["day_off_reason"] else ""))
+        if a.get("next_date"):
+            out["next_day_off"] = f"{a.get('next_name') or 'day off'} on {a['next_date']}"
     phone = str(links.get("phone") or "")
     if phone.startswith("device_tracker."):
         b = states.get(f"sensor.{phone.split('.', 1)[1]}_battery_level")
         if b and b["state"] not in ("unknown", "unavailable"):
             out["phone_battery"] = b["state"]
             words.append(f"phone {b['state']}%")
+    if phone.startswith("device_tracker."):
+        more, more_words = XL.phone_extras(phone.split(".", 1)[1], states)
+        out.update(more)
+        words += more_words
+    extra, extra_words = XL.extra_entities(links.get("more"), states)
+    if extra:
+        out["extra"] = extra
+        words += extra_words
     out["text"] = " · ".join(words)
     return out or None
 
@@ -389,6 +408,7 @@ def suggest_links(d, key, states):
     for role, ids in (("asleep", [f"binary_sensor.{ps}_asleep", f"binary_sensor.{key}_asleep"]),
                       ("at_work", [f"binary_sensor.{ps}_at_work", f"binary_sensor.{key}_at_work"]),
                       ("work_hours", [f"sensor.{ps}_hours", f"sensor.{key}_hours"]),
+                      ("day_off", [f"binary_sensor.{ps}_day_off", f"binary_sensor.{key}_day_off"]),
                       ("calendar", [f"calendar.{ps}", f"calendar.{key}"]),
                       ("location", [f"sensor.{ps}_location", f"sensor.{key}_location"])):
         hit = next((e for e in ids if e in states), None)
@@ -603,7 +623,7 @@ def with_extras(d, group, states=None):
             q["age"] = age_of(b)
         links = q.pop("links", None)
         if links:
-            q["entities"] = links
+            q["entities"] = XL.entities_view(links)
         now = live_status(d, p, states or {})
         if now:
             q["now"] = now
@@ -638,6 +658,8 @@ def build_info(d, states=None):
             if here:
                 pl["people_here"] = here
     bdays = birthdays(d)
+    house_values, house_text = XL.house_summary((SET.get(HOUSE_KEY) or {}).get("items"), states or {})
+    off_today = [everyone[k].get("name", k) for k, v in status.items() if v.get("day_off")]
     attrs = {
         "total_facts": total, "last_update": ts,
         "household_count": len(hh), "friends_count": len(fr),
@@ -654,6 +676,8 @@ def build_info(d, states=None):
         "birthdays_today": [b["name"] for b in bdays if b["days"] == 0],
         "birthdays_text": birthdays_text(bdays),
         "entities": {k: v["entities"] for k, v in everyone.items() if v.get("entities")},
+        "house": house_values, "house_text": house_text,
+        "off_today": off_today, "off_today_text": ", ".join(off_today),
         "core_text": people_text({k: v for k, v in hh.items() if k in CORE}),
         "household_text": people_text(hh),
         "friends_text": people_text(fr),
@@ -712,8 +736,8 @@ def rest_post(eid, state, attrs):
 def publish_all(only_changes=False):
     try:
         d = load()
-        states = ha_states() if any(isinstance(p, dict) and p.get("links") for g in ("household", "friends")
-                                    for p in d[g].values()) else {}
+        states = ha_states() if (any(isinstance(p, dict) and p.get("links") for g in ("household", "friends")
+                                     for p in d[g].values()) or (SET.get(HOUSE_KEY) or {}).get("items")) else {}
         built = {"info": build_info(d, states), "music": build_music(d)}
     except Exception as e:
         print("Build failed:", e, flush=True)
@@ -866,7 +890,14 @@ def start_mqtt():
 
 # ---------- web ----------
 async def index(r):
-    return web.FileResponse("/index.html")
+    # the page script for the extra-entity lists goes after the page's own script, so it can use its helpers
+    html = open("/index.html", encoding="utf-8").read()
+    try:
+        extra = "<script>\n" + open("/extra_links.js", encoding="utf-8").read() + "\n</script>\n"
+        html = html.replace("</body>", extra + "</body>", 1) if "</body>" in html else html + extra
+    except OSError as e:
+        print("extra_links.js missing:", e, flush=True)
+    return web.Response(text=html, content_type="text/html", headers={"Cache-Control": "no-store"})
 
 async def get_data(r):
     # a hand-edited date (birthday: 2000-01-15 without quotes) loads as a date object: send it as text
@@ -876,6 +907,7 @@ async def post_data(r):
     d = await r.json()
     if not isinstance(d, dict) or not all(k in d for k in KEYS):
         return web.json_response({"ok": False}, status=400)
+    XL.clean_all(d)
     save(d)
     publish_all()
     return web.json_response({"ok": True})
@@ -884,9 +916,10 @@ async def get_entities(r):
     """Entities and notify services for the pickers, plus the link roles."""
     loop = asyncio.get_running_loop()
     states = await loop.run_in_executor(None, ha_states)
-    keep = ("person.", "device_tracker.", "binary_sensor.", "sensor.", "media_player.", "calendar.", "zone.")
+    skip = ("button.", "update.", "event.", "scene.", "script.", "automation.", "ai_task.", "stt.", "tts.", "conversation.",
+            "number.", "text.", "image.", "notify.", "wake_word.", "assist_satellite.", "tag.", "persistent_notification.")
     ents = [{"id": e, "name": (s.get("attributes") or {}).get("friendly_name", e)} for e, s in sorted(states.items())
-            if e.startswith(keep)]
+            if not e.startswith(skip)]
     svcs = await loop.run_in_executor(None, notify_services)
     ents += [{"id": s, "name": "Notify service"} for s in svcs]
     return web.json_response({"entities": ents, "roles": LINK_ROLES})
@@ -900,6 +933,35 @@ async def get_suggest(r):
     states = await loop.run_in_executor(None, ha_states)
     new, found = await loop.run_in_executor(None, suggest_links, d, key, states)
     return web.json_response({"ok": True, "new": new, "found": found})
+
+async def get_suggest_more(r):
+    key = r.query.get("person", "")
+    loop = asyncio.get_running_loop()
+    d = await loop.run_in_executor(None, load)
+    p = d["household"].get(key) or d["friends"].get(key)
+    if p is None:
+        return web.json_response({"ok": False, "error": "Save the person first."})
+    states = await loop.run_in_executor(None, ha_states)
+    items = await loop.run_in_executor(None, XL.suggest_more, key, p, states)
+    return web.json_response({"ok": True, "items": items})
+
+async def get_house(r):
+    loop = asyncio.get_running_loop()
+    states = await loop.run_in_executor(None, ha_states)
+    items = XL.clean_items((SET.get(HOUSE_KEY) or {}).get("items"), XL.MAX_HOUSE)
+    values, text = XL.house_summary(items, states)
+    return web.json_response({"items": items, "values": values, "text": text})
+
+async def post_house(r):
+    body = await r.json()
+    items = XL.clean_items(body.get("items") if isinstance(body, dict) else None, XL.MAX_HOUSE)
+    SET[HOUSE_KEY] = {"items": items}
+    save_settings(SET)
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, publish_all)
+    states = await loop.run_in_executor(None, ha_states)
+    values, text = XL.house_summary(items, states)
+    return web.json_response({"items": items, "values": values, "text": text})
 
 async def get_zone_suggest(r):
     key, name = r.query.get("place", ""), r.query.get("name", "")
@@ -1251,6 +1313,9 @@ app.router.add_post("/api/data", post_data)
 app.router.add_get("/api/settings", get_settings)
 app.router.add_get("/api/entities", get_entities)
 app.router.add_get("/api/suggest", get_suggest)
+app.router.add_get("/api/suggest_more", get_suggest_more)
+app.router.add_get("/api/house", get_house)
+app.router.add_post("/api/house", post_house)
 app.router.add_get("/api/preview", get_preview)
 app.router.add_get("/api/zone_suggest", get_zone_suggest)
 app.router.add_post("/api/settings", post_settings)
