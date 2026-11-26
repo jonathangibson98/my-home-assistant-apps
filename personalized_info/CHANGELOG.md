@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.0
+
+- **✨ Fill the sections with AI**: your AI Task reads everything saved about a person (any field names, any wording) and files it into the profile sections: work, likes, family and friends, vehicles, important dates, notes and more. It also adds teams and games to their own fields. You see exactly what it would add first. It only fills empty spots or adds to lists, never overwrites, and nothing is saved until you press Save changes.
+- A **✨ Fill everyone's sections with AI** button at the bottom of the People tab does the whole household and friends one person at a time (with a Stop button). It keeps all your old fields.
+- Optional per person: also remove the old fields the AI moved.
+- The AI can only fill fields that exist in the form. Anything else it makes up is thrown away.
+
 ## 1.1.0
 
 - Notable people (`other` > `notable_people`) are in the People grid too, with a picture and notes for each. Setting a picture turns that entry from a plain list into a name, notes and picture. Entries you don't touch stay as they were.
