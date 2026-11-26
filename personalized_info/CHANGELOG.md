@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.0
+
+- Notable people (`other` > `notable_people`) are in the People grid too, with a picture and notes for each. Setting a picture turns that entry from a plain list into a name, notes and picture. Entries you don't touch stay as they were.
+- **Move old fields into sections**: a tidy-up button (on each person, and for everyone at the bottom of the People tab) that moves older free-form fields into the matching profile section: occupation, girlfriend/boyfriend/partner, friends, hobbies, sports teams, car, role, notes and wake or bed time. You tick what to move and nothing is final until you Save. Moved fields leave Your own fields so nothing shows twice.
+
 ## 1.0.0
 
 Personalized Info and Person Profiles are now one add-on. Everything you already saved here stays: the same files (`people.yaml`, `places.yaml`, `music.yaml` in `ai_memory`), the same sensors and the same settings are used.
@@ -12,8 +17,6 @@ Personalized Info and Person Profiles are now one add-on. Everything you already
 - Birthday, nickname, pronouns, favorite teams and games in the profile use the fields you already have, so nothing is entered twice.
 - Worked out: age, zodiac sign, birthday countdown and countdowns for important dates, family birthdays, vehicle due dates, renewals and checkups.
 - New sensor per person, `sensor.person_profile_<name>` (the same names Person Profiles used) with their profile, live status, picture, countdowns and an optional AI summary. `sensor.person_profiles` lists everyone. The info sensor also gets each person's `profile`, `zodiac` and `coming_up`.
-- Notable people (`other` > `notable_people`) are in the People grid too, with a picture and notes for each. Setting a picture turns that entry from a plain list into a name, notes and picture. Entries you don't touch stay as they were.
-- **Move old fields into sections**: a tidy-up button (on each person, and for everyone at the bottom of the People tab) that moves older free-form fields into the matching profile section: occupation, girlfriend/boyfriend/partner, friends, hobbies, sports teams, car, role, notes and wake or bed time. You tick what to move and nothing is final until you Save. Moved fields leave Your own fields so nothing shows twice.
 - The separate Person Profiles add-on is retired: uninstall it after updating. Its `person_profile_ask` and `person_profile_refresh` events are gone; use the Ask tab or the AI summary button instead.
 
 ## 0.10.1 - 2026-11-26
