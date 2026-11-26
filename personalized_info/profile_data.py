@@ -31,8 +31,8 @@ SECTIONS = [
     {"key": "about", "title": "About", "icon": "🙂", "sensor": True, "ai": True,
      "hint": "The basics. Birthday gives age, zodiac sign and a countdown to the next one.",
      "fields": [
-         F("first_name", "First name"), F("last_name", "Last name"), F("nickname", "Nickname", legacy="nickname"),
-         F("pronouns", "Pronouns", legacy="pronouns"), F("birthday", "Birthday", "text", "2000-01-15, or 01-15 without the year", legacy="birthday"),
+         F("first_name", "First name"), F("last_name", "Last name"), F("nickname", "Nickname", legacy=["nickname", "nicknames", "nick"]),
+         F("pronouns", "Pronouns", legacy="pronouns"), F("birthday", "Birthday", "text", "2000-01-15, or 01-15 without the year", legacy=["birthday", "dob", "date_of_birth", "birth_date", "birthdate"]),
          F("birthplace", "Born in"),
          F("lives_in", "Lives in", "text", "town or city", legacy=["home_location", "home_town", "lives_in", "hometown"]),
          F("breed", "Breed (for pets)", "text", legacy="breed"), F("sex", "Sex (for pets)", "text", legacy=["sex", "gender"]),

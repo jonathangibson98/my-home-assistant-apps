@@ -21,6 +21,10 @@ Profile sections are saved in `/homeassistant/ai_memory/profiles.yaml`. Pictures
 
 Each person also gets **`sensor.person_profile_<name>`** (state: what they are doing now) with `profile`, `age`, `zodiac`, `days_until_birthday`, `upcoming_dates`, `dates_next_30_days`, `entity_picture`, `ai_summary` and more, and **`sensor.person_profiles` lists everyone. Add `sensor.person_profile_*` to your recorder excludes: they can be large.
 
+## Fill the sections without the AI
+
+Every person has a **Fill from what is saved (no AI)** button, and the People tab has one for everyone. It uses only what is already saved: name, work and home place addresses, "together since" dates and favorite artists. It never overwrites anything. New people are also filled this way automatically, once, and a field you clear stays cleared. If the AI button errors (busy, out of credit), the no-AI parts are still filled and the error is shown.
+
 ## Let the AI fill the sections
 
 Open a person and use **✨ Fill the sections with AI**, or use **✨ Fill everyone's sections with AI** at the bottom of the People tab. Your AI Task (the `ai_task_entity` option, the Default AI in ⚙️ Settings, or the first AI Task it finds) reads everything saved about the person, whatever the field names are, and files it into the sections. It never overwrites something already filled in, only adds, and it reads and writes the same fields as above. Check the result, then press **Save changes**. Tick "also remove the old fields it moved" if you don't want the old copies. What is on the page is sent to your AI provider.

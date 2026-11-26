@@ -271,7 +271,8 @@ def load():
     d["profiles"] = clean_profiles(raw_profiles)
     # music written inside a person (top_artists / music) moves to the music file
     moved = fold_person_music(d) or moved
-    if migrate or moved:
+    auto = autofill_new(d)  # fills empty profile spots from what is saved, once per person
+    if migrate or moved or auto:
         save(d)
     return d
 
@@ -1359,6 +1360,95 @@ def fill_person(d, group, key, person):
     return {"sections": PD.clean_data(out.get("sections")), "own_fields": own,
             "used_fields": [f for f in (out.get("used_fields") or []) if isinstance(f, str) and f in person and f not in ("links", "places", "photo")]}
 
+AUTOFILL_FILE = "/data/autofill.json"  # who has already been filled in automatically, so a field you clear stays cleared
+
+def rule_fill(d, group, key, person):
+    """Fill the profile sections from what is already saved, with no AI: names, work, address, anniversary, music.
+    Same shape as fill_person's answer. Nothing is guessed."""
+    sec = {}
+    def put(s, f, v):
+        if not PD.empty(v):
+            sec.setdefault(s, {})[f] = v
+    own = {}
+    name = str(person.get("name") or "").strip()
+    role = str(person.get("role") or person.get("relationship") or person.get("relation") or "")
+    pet = bool(person.get("breed")) or bool(re.search(r"\b(dog|cat|pet|puppy|kitten)\b", role, re.I))
+    if name:
+        parts = name.split()
+        put("about", "first_name", parts[0])
+        if len(parts) > 1:
+            put("about", "last_name", " ".join(parts[1:]))
+    links = person.get("places") if isinstance(person.get("places"), dict) else {}
+    places = d.get("places") or {}
+    def pl_of(rx, need_addr=False):
+        for label, pk in links.items():
+            pl = places.get(pk)
+            if re.fullmatch(rx, slug(label)) and isinstance(pl, dict) and (not need_addr or str(pl.get("address") or "").strip()):
+                return pl
+        return None
+    if not pet:
+        w = pl_of(r"work|workplace|job|employer|office")
+        if w and str(w.get("name") or "").strip():
+            put("work", "employer", str(w["name"]).strip())
+        wa = pl_of(r"work|workplace|job|employer|office|work_?(location|address|place|site)|job_location|office_location", True)
+        if wa:
+            put("work", "work_address", str(wa["address"]).strip())
+    h = pl_of(r"home|house|residence", True)
+    if h:
+        put("contact", "address", str(h["address"]).strip())
+    # a "together since <date>" next to the partner becomes a yearly date
+    for k in ("girlfriend", "boyfriend", "partner", "spouse", "wife", "husband", "fiance", "fiancee"):
+        t = str(person.get(k) or "")
+        m = re.search(r"since\s+([A-Za-z]+\.?\s+\d{1,2},?\s*\d{4}|\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{4})", t)
+        b = parse_birthday(m.group(1)) if m else None
+        if b and b[0]:
+            who = re.split(r"\s*[(,]", t, 1)[0].strip() or "partner"
+            put("dates", "important", [{"label": "Together with " + who, "date": "%04d-%02d-%02d" % (b[0], b[1], b[2]), "yearly": True}])
+            break
+    mus = (d.get("music") or {}).get(key)
+    if isinstance(mus, dict):
+        art = [str(a) for a in flat(mus.get("artists", []))][:15] or [str(g) for g in flat(mus.get("genres", []))][:15]
+        put("likes", "music", art)
+    # nickname_1, nickname_2... are one nickname field
+    nn = [str(person[k]).strip() for k in sorted(person) if re.fullmatch(r"nickname_\d+", k) and str(person[k]).strip()]
+    if nn and not any(person.get(k) for k in ("nickname", "nicknames", "nick")):
+        own["nickname"] = ", ".join(nn)
+    return {"sections": PD.clean_data(sec), "own_fields": own, "used_fields": []}
+
+def autofill_new(d):
+    """Run rule_fill once for each person who has not been filled yet, adding only to empty spots. True if profiles changed."""
+    try:
+        done = json.load(open(AUTOFILL_FILE)) if os.path.exists(AUTOFILL_FILE) else {}
+    except Exception:
+        done = {}
+    changed = False
+    profs = d.setdefault("profiles", {})
+    for g in ("household", "friends"):
+        for k, p in d[g].items():
+            if not isinstance(p, dict) or k in done:
+                continue
+            done[k] = True
+            r = rule_fill(d, g, k, p)
+            for sk, vals in r["sections"].items():
+                cur = profs.setdefault(k, {"data": {}, "flags": PD.clean_flags({})}).setdefault("data", {}).setdefault(sk, {})
+                for fk, v in vals.items():
+                    if PD.empty(cur.get(fk)):
+                        cur[fk] = v
+                        changed = True
+                    elif fk == "important" and isinstance(cur[fk], list) and not any(isinstance(x, dict) and x.get("date") == v[0]["date"] for x in cur[fk]):
+                        cur[fk] = cur[fk] + v
+                        changed = True
+            for fk, v in r["own_fields"].items():
+                if PD.empty(p.get(fk)):
+                    p[fk] = v
+                    changed = "people"
+    try:
+        with open(AUTOFILL_FILE, "w") as f:
+            json.dump(done, f)
+    except OSError as e:
+        print("Could not remember who was auto-filled:", e, flush=True)
+    return changed
+
 def ai_job(b):
     d = load()
     if isinstance(b.get("data"), dict) and all(k in b["data"] for k in ("household", "friends")):
@@ -1386,8 +1476,20 @@ def ai_job(b):
     if not isinstance(person, dict):
         raise ValueError("That person doesn't exist yet (save first).")
     shown = {k: v for k, v in person.items() if k not in ("links",)}
+    if action == "rules":
+        return rule_fill(d, group, key, person)
     if action == "fill":
-        return fill_person(d, group, key, person)
+        base = rule_fill(d, group, key, person)
+        try:
+            out = fill_person(d, group, key, person)
+        except Exception as e:  # the AI is down, out of credit, or answered nonsense: keep what needs no AI
+            base["ai_error"] = str(e)[:300]
+            return base
+        for sk, vals in base["sections"].items():
+            out["sections"].setdefault(sk, {}).update({f: v for f, v in vals.items() if PD.empty(out["sections"][sk].get(f))})
+        for fk, v in base["own_fields"].items():
+            out["own_fields"].setdefault(fk, v)
+        return out
     if action == "suggest":
         out = ai_json("A home-automation app keeps notes about people so its voice assistant and dashboards can be personal "
                       "(birthdays, nicknames, favorite teams, games, shows, routines...). Suggest up to 8 useful NEW fields for "
