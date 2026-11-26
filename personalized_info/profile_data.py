@@ -39,7 +39,7 @@ SECTIONS = [
     {"key": "work", "title": "Work & school", "icon": "💼", "sensor": True, "ai": True,
      "hint": "For their hours and schedule, link the Work Hours sensor under Linked entities.",
      "fields": [
-         F("employer", "Employer"), F("job_title", "Job title"), F("work_address", "Work address"),
+         F("employer", "Employer"), F("job_title", "Job or occupation"), F("work_address", "Work address"),
          F("work_phone", "Work phone"), F("boss", "Boss or supervisor"), F("coworkers", "Coworkers", "tags"),
          F("school", "School"), F("studying", "Grade or what they study"),
          F("work_notes", "Work notes (shifts, pay day, uniform...)", "long")]},
