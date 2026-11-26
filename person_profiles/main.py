@@ -573,16 +573,16 @@ async def session_loop(session):
     ha = HA(session)
     await ha.connect()
     app = App(ha)
-    try:
-        cfg = await ha.call({"type": "get_config"})
-        TZ_NAME[0] = (cfg or {}).get("time_zone") or "UTC"
-    except Exception as e:
-        log.warning("Could not read the time zone: %s", e)
-    CUR["app"] = app
     ha.on_event = app.on_event
     reader = asyncio.create_task(ha.reader())
     for t in ("person_profile_refresh", "person_profile_ask"):
         await ha.call({"type": "subscribe_events", "event_type": t})
+    try:
+        cfg = await ha.call({"type": "get_config"}, timeout=15)
+        TZ_NAME[0] = (cfg or {}).get("time_zone") or "UTC"
+    except Exception as e:
+        log.warning("Could not read the time zone (%s), using UTC for dates", repr(e))
+    CUR["app"] = app
     log.info("Connected to Home Assistant")
     if not ai_available():
         log.warning("No ai_task_entity or conversation_agent set: AI summaries are off")
