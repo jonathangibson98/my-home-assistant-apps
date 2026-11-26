@@ -952,24 +952,34 @@ function syncLine(){
   const miss=(y.missing||[]).length?`<div class="res err">${esc(y.missing.join(" and "))} ${y.missing.length>1?"are":"is"} not installed as a dashboard resource, so the card shows an error until you add ${y.missing.length>1?"them":"it"} from HACS.</div>`:"";
   return `<div class="hint">Checked ${when}${y.changed?", and updated the dashboard":", already up to date"}. <a href="${esc(y.url||"#")}" target="_top">Open it</a></div>`+miss;
 }
+let tg={url:null,list:null,err:""};
+function pathKey(p){return JSON.stringify(p||[])}
 function dashV(){
-  const d=loc.card.dash||(loc.card.dash={auto:false,mode:"own",target:"",title:"Location Hub",view_title:"People",sidebar:true});
+  const d=loc.card.dash||(loc.card.dash={auto:false,target:"",path:[],place:"inside"});
   const on=!!d.auto;
-  let h=`<div class="card"><div class="hd" style="cursor:default"><b>Keep a dashboard card up to date<small>The add-on creates the card in Home Assistant and updates it whenever people, pictures or titles change. No copying and pasting.</small></b>${sw("loc.card.dash.auto",on)}</div>`;
+  let h=`<div class="card"><div class="hd" style="cursor:default"><b>Keep the card up to date in my dashboard<small>The add-on puts the card into a card you choose, like your pop-up, and updates it whenever people, pictures or titles change. No copying and pasting.</small></b>${sw("loc.card.dash.auto",on)}</div>`;
   if(on){
-    h+=`<div class="bd"><div class="gseg"><button class="${d.mode!=="existing"?"on":""}" data-act="dashmode" data-m="own">Its own dashboard</button><button class="${d.mode==="existing"?"on":""}" data-act="dashmode" data-m="existing">Add to one I have</button></div>`;
-    if(d.mode==="existing"){
-      if(!dashList&&!dashAsked){dashAsked=true;loadDashList()}
-      const L=dashList||[{url:"",title:"Overview (default)"}];
-      h+=fld("Dashboard",`<select data-k="loc.card.dash.target">${L.map(x=>`<option value="${esc(x.url)}" ${x.url===(d.target||"")?"selected":""}>${esc(x.title)}</option>`).join("")}</select>`,"It adds one view (page) to this dashboard. Everything else in it is left alone. A dashboard that is still automatic has to be taken control of first.");
-      h+=fld("View title",inp("loc.card.dash.view_title",d.view_title));
-    }else{
-      h+=fld("Dashboard name",inp("loc.card.dash.title",d.title),"Created for you at /location-hub. Don't put your own cards on its People view: the add-on rewrites that view when something changes.");
-      h+=`<div class="hd" style="padding:12px 0 0;cursor:default"><b>Show in the sidebar</b>${sw("loc.card.dash.sidebar",d.sidebar!==false)}</div>`;
+    const L=dashList||[{url:"",title:"Overview (default)"}];
+    if(!dashList&&!dashAsked){dashAsked=true;loadDashList()}
+    if(tg.url!==(d.target||"")&&tg.url!==null||tg.list===null&&!tg.busy)loadTargets();
+    h+=`<div class="bd">`+fld("Dashboard",`<select data-k="loc.card.dash.target" data-act="dashpick">${L.map(x=>`<option value="${esc(x.url)}" ${x.url===(d.target||"")?"selected":""}>${esc(x.title)}</option>`).join("")}</select>`,"Only dashboards the add-on is allowed to edit are listed (not YAML-mode ones).");
+    h+=`<div class="gseg"><button class="${d.place!=="replace"?"on":""}" data-act="dashplace" data-m="inside">Add it inside</button><button class="${d.place==="replace"?"on":""}" data-act="dashplace" data-m="replace">Replace a card</button></div>`;
+    if(tg.err)h+=`<div class="res err">${esc(tg.err)}</div>`;
+    else if(tg.list===null)h+=`<div class="hint">Loading the cards in that dashboard…</div>`;
+    else{
+      const opts=tg.list.filter(x=>d.place==="replace"?x.path[x.path.length-2]==="cards"&&!x.popup:x.inside);
+      const cur=pathKey(d.path);
+      h+=fld(d.place==="replace"?"Card to replace":"Put it inside",`<select data-act="dashwhere"><option value="">Pick one…</option>${opts.map(x=>`<option value="${esc(pathKey(x.path))}" ${pathKey(x.path)===cur?"selected":""}>${esc(x.label)}${x.ours?" ✓ (this card)":""}</option>`).join("")}</select>`,
+        d.place==="replace"?"The card you pick is swapped for the people card. It is found again by itself afterwards, even if you move it.":"For a Bubble Card pop-up, pick the pop-up (the stack it is in). It is found again by itself afterwards, even if you move it.");
     }
     h+=`<div id="dsync">${syncLine()}</div><div class="btns"><button class="b pri" data-act="dashnow">Update now</button></div></div>`;
   }
   return h+`</div>`;
+}
+async function loadTargets(){
+  const d=loc.card.dash;tg.busy=true;tg.err="";tg.list=null;tg.url=d.target||"";
+  try{tg.list=await api("api/hub/card/targets?dashboard="+encodeURIComponent(tg.url))}catch(e){tg.err=e.message;tg.list=[]}
+  tg.busy=false;if(tab==="card")render();
 }
 async function loadDashList(){
   try{dashList=await api("api/hub/card/dashboards")}catch(e){dashList=[{url:"",title:"Overview (default)"}]}
@@ -1128,6 +1138,10 @@ async function save(quiet){
   }catch(e){toast("Save failed: "+e.message);throw e}
 }
 
+document.addEventListener("change",e=>{const t=e.target;
+  if(t.dataset.act==="dashpick"){loc.card.dash.target=t.value;loc.card.dash.path=[];mark("card");tg.list=null;tg.url=null;render()}
+  if(t.dataset.act==="dashwhere"){loc.card.dash.path=t.value?JSON.parse(t.value):[];mark("card")}
+});
 document.addEventListener("input",e=>{const t=e.target;if(t.dataset.k){setPath(t.dataset.k,t.type==="number"?Number(t.value):t.type==="checkbox"?t.checked:t.value);if(t.dataset.k==="loc.card.dash.auto")render()}});
 document.addEventListener("change",e=>{
   const t=e.target,d=t.dataset;
@@ -1182,7 +1196,7 @@ document.addEventListener("click",async e=>{
     try{const r=await api("api/hub/arrivals/test",{zone:d.zone,people:ids});toast("Test arrival: "+r.state);loadArrLive()}
     catch(err){toast("Test failed: "+err.message)}
   }
-  if(d.act==="dashmode"){loc.card.dash.mode=d.m;mark("card");if(d.m==="existing"&&!dashList)loadDashList();render()}
+  if(d.act==="dashplace"){loc.card.dash.place=d.m;loc.card.dash.path=[];mark("card");render()}
   if(d.act==="dashnow"){
     try{await save(true);const r=await api("api/hub/card/sync",{});loc.card.sync=r;toast(r.ok===false?"Could not update: "+r.msg:"Dashboard updated");render()}
     catch(err){toast("Failed: "+err.message)}

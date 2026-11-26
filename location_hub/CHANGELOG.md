@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.9.0 - 2026-11-25
+
+- **The card goes into a card, not a whole dashboard view.** 3.8.0 made a dashboard or a People view for it. Now, on the Dashboard card tab, you pick a dashboard and then **where in it** the card goes, for example your Bubble Card pop-up, and the add-on puts just the people card there and keeps it up to date.
+  - **Add it inside**: pick a pop-up (shown as "Pop-up #yourhash (the stack it is in)"), any stack or grid, or a view.
+  - **Replace a card**: swap a card you pasted by hand for the managed one.
+  - The add-on marks its one card, so it finds it again by itself even if you move it, and updates it in place. It never adds a second copy.
+  - If the place you picked is gone, it says so instead of guessing.
+- The dashboard and People view that 3.8.0 made are removed once, automatically, but only when they hold nothing of yours.
+
 ## 3.8.0 - 2026-11-25
 
 - **The dashboard card is created and updated for you.** On the Dashboard card tab, turn on **Keep a dashboard card up to date** and the add-on puts the card into Home Assistant itself, so there is no more copying YAML. It rechecks when you save, when you change devices, and every couple of minutes, and only writes when something actually changed.

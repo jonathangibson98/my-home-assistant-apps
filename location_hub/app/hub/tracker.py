@@ -717,20 +717,29 @@ def load_card():
         "dash": clean_dash(data.get("dash")),
     }
 
-DASH_DEFAULT = {"auto": False, "mode": "own", "target": "", "title": "Location Hub", "view_title": "People", "sidebar": True}
-VIEW_PATH = "location-hub"      # the view this add-on owns inside the dashboard
-OWN_DASH = "location-hub"       # url of the dashboard it creates in "own" mode
+DASH_DEFAULT = {"auto": False, "target": "", "path": [], "place": "inside"}
+OLD_VIEW = "location-hub"       # 3.8.0 made a view and a dashboard with this path; they are cleaned up once
+MARK = "location_hub_managed"   # set on the one card the add-on manages, so it is found again wherever you move it
+
+def clean_path(p):
+    """A place in the dashboard as [view, "cards", i, "cards", j ...]; numbers and the words cards or sections only."""
+    if not isinstance(p, list) or len(p) > 14:
+        return []
+    out = []
+    for k in p:
+        if isinstance(k, bool) or not (isinstance(k, int) and k >= 0 or k in ("cards", "sections")):
+            return []
+        out.append(k)
+    return out
 
 def clean_dash(d):
     d = d if isinstance(d, dict) else {}
     out = dict(DASH_DEFAULT)
     out["auto"] = bool(d.get("auto", False))
-    out["mode"] = "existing" if d.get("mode") == "existing" else "own"
     t = str(d.get("target") or "").strip()[:80]
     out["target"] = t if re.fullmatch(r"[a-z0-9_-]*", t) else ""
-    out["title"] = str(d.get("title") or "").strip()[:60] or DASH_DEFAULT["title"]
-    out["view_title"] = str(d.get("view_title") or "").strip()[:60] or DASH_DEFAULT["view_title"]
-    out["sidebar"] = bool(d.get("sidebar", True))
+    out["path"] = clean_path(d.get("path"))
+    out["place"] = "replace" if d.get("place") == "replace" else "inside"
     return out
 
 def save_card(card):
@@ -811,9 +820,8 @@ def build_card_yaml(card=None):
     return "\n".join(out) + "\n"
 
 # ---------------- Dashboard card, kept up to date in Home Assistant ----------------
-# The same card as the YAML above, as data, written into a view this add-on owns ("location-hub").
-# "own": a dashboard it creates. "existing": one view added to a dashboard you already have.
-# Nothing else in the dashboard is touched.
+# The same card as the YAML above, as data, put into a card you choose (a pop-up's stack, a grid, a view) and then
+# found again by a marker, wherever you move it. Nothing else in the dashboard is touched.
 card_sync = {"ok": None, "msg": "", "t": 0.0, "hash": "", "missing": [], "url": "", "changed": False}
 
 def tile_object(row, sensor):
@@ -880,6 +888,71 @@ async def with_ws(s, fn):
 def card_sync_public():
     return {k: card_sync[k] for k in ("ok", "msg", "t", "missing", "url", "changed")}
 
+def _kids(node):
+    """The lists of cards, sections or views directly inside a dashboard node."""
+    for k in ("views", "sections", "cards"):
+        if isinstance(node, dict) and isinstance(node.get(k), list):
+            yield node[k]
+
+def find_managed(cfg):
+    """(list, index) of the card this add-on manages, wherever it sits in the dashboard."""
+    stack = [cfg]
+    while stack:
+        node = stack.pop()
+        for lst in _kids(node):
+            for i, c in enumerate(lst):
+                if isinstance(c, dict):
+                    if c.get(MARK):
+                        return lst, i
+                    stack.append(c)
+    return None
+
+def resolve_path(cfg, path):
+    o = cfg.get("views")
+    for k in path:
+        try:
+            o = o[k]
+        except (KeyError, IndexError, TypeError):
+            return None
+    return o
+
+def card_targets(cfg):
+    """Every place a card could go: views, sections, and every card, with a readable name. 'inside' = it can hold cards."""
+    out = []
+
+    def label_of(c):
+        t = str(c.get("type") or "?")
+        if t == "custom:bubble-card":
+            return "Bubble " + str(c.get("card_type") or "card") + (" " + c["hash"] if c.get("hash") else "") + (" · " + str(c["name"]) if c.get("name") else "")
+        title = c.get("title") or c.get("name") or c.get("entity") or ""
+        return t.replace("custom:", "") + (" · " + str(title) if title else "")
+
+    def visit(cards, path, depth):
+        for i, c in enumerate(cards or []):
+            if not isinstance(c, dict):
+                continue
+            pth = path + [i]
+            kids = c.get("cards") if isinstance(c.get("cards"), list) else None
+            pop = next((k for k in (kids or []) if isinstance(k, dict) and k.get("type") == "custom:bubble-card"
+                        and k.get("card_type") == "pop-up"), None)
+            lab = ("Pop-up " + str(pop.get("hash") or "") + " (the stack it is in)") if pop else label_of(c)
+            out.append({"path": pth, "label": " " * depth + lab, "inside": kids is not None, "ours": bool(c.get(MARK)), "popup": bool(pop)})
+            if kids is not None:
+                visit(kids, pth + ["cards"], depth + 1)
+
+    for vi, v in enumerate(cfg.get("views") or []):
+        if not isinstance(v, dict):
+            continue
+        title = v.get("title") or v.get("path") or str(vi + 1)
+        if isinstance(v.get("sections"), list):
+            for si, sec in enumerate(v["sections"]):
+                out.append({"path": [vi, "sections", si], "label": f"View {title}, section {si + 1}", "inside": True, "ours": False})
+                visit((sec or {}).get("cards"), [vi, "sections", si, "cards"], 1)
+        else:
+            out.append({"path": [vi], "label": f"View {title}", "inside": True, "ours": False})
+            visit(v.get("cards"), [vi, "cards"], 1)
+    return out
+
 async def sync_card(s, force=False):
     card = load_card()
     d = card["dash"]
@@ -889,54 +962,61 @@ async def sync_card(s, force=False):
     if obj is None:
         card_sync.update(ok=False, msg="Nobody is on the card yet, so there is nothing to put on a dashboard.", t=time.time(), changed=False)
         return card_sync_public()
+    obj[MARK] = True
     h = hashlib.sha1(json.dumps([obj, d, entity_id()], sort_keys=True).encode()).hexdigest()
     if not force and h == card_sync["hash"] and time.time() - card_sync["t"] < 1800:
         return card_sync_public()
-    view = {"title": d["view_title"], "path": VIEW_PATH, "icon": "mdi:map-marker-account", "cards": [obj]}
     out = {}
 
-    async def work(call):
-        if d["mode"] == "own":
-            url = OWN_DASH
-            boards = await call({"type": "lovelace/dashboards/list"}) or []
-            mine = next((b for b in boards if b.get("url_path") == url), None)
-            if not mine:
-                await call({"type": "lovelace/dashboards/create", "url_path": url, "title": d["title"],
-                            "icon": "mdi:map-marker-account", "show_in_sidebar": d["sidebar"],
-                            "require_admin": False, "mode": "storage"})
-            elif mine.get("title") != d["title"] or bool(mine.get("show_in_sidebar")) != d["sidebar"]:
-                await call({"type": "lovelace/dashboards/update", "dashboard_id": mine["id"],
-                            "title": d["title"], "show_in_sidebar": d["sidebar"]})
-        else:
-            url = d["target"] or None
+    async def read(call, url):
         msg = {"type": "lovelace/config", "force": True}
         if url:
             msg["url_path"] = url
         try:
-            now = await call(msg)
+            return dict(await call(msg) or {})
         except RuntimeError as e:
-            if "config_not_found" not in str(e):
-                raise
-            if d["mode"] != "own":   # an automatic dashboard: saving would replace everything it shows
+            if "config_not_found" in str(e):   # an automatic dashboard: saving would replace everything it shows
                 raise RuntimeError("That dashboard is still automatic. Open it, tap the pencil, then the three dots and Take control, then try again.")
-            now = None
-        now = dict(now or {})
-        views = list(now.get("views") or [])
-        i = next((k for k, v in enumerate(views) if v.get("path") == VIEW_PATH), None)
-        if i is not None and views[i] == view:
-            out["changed"] = False
-        else:
-            if i is None:
-                views.append(view)
+            raise
+
+    async def write(call, url, cfg):
+        msg = {"type": "lovelace/config/save", "config": cfg}
+        if url:
+            msg["url_path"] = url
+        await call(msg)
+
+    async def work(call):
+        url = d["target"] or None
+        now = await read(call, url)
+        found = find_managed(now)
+        if found:
+            lst, i = found
+            if lst[i] == obj:
+                out["changed"] = False
             else:
-                views[i] = view
-            now["views"] = views
-            save = {"type": "lovelace/config/save", "config": now}
-            if url:
-                save["url_path"] = url
-            await call(save)
+                lst[i] = obj
+                out["changed"] = True
+        else:
+            if not d["path"]:
+                raise RuntimeError("Pick where the card should go first.")
+            if d["place"] == "replace":
+                parent = resolve_path(now, d["path"][:-1]) if len(d["path"]) > 1 else now.get("views")
+                idx = d["path"][-1]
+                if not isinstance(parent, list) or not isinstance(idx, int) or idx >= len(parent):
+                    raise RuntimeError("The card you picked is not there any more. Pick it again.")
+                parent[idx] = obj
+            else:
+                box = resolve_path(now, d["path"])
+                if not isinstance(box, dict):
+                    raise RuntimeError("The place you picked is not there any more. Pick it again.")
+                box.setdefault("cards", [])
+                if not isinstance(box["cards"], list):
+                    raise RuntimeError("That place cannot hold cards. Pick a stack, a pop-up or a view.")
+                box["cards"].append(obj)
             out["changed"] = True
-        out["url"] = "/" + (url or "lovelace") + "/" + VIEW_PATH
+        if out["changed"]:
+            await write(call, url, now)
+        out["url"] = "/" + (url or "lovelace")
         try:
             res = await call({"type": "lovelace/resources"}) or []
         except RuntimeError:
@@ -944,6 +1024,9 @@ async def sync_card(s, force=False):
         names = " ".join(str(r.get("url") or "") for r in res).lower()
         out["missing"] = [n for n, need in (("Mushroom", "mushroom"), ("Bubble Card", "bubble-card"))
                           if (need != "bubble-card" or card["separator"]) and need not in names]
+        if not card_sync.get("cleaned"):
+            await clean_old_view(call, url)
+            card_sync["cleaned"] = True
 
     try:
         await with_ws(s, work)
@@ -954,6 +1037,27 @@ async def sync_card(s, force=False):
         card_sync.update(ok=False, msg=str(e) or type(e).__name__, t=time.time(), changed=False)
         logging.warning("Could not update the dashboard card: %s", card_sync["msg"])
     return card_sync_public()
+
+async def clean_old_view(call, url):
+    """3.8.0 made a whole dashboard (or one view) for the card. Remove what it made, once, now that the card lives in a card."""
+    try:
+        boards = await call({"type": "lovelace/dashboards/list"}) or []
+        mine = next((b for b in boards if b.get("url_path") == OLD_VIEW), None)
+        if mine and (url or "") != OLD_VIEW:
+            cfg = dict(await call({"type": "lovelace/config", "force": True, "url_path": OLD_VIEW}) or {})
+            views = cfg.get("views") or []
+            if all(v.get("path") == OLD_VIEW for v in views):   # nothing of yours in it
+                await call({"type": "lovelace/dashboards/delete", "dashboard_id": mine["id"]})
+                logging.info("Removed the old Location Hub dashboard made by 3.8.0")
+        cfg = dict(await call({"type": "lovelace/config", "force": True, **({"url_path": url} if url else {})}) or {})
+        views = cfg.get("views") or []
+        keep = [v for v in views if not (v.get("path") == OLD_VIEW and not find_managed({"views": [v]}))]
+        if len(keep) != len(views):
+            cfg["views"] = keep
+            await call({"type": "lovelace/config/save", "config": cfg, **({"url_path": url} if url else {})})
+            logging.info("Removed the old Location Hub view made by 3.8.0")
+    except RuntimeError:
+        pass   # nothing to clean, or it is not ours to touch
 
 async def sync_card_safe(s, force=False):
     try:
@@ -972,7 +1076,7 @@ async def handle_card_sync(request):
     return web.json_response(await sync_card_safe(request.app["session"], force=True))
 
 async def handle_card_dashboards(request):
-    """Dashboards a card can be added to (storage mode only: that is all Home Assistant lets an add-on edit)."""
+    """Dashboards a card can go into (storage mode only: that is all Home Assistant lets an add-on edit)."""
     async def work(call):
         return await call({"type": "lovelace/dashboards/list"}) or []
     try:
@@ -981,9 +1085,28 @@ async def handle_card_dashboards(request):
         return web.json_response({"error": str(e)}, status=502)
     out = [{"url": "", "title": "Overview (default)"}]
     for b in boards:
-        if b.get("mode") == "storage" and b.get("url_path") and b.get("url_path") != OWN_DASH:
+        if b.get("mode") == "storage" and b.get("url_path") and b.get("url_path") != OLD_VIEW:
             out.append({"url": b["url_path"], "title": b.get("title") or b["url_path"]})
     return web.json_response(out)
+
+async def handle_card_targets(request):
+    """Where in the chosen dashboard the card can go."""
+    url = request.query.get("dashboard", "").strip()
+    if not re.fullmatch(r"[a-z0-9_-]*", url):
+        return web.json_response({"error": "bad dashboard"}, status=400)
+    async def work(call):
+        msg = {"type": "lovelace/config", "force": True}
+        if url:
+            msg["url_path"] = url
+        return await call(msg)
+    try:
+        cfg = await with_ws(request.app["session"], work)
+    except Exception as e:  # noqa: BLE001
+        text = str(e)
+        if "config_not_found" in text:
+            text = "That dashboard is still automatic. Open it, tap the pencil, then the three dots and Take control, then try again."
+        return web.json_response({"error": text}, status=502)
+    return web.json_response(card_targets(dict(cfg or {})))
 
 # ---------------- Clickable switches ----------------
 TOGGLE_DOMAINS = ("input_boolean", "switch")
@@ -1322,6 +1445,7 @@ def add_routes(app):
     r.add_post('/api/hub/card/preview', handle_card_preview)
     r.add_post('/api/hub/card/sync', handle_card_sync)
     r.add_get('/api/hub/card/dashboards', handle_card_dashboards)
+    r.add_get('/api/hub/card/targets', handle_card_targets)
     r.add_get('/api/hub/card/pictures', handle_card_pictures)
     r.add_post('/api/hub/card/upload', handle_card_upload)
     r.add_get('/api/hub/switches', handle_get_switches)
