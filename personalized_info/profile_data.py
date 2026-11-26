@@ -16,8 +16,14 @@ BLOOD = ["", "A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 
+def legacy_keys(f):
+    v = f.get("legacy")
+    return [v] if isinstance(v, str) else list(v or [])
+
+
 def F(key, label, typ="text", hint="", **kw):
-    # legacy="field": the value lives in the person's own fields (people.yaml) under that name, not in the profile data
+    # legacy="field" (or a list of names): the value lives in the person's own fields (people.yaml) under the first of
+    # those names they already have, otherwise under the first name. It is not copied into the profile data.
     return {"key": key, "label": label, "type": typ, "hint": hint, **kw}
 
 
@@ -28,7 +34,10 @@ SECTIONS = [
          F("first_name", "First name"), F("last_name", "Last name"), F("nickname", "Nickname", legacy="nickname"),
          F("pronouns", "Pronouns", legacy="pronouns"), F("birthday", "Birthday", "text", "2000-01-15, or 01-15 without the year", legacy="birthday"),
          F("birthplace", "Born in"),
-         F("relationship", "Who they are to you", "text", "partner, son, best friend, coworker..."),
+         F("lives_in", "Lives in", "text", "town or city", legacy=["home_location", "home_town", "lives_in", "hometown"]),
+         F("breed", "Breed (for pets)", "text", legacy="breed"), F("sex", "Sex (for pets)", "text", legacy=["sex", "gender"]),
+         F("traits", "Personality traits", "tags", legacy="traits"),
+         F("relationship", "Who they are to you", "text", "partner, son, best friend, coworker...", legacy=["relationship", "role", "relation"]),
          F("languages", "Languages", "tags"),          F("bio", "A few lines about them", "long")]},
     {"key": "contact", "title": "Contact", "icon": "📇", "sensor": False, "ai": False,
      "hint": "Off by default for the sensor and the AI (turn them on above if you want them there).",
@@ -39,7 +48,7 @@ SECTIONS = [
     {"key": "work", "title": "Work & school", "icon": "💼", "sensor": True, "ai": True,
      "hint": "For their hours and schedule, link the Work Hours sensor under Linked entities.",
      "fields": [
-         F("employer", "Employer"), F("job_title", "Job or occupation"), F("work_address", "Work address"),
+         F("employer", "Employer"), F("job_title", "Job or occupation", legacy=["occupation", "job", "job_title", "works_as"]), F("work_address", "Work address"),
          F("work_phone", "Work phone"), F("boss", "Boss or supervisor"), F("coworkers", "Coworkers", "tags"),
          F("school", "School"), F("studying", "Grade or what they study"),
          F("work_notes", "Work notes (shifts, pay day, uniform...)", "long")]},
@@ -55,7 +64,9 @@ SECTIONS = [
     {"key": "routine", "title": "Daily routine", "icon": "⏰", "sensor": True, "ai": True,
      "hint": "Usual patterns, so the AI can tell what is normal for them.",
      "fields": [
-         F("wake_time", "Usually wakes up", "time"), F("bedtime", "Usually goes to bed", "time"),
+         F("wake_time", "Usually wakes up", "text", "for example 5:00 AM", legacy=["usual_wake_time", "wake_time"]),
+         F("bedtime", "Usually goes to bed", "text", "for example 10:30 PM", legacy=["usual_bedtime", "bedtime"]),
+         F("transportation", "How they get around", "text", legacy="transportation"),
          F("leave_time", "Usually leaves home", "time"), F("home_time", "Usually gets home", "time"),
          F("work_days", "Work days", "tags", "Monday, Tuesday..."), F("workout_days", "Workout days", "tags"),
          F("routine_notes", "Anything else about their routine", "long")]},
@@ -67,7 +78,7 @@ SECTIONS = [
          F("dislikes", "Dislikes", "tags"), F("diet", "Diet or food rules", "tags"),
          F("favorite_restaurants", "Favorite restaurants", "tags"), F("favorite_stores", "Favorite stores", "tags"),
          F("music", "Music and artists", "tags"), F("movies", "Movies", "tags"), F("shows", "Shows", "tags"),
-         F("games", "Games", "tags", legacy="games"), F("hobbies", "Hobbies", "tags"), F("sports_teams", "Sports teams", "tags", legacy="favorite_teams"),
+         F("games", "Games", "tags", legacy="games"), F("hobbies", "Hobbies", "tags", legacy="hobbies"), F("psn_id", "PSN ID", "text", legacy="psn_id"), F("sports_teams", "Sports teams", "tags", legacy=["favorite_teams", "sports", "sports_teams", "teams"]),
          F("favorite_colors", "Favorite colors", "tags"), F("scents", "Scents", "tags")]},
     {"key": "sizes", "title": "Sizes & gifts", "icon": "🎁", "sensor": True, "ai": True,
      "hint": "So you never have to guess.",
@@ -78,7 +89,8 @@ SECTIONS = [
     {"key": "vehicles", "title": "Vehicles", "icon": "🚗", "sensor": True, "ai": True,
      "hint": "Due dates show up as countdowns.",
      "fields": [
-         F("cars", "Their vehicles", "items", fields=[
+         F("main_vehicle", "Main vehicle", "text", "year make model", legacy=["car", "vehicle", "truck"]),
+         F("cars", "More vehicles, with due dates", "items", fields=[
              F("nickname", "Nickname"), F("year", "Year"), F("make", "Make"), F("model", "Model"), F("color", "Color"),
              F("plate", "Plate"), F("registration_due", "Registration due", "date"), F("insurance_due", "Insurance due", "date"),
              F("service_due", "Next service", "date"), F("entity", "Home Assistant entity (optional)")])]},
@@ -89,7 +101,9 @@ SECTIONS = [
     {"key": "family", "title": "Family, friends & pets", "icon": "👨‍👩‍👧", "sensor": True, "ai": True,
      "hint": "The people and pets in their life.",
      "fields": [
-         F("people", "People and pets", "items", fields=[
+         F("partner", "Partner", "text", "girlfriend, boyfriend, wife, husband...", legacy=["girlfriend", "boyfriend", "partner", "spouse", "wife", "husband", "fiance", "fiancee"]),
+         F("friends", "Friends", "tags", legacy="friends"),
+         F("people", "People and pets, with details", "items", fields=[
              F("name", "Name"), F("relation", "Relation (mom, dog, best friend...)"), F("birthday", "Birthday", "date"), F("notes", "Notes")])]},
     {"key": "subscriptions", "title": "Memberships & subscriptions", "icon": "🔁", "sensor": False, "ai": False,
      "hint": "Renewal dates become countdowns. Never put passwords here.",
@@ -99,7 +113,8 @@ SECTIONS = [
     {"key": "notes", "title": "Notes & custom fields", "icon": "📝", "sensor": True, "ai": True,
      "hint": "Anything that does not fit above.",
      "fields": [
-         F("notes", "Notes", "long"), F("remember", "Things to remember", "long"),
+         F("notes", "Notes", "long"), F("old_notes", "Notes from your own fields", "long", legacy="notes"),
+         F("remember", "Things to remember", "long"),
          F("custom", "Your own fields", "items", fields=[F("label", "Label"), F("value", "Value")])]},
 ]
 SECTION = {s["key"]: s for s in SECTIONS}
@@ -312,7 +327,7 @@ def completeness(data, person=None):
     person = person if isinstance(person, dict) else {}
     total = sum(len(s["fields"]) for s in SECTIONS)
     filled = sum(len(v) for v in data.values())
-    filled += sum(1 for s in SECTIONS for f in s["fields"] if f.get("legacy") and not empty(person.get(f["legacy"])))
+    filled += sum(1 for s in SECTIONS for f in s["fields"] if f.get("legacy") and any(not empty(person.get(k)) for k in legacy_keys(f)))
     return min(100, round(100 * filled / total)) if total else 0
 
 
