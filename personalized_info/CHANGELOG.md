@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.1 - 2026-11-26
+
+- **Works with Work Hours' single sensor per person.** Link just the **Work hours** role (`sensor.<name>_hours`) and the info sensor now also knows whether they are at work, whether today is a day off, their next day off, their weekly schedule (`work_schedule`), today's shift, the next shift, and this week's and this pay period's hours (`work_*`), all read from that one sensor's attributes. The separate "At work" and "Day off" links still work if you use the older sensors.
+
 ## 0.10.0 - 2026-11-26
 
 - **Day off (Work Hours).** A new **Day off** link for each person. Link Work Hours' `binary_sensor.<name>_day_off` (**Find automatically** finds it) and the info sensor says when someone is off today (`off today (Thanksgiving)`), what their next day off is, and lists who is off today in `off_today` / `off_today_text`.
