@@ -873,6 +873,118 @@ function card(id, title, body, extra) {
   }, typeof title === 'string' ? h('summary', {textContent: title}) : h('summary', {}, title), body, extra);
 }
 
+/* ---------- Notable people (other > notable_people): a picture and a few notes for each ---------- */
+const notableGroup = () => { const g = D.other && D.other.notable_people; return g && typeof g === 'object' && !Array.isArray(g) ? g : null; };
+const noteLines = v => Array.isArray(v) ? v.map(String) : (v && Array.isArray(v.notes) ? v.notes.map(String) : (v && v.notes ? [String(v.notes)] : []));
+const noteName = (k, v) => (v && !Array.isArray(v) && v.name) || k.charAt(0).toUpperCase() + k.slice(1).replace(/_/g, ' ');
+const notablePic = (k, v) => picOf('person', 'notable_' + k, v && !Array.isArray(v) ? v : {}, (LIVE.notable_pics || {})[k]);
+
+function notablePage() {
+  const k = PERSON.k, grp = notableGroup();
+  if (!grp || !(k in grp)) { PERSON = null; return people(); }
+  if (Array.isArray(grp[k])) grp[k] = {name: noteName(k, null), notes: grp[k]};   // a picture needs somewhere to live
+  const o = grp[k];
+  const ta = h('textarea', {value: noteLines(o).join('\n'), oninput: () => { o.notes = lines(ta); touch(); }});
+  return h('div', {},
+    h('div', {className: 'row'}, h('button', {className: 'ghost', textContent: '← Everyone', onclick: () => { PERSON = null; draw(); window.scrollTo(0, 0); }})),
+    h('div', {className: 'phead'}, avatar(notablePic(k, o), noteName(k, o), 'big'), h('div', {}, h('h1', {textContent: noteName(k, o)}), h('div', {className: 'note', textContent: 'Notable person'}))),
+    photoRow('person', 'notable_' + k, o),
+    h('label', {textContent: 'Name'}), h('input', {type: 'text', value: o.name || '', oninput: e => { o.name = e.target.value; touch(); }}),
+    h('label', {textContent: 'Notes (one per line)'}), ta,
+    h('div', {className: 'add'}, h('button', {className: 'del', textContent: 'Delete', onclick: () => {
+      if (confirm('Delete ' + noteName(k, o) + '?')) { delete grp[k]; PERSON = null; touch(); draw(); window.scrollTo(0, 0); }
+    }})));
+}
+
+/* ---------- Move old free-form fields into the profile sections ---------- */
+const parseParen = t => { const m = String(t).match(/^(.*?)\s*\((.*)\)\s*$/); return m ? {name: m[1].trim(), notes: m[2].trim()} : {name: String(t).trim(), notes: ''}; };
+function parseCar(t) {
+  t = String(t).trim();
+  const m = t.match(/^(\d{4})\s+(.+)$/), year = m ? m[1] : '', rest = m ? m[2] : t, w = rest.split(/\s+/);
+  return w.length >= 2 ? {year, make: w[0], model: w.slice(1).join(' ')} : {year, nickname: rest};
+}
+function parseClock(t) {
+  const m = String(t).trim().match(/^(\d{1,2})(?::(\d{2}))?\s*([ap]m)?$/i);
+  if (!m) return '';
+  let hr = +m[1]; const ap = (m[3] || '').toLowerCase();
+  if (ap === 'pm' && hr < 12) hr += 12;
+  if (ap === 'am' && hr === 12) hr = 0;
+  return hr > 23 ? '' : String(hr).padStart(2, '0') + ':' + (m[2] || '00');
+}
+const asList = v => Array.isArray(v) ? v.map(String).filter(Boolean) : (v == null || v === '' ? [] : [String(v)]);
+const mergeUnique = (a, b) => { const out = (a || []).slice(); b.forEach(x => { if (!out.some(y => y.toLowerCase() === x.toLowerCase())) out.push(x); }); return out; };
+
+/* [{key, text, run}]: what each old field would become. `run` fills the section, the caller removes the old field. */
+function migratePlan(p, prof) {
+  const sec = n => (prof.data[n] = prof.data[n] || {});
+  const plan = [], add = (key, text, run) => plan.push({key, text, run});
+  for (const key of Object.keys(p)) {
+    const v = p[key], k = slug(key);
+    if (emptyVal(v) || RESERVED[key]) continue;
+    if (/^(occupation|job|job_title|works_as)$/.test(k) && !sec('work').job_title && typeof v !== 'object')
+      add(key, 'Work, job or occupation: ' + v, () => { sec('work').job_title = String(v); });
+    else if (/^(girlfriend|boyfriend|wife|husband|partner|spouse|fiance|fiancee)$/.test(k) && typeof v !== 'object')
+      add(key, 'Family and friends: ' + parseParen(v).name + ' (' + k + ')', () => {
+        const r = parseParen(v); const f = sec('family'); f.people = f.people || [];
+        f.people.push({name: r.name, relation: k, birthday: '', notes: r.notes});
+      });
+    else if (k === 'friends' && Array.isArray(v))
+      add(key, 'Family and friends: ' + v.length + ' friends (' + v.slice(0, 3).map(x => parseParen(x).name).join(', ') + (v.length > 3 ? '...' : '') + ')', () => {
+        const f = sec('family'); f.people = f.people || [];
+        v.forEach(x => { const r = parseParen(x); if (r.name) f.people.push({name: r.name, relation: 'friend', birthday: '', notes: r.notes}); });
+      });
+    else if (k === 'hobbies' && Array.isArray(v))
+      add(key, 'Likes, hobbies: ' + v.length + ' items', () => { sec('likes').hobbies = mergeUnique(sec('likes').hobbies, asList(v)); });
+    else if (/^(sports|sports_teams|teams)$/.test(k) && Array.isArray(v) && key !== 'favorite_teams')
+      add(key, 'Likes, sports teams: ' + v.join(', '), () => { p.favorite_teams = mergeUnique(asList(p.favorite_teams), asList(v)); });
+    else if (/^(car|vehicle|truck)$/.test(k) && typeof v !== 'object')
+      add(key, 'Vehicles: ' + v, () => { const s2 = sec('vehicles'); s2.cars = s2.cars || []; s2.cars.push(Object.assign({nickname: '', year: '', make: '', model: '', color: '', plate: ''}, parseCar(v))); });
+    else if (/^(role|relationship|relation)$/.test(k) && typeof v !== 'object' && !sec('about').relationship)
+      add(key, 'About, who they are to you: ' + v, () => { sec('about').relationship = String(v); });
+    else if (k === 'notes' && (typeof v !== 'object' || Array.isArray(v)))
+      add(key, 'Notes: ' + asList(v).length + ' note' + (asList(v).length === 1 ? '' : 's'), () => {
+        const s2 = sec('notes'); s2.notes = [s2.notes || '', ...asList(v)].filter(Boolean).join('\n');
+      });
+    else if (/^(usual_wake_time|wake_time)$/.test(k) && parseClock(v) && !sec('routine').wake_time)
+      add(key, 'Routine, wakes up: ' + v, () => { sec('routine').wake_time = parseClock(v); });
+    else if (/^(usual_bedtime|bedtime)$/.test(k) && parseClock(v) && !sec('routine').bedtime)
+      add(key, 'Routine, goes to bed: ' + v, () => { sec('routine').bedtime = parseClock(v); });
+  }
+  return plan;
+}
+function profOf(k) {
+  const prof = D.profiles[k] = D.profiles[k] || {data: {}, flags: {}};
+  prof.data = prof.data || {}; prof.flags = prof.flags || {};
+  return prof;
+}
+function migrateCard(k, p) {
+  const prof = profOf(k), plan = migratePlan(p, prof);
+  if (!plan.length) return null;
+  const boxes = plan.map(it => h('input', {type: 'checkbox', checked: true}));
+  return card('mig' + k, '🧹 Move old fields into sections (' + plan.length + ')', h('div', {},
+    h('p', {className: 'note', textContent: 'Your older free-form fields can live in the profile sections instead. Tick what to move. Moved fields are removed from Your own fields, so nothing is on the sensor twice. Nothing is final until you press Save changes.'}),
+    ...plan.map((it, i) => h('label', {className: 'pickrow'}, boxes[i], it.text)),
+    h('div', {className: 'add'}, h('button', {className: 'pri', textContent: 'Move selected', onclick: () => {
+      plan.forEach((it, i) => { if (boxes[i].checked) { it.run(); delete p[it.key]; } });
+      touch(); draw();
+    }}))));
+}
+function migrateEveryone() {
+  let fields = 0, people = 0;
+  for (const g of ['household', 'friends']) for (const k of Object.keys(D[g])) {
+    const p = D[g][k]; if (!p || typeof p !== 'object') continue;
+    const plan = migratePlan(p, profOf(k));
+    if (plan.length) { people++; fields += plan.length; }
+  }
+  if (!fields) { status('Nothing to move.', 'ok'); return; }
+  if (!confirm('Move ' + fields + ' old fields for ' + people + ' people into their profile sections? Nothing is saved until you press Save changes. Reload the page to undo.')) return;
+  for (const g of ['household', 'friends']) for (const k of Object.keys(D[g])) {
+    const p = D[g][k]; if (!p || typeof p !== 'object') continue;
+    migratePlan(p, profOf(k)).forEach(it => { it.run(); delete p[it.key]; });
+  }
+  touch(); draw();
+}
+
 /* ---------- People tab: a grid of people (picture, where they are now); tap one to open everything about them ---------- */
 let SCHEMA = [], PERSON = null;
 const PICS = {};  // pictures just uploaded, until the page is reloaded
@@ -936,6 +1048,7 @@ function photoRow(kind, key, obj) {
 }
 
 function people() {
+  if (PERSON && PERSON.g === 'notable') return notablePage();
   if (PERSON) return personPage();
   const f = h('div');
   f.append(h('p', {className: 'note', textContent: 'Tap someone to fill in everything about them. Pictures come from their Home Assistant person, or add your own. Music is in the Music tab and places in the Places tab.'}));
@@ -967,6 +1080,24 @@ function people() {
         touch(); draw();
       }})));
   }
+  const ng = notableGroup();
+  if (ng) {
+    f.append(h('h2', {textContent: 'Notable people'}));
+    const grid = h('div', {className: 'people'});
+    for (const k of Object.keys(ng)) {
+      const v = ng[k], nm = noteName(k, v);
+      grid.append(h('div', {className: 'person', tabIndex: 0, role: 'button',
+        onclick: () => { PERSON = {g: 'notable', k}; draw(); window.scrollTo(0, 0); },
+        onkeydown: e => { if (e.key === 'Enter') { PERSON = {g: 'notable', k}; draw(); window.scrollTo(0, 0); } }},
+        avatar(notablePic(k, v), nm), h('div', {textContent: nm}), h('div', {className: 'note', textContent: noteLines(v)[0] || ' '})));
+    }
+    f.append(grid, h('div', {className: 'row'}, h('button', {className: 'ghost', textContent: '+ Add notable person', onclick: () => {
+      const n = prompt('Name?');
+      if (!n || !slug(n)) return;
+      ng[slug(n)] = {name: n, notes: []}; PERSON = {g: 'notable', k: slug(n)}; touch(); draw();
+    }})));
+  }
+  f.append(h('div', {className: 'row'}, h('button', {className: 'ghost', textContent: '🧹 Move old fields into sections for everyone', onclick: migrateEveryone})));
   return f;
 }
 
@@ -1078,6 +1209,8 @@ function personPage() {
       h('div', {}, h('h1', {textContent: p.name || k}), h('div', {className: 'note', textContent: now || 'Nothing live yet. Link their Home Assistant entities below.'}),
         h('div', {className: 'meta', textContent: 'sensor.person_profile_' + k}))),
     photoRow('person', k, p), statsCard(k, p));
+  const mig = migrateCard(k, p);
+  if (mig) f.append(mig);
   SCHEMA.forEach(sec => f.append(sectionCard(sec, k, p, prof)));
   f.append(card('more' + k, '✏️ Your own fields', h('div', {}, coveredNote(k, p),
       fields(p, [...Object.keys(RESERVED), ...Object.keys(covered(k, p))]), quickAdd(p), adder(p, RESERVED))),

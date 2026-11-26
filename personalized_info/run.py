@@ -628,6 +628,14 @@ def fixpic(q):
             q["entity_picture"] = u
     return q
 
+def notable_view(other):
+    """other.notable_people entries that have a picture: swap the stored name for a picture link."""
+    out = dict(other)
+    grp = other.get("notable_people")
+    if isinstance(grp, dict):
+        out["notable_people"] = {k: fixpic(dict(v)) if isinstance(v, dict) else v for k, v in grp.items()}
+    return out
+
 def calc_for(d, k, p):
     """Age, zodiac, birthday countdown and upcoming dates for one person."""
     _, b = birthday_of(p)
@@ -799,7 +807,7 @@ def build_info(d, states=None):
         "household_text": people_text(hh),
         "friends_text": people_text(fr),
     }
-    attrs.update(other)
+    attrs.update(notable_view(other))
     return f"{total} Facts, Last Update: {ts}", attrs
 
 def build_music(d):
@@ -1160,8 +1168,10 @@ async def get_preview(r):
                          "complete": PD.completeness(((d.get("profiles") or {}).get(k) or {}).get("data") or {}, p),
                          "calc": calc, "ai": ai.get(k) or {}}
     place_pics = {k: photo_ui(pl.get("photo")) for k, pl in d["places"].items() if isinstance(pl, dict)}
+    grp = (d.get("other") or {}).get("notable_people")
+    notable_pics = {k: photo_ui(v.get("photo")) for k, v in grp.items() if isinstance(v, dict)} if isinstance(grp, dict) else {}
     return web.json_response({"status": attrs["status"], "birthdays": attrs["birthdays"], "places": attrs["places"],
-                              "covered": covered, "people": people, "place_pics": place_pics,
+                              "covered": covered, "people": people, "place_pics": place_pics, "notable_pics": notable_pics,
                               "birthdays_text": attrs["birthdays_text"]})
 
 async def get_schema(r):
