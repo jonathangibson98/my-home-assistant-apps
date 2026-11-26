@@ -21,6 +21,14 @@ Profile sections are saved in `/homeassistant/ai_memory/profiles.yaml`. Pictures
 
 Each person also gets **`sensor.person_profile_<name>`** (state: what they are doing now) with `profile`, `age`, `zodiac`, `days_until_birthday`, `upcoming_dates`, `dates_next_30_days`, `entity_picture`, `ai_summary` and more, and **`sensor.person_profiles` lists everyone. Add `sensor.person_profile_*` to your recorder excludes: they can be large.
 
+## Moving your old fields into the sections
+
+Fields you added by hand over time (`occupation`, `girlfriend`, `friends`, `hobbies`, `sports`, `car`, `role`, `notes`, `usual_wake_time`) can live in the profile sections instead. Open **🧹 Move old fields into sections** on a person, tick what to move and press **Move selected**, or use the button at the bottom of the People tab for everyone. Then press **Save changes**. Reload the page first if you change your mind. Fields it doesn't recognise stay in Your own fields.
+
+## Notable people
+
+People listed under `other` > `notable_people` get their own cards. Open one to add a picture, a name and notes.
+
 ## Pictures for places
 
 Open a place on the **Places** tab and add a picture. It shows next to the place, and as a small badge on a person's card while they are at that place (the place needs its Home Assistant zone set).
