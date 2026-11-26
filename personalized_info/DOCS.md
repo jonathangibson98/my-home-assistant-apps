@@ -7,6 +7,24 @@
 | Main data file | `/homeassistant/ai_memory/people.yaml` |
 | Backups (last 5) | `/homeassistant/ai_memory/backups/` |
 
+## People and profiles
+
+The **People** tab shows everyone as a card: picture, where they are now, and how much of their profile is filled in. Tap a card to open that person. They have, from the top:
+
+- a **picture** (add your own, or use a link; without one it shows their Home Assistant person picture) and a summary: age, sign, birthday countdown, what is coming up in the next 30 days, and an optional **AI summary**
+- **profile sections**: About, Contact, Work and school, Health, Daily routine, Likes, Sizes and gifts, Vehicles, Important dates, Family friends and pets, Memberships, Notes and custom fields. Each has a **Show on the sensors** switch. Contact, Health and Memberships start off, because anything on a sensor can be read by anyone with Home Assistant access
+- **Your own fields**, **AI help**, **Places** and **Home Assistant** links (see below)
+
+Birthday, nickname, pronouns, favorite teams and games in the profile are the same fields as under Your own fields, so nothing is entered twice. Please don't store passwords, card numbers or ID numbers: there are no fields for them on purpose.
+
+Profile sections are saved in `/homeassistant/ai_memory/profiles.yaml`. Pictures are saved in `/homeassistant/www/personalized_info/` and show at `/local/personalized_info/...` (if you have never had a `www` folder, restart Home Assistant once).
+
+Each person also gets **`sensor.person_profile_<name>`** (state: what they are doing now) with `profile`, `age`, `zodiac`, `days_until_birthday`, `upcoming_dates`, `dates_next_30_days`, `entity_picture`, `ai_summary` and more, and **`sensor.person_profiles` lists everyone. Add `sensor.person_profile_*` to your recorder excludes: they can be large.
+
+## Pictures for places
+
+Open a place on the **Places** tab and add a picture. It shows next to the place, and as a small badge on a person's card while they are at that place (the place needs its Home Assistant zone set).
+
 ## Using the UI
 
 - **Save** writes the file. Nothing is saved until you press it. The bottom bar says "Unsaved changes" when you have edits pending.

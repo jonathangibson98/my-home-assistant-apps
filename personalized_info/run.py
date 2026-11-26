@@ -2,12 +2,17 @@ import asyncio, datetime, json, os, random, re, shutil, time, urllib.request
 import yaml
 import paho.mqtt.client as mqtt
 import extra_links as XL
+import profile_data as PD
 from aiohttp import web
 
 DIR = "/homeassistant/ai_memory"
 FILE = f"{DIR}/people.yaml"          # household, friends, other
 MUSIC_FILE = f"{DIR}/music.yaml"     # music lives in its own file now
 PLACES_FILE = f"{DIR}/places.yaml"   # places (addresses, workplaces) live here
+PROFILES_FILE = f"{DIR}/profiles.yaml"  # the profile sections (about, work, health, vehicles...) for each person
+PHOTO_DIR = "/homeassistant/www/personalized_info"  # pictures of people and places; HA serves it at /local/personalized_info/
+PHOTO_URL = "/local/personalized_info"
+PROFILE_AI_FILE = "/data/profile_ai.json"
 SRC = f"{DIR}/memory/merged.yaml"
 BAK = f"{DIR}/backups"
 SETTINGS_PATH = "/data/settings.json"
@@ -124,11 +129,24 @@ def write_yaml(path, data, header):
         yaml.dump(data, f, sort_keys=False, allow_unicode=True, default_flow_style=False)
     os.replace(tmp, path)
 
+def clean_profiles(raw):
+    out = {}
+    for k, v in (raw.items() if isinstance(raw, dict) else []):
+        if isinstance(v, dict):
+            data = PD.clean_data(v.get("data"))
+            flags = PD.clean_flags(v.get("flags"))
+            if data or flags != PD.clean_flags({}):
+                out[str(k)] = {"data": data, "flags": flags}
+    return out
+
 def save(d):
     write_yaml(FILE, {k: d.get(k, {}) for k in ("household", "friends", "other")},
                "# Edited via the Personalized Info app. Safe to hand-edit.\n")
     write_yaml(MUSIC_FILE, d.get("music", {}),
                "# Music for the Personalized Music sensor. Safe to hand-edit.\n")
+    if "profiles" in d:  # an older web page won't send profiles, so don't wipe the file
+        write_yaml(PROFILES_FILE, clean_profiles(d["profiles"]),
+                   "# Profile sections for each person (about, work, health, vehicles...). Safe to hand-edit.\n")
     if "places" in d:  # an older web page won't send places, so don't wipe the file
         write_yaml(PLACES_FILE, d["places"],
                    "# Places that people link to (home, work, hangouts). Safe to hand-edit.\n")
@@ -222,6 +240,11 @@ def load():
             for k, v in legacy.items():
                 places.setdefault(k, v)
     d["places"] = places
+    try:
+        d["profiles"] = clean_profiles(yaml.safe_load(open(PROFILES_FILE)) or {}) if os.path.exists(PROFILES_FILE) else {}
+    except Exception as e:
+        print("profiles.yaml unreadable:", e, flush=True)
+        d["profiles"] = {}
     # music written inside a person (top_artists / music) moves to the music file
     moved = fold_person_music(d) or moved
     if migrate or moved:
@@ -574,6 +597,53 @@ def birthdays_text(items):
                                                       datetime.date.fromisoformat(b["date"]).day)))
     return ". ".join(parts) + ("." if parts else "")
 
+# ---------- pictures ----------
+def photo_file(v):
+    """Path of an uploaded picture for a stored name, or None."""
+    name = os.path.basename(str(v or ""))
+    path = os.path.join(PHOTO_DIR, name)
+    return path if name and name == str(v) and os.path.isfile(path) else None
+
+def photo_url(v):
+    """Where Home Assistant shows the picture (an entity_picture): an uploaded file, or the link they pasted."""
+    v = str(v or "").strip()
+    if v.startswith(("http://", "https://", "/")):
+        return v
+    path = photo_file(v)
+    return f"{PHOTO_URL}/{v}?v={int(os.path.getmtime(path))}" if path else ""
+
+def photo_ui(v):
+    """Same picture, as the page loads it through the add-on."""
+    v = str(v or "").strip()
+    if v.startswith(("http://", "https://", "/")):
+        return v
+    path = photo_file(v)
+    return f"img/{v}?v={int(os.path.getmtime(path))}" if path else ""
+
+def fixpic(q):
+    """Turn a stored photo into an entity_picture, so a picture name never lands in the AI text."""
+    if isinstance(q, dict) and "photo" in q:
+        u = photo_url(q.pop("photo"))
+        if u:
+            q["entity_picture"] = u
+    return q
+
+def calc_for(d, k, p):
+    """Age, zodiac, birthday countdown and upcoming dates for one person."""
+    _, b = birthday_of(p)
+    bd = None
+    if b:
+        try:
+            bd = datetime.date(b[0] or 2000, b[1], b[2])
+        except ValueError:
+            bd = datetime.date(b[0] or 2000, 2, 28)
+    prof = (d.get("profiles") or {}).get(k) or {}
+    out = PD.worked_out(prof.get("data") or {}, datetime.date.today(), bd)
+    if b and not b[0]:  # no year: no age
+        out.pop("age", None)
+        out.pop("turning", None)
+    return out
+
 # ---------- sensor content ----------
 def count_facts(o):
     if isinstance(o, dict):
@@ -604,7 +674,7 @@ def people_text(people, only=None):
         if not isinstance(data, dict):
             continue
         header = str(data.get("name", key)).upper()
-        shown = {k: v for k, v in data.items() if k not in ("entities", "now")}
+        shown = {k: v for k, v in data.items() if k not in ("entities", "now", "entity_picture")}
         now = (data.get("now") or {}).get("text")
         blocks.append("\n".join([header] + ([f"  right now: {now}"] if now else []) + to_text(shown, 1)))
     return "\n\n".join(blocks)
@@ -638,7 +708,7 @@ def resolve_places(d, p, now=None):
     out = {}
     for label, key in links.items():
         pl = d["places"].get(key)
-        out[label] = {"key": key, **prune(pl)} if isinstance(pl, dict) else {"key": key, "missing": True}
+        out[label] = {"key": key, **fixpic(prune(pl))} if isinstance(pl, dict) else {"key": key, "missing": True}
         if now and now.get("place_key") == key:
             out[label]["here_now"] = True
     return out or None
@@ -668,6 +738,17 @@ def with_extras(d, group, states=None):
         m = person_music(d, k)
         if m:
             q["music"] = m
+        fixpic(q)
+        prof = (d.get("profiles") or {}).get(k) or {}
+        sp = PD.sensor_profile(prof.get("data") or {}, prof.get("flags") or PD.clean_flags({}))
+        if sp:
+            q["profile"] = sp
+        calc = calc_for(d, k, p)
+        if calc.get("zodiac"):
+            q["zodiac"] = calc["zodiac"]
+        if calc.get("dates_next_30_days"):
+            q["coming_up"] = [f"{e['label']} in {e['days_until']} days ({e['date']})" if e["days_until"] else f"{e['label']} today"
+                              for e in calc["dates_next_30_days"]]
         out[k] = q
     return out
 
@@ -689,6 +770,7 @@ def build_info(d, states=None):
     places = prune(d["places"])
     for pk, pl in places.items():
         if isinstance(pl, dict):
+            fixpic(pl)
             here = [everyone[k].get("name", k) for k, v in status.items() if v.get("place_key") == pk]
             if here:
                 pl["people_here"] = here
@@ -741,6 +823,52 @@ def build_music(d):
         "music_text": "\n\n".join(lines),
     }
 
+def load_profile_ai():
+    try:
+        return json.load(open(PROFILE_AI_FILE))
+    except Exception:
+        return {}
+
+def build_profiles(d, states):
+    """sensor.person_profile_<name> for each person (everything about them in one place), plus sensor.person_profiles."""
+    out, summary, ai = {}, {}, load_profile_ai()
+    for g in ("household", "friends"):
+        hh = with_extras(d, d[g], states)
+        for k, q in hh.items():
+            p = d[g].get(k)
+            if not isinstance(p, dict):
+                continue
+            now = q.get("now") or {}
+            calc = calc_for(d, k, p)
+            links = p.get("links") if isinstance(p.get("links"), dict) else {}
+            person_state = (states or {}).get(str(links.get("person") or ""))
+            pic = q.get("entity_picture") or ((person_state or {}).get("attributes") or {}).get("entity_picture")
+            prof = (d.get("profiles") or {}).get(k) or {}
+            summ = (ai.get(k) or {})
+            attrs = {
+                "friendly_name": f"{p.get('name', k)} Profile", "icon": "mdi:account-details",
+                "name": p.get("name", k), "group": g, "person_entity": links.get("person") or "",
+                "now": now, "location": now.get("location", ""), "text": now.get("text", ""),
+                "age": calc.get("age"), "zodiac": calc.get("zodiac"),
+                "next_birthday": calc.get("next_birthday"), "days_until_birthday": calc.get("days_until_birthday"),
+                "birthday_today": calc.get("birthday_today"),
+                "upcoming_dates": calc.get("upcoming_dates", []), "dates_next_30_days": calc.get("dates_next_30_days", []),
+                "profile": q.get("profile", {}), "profile_complete_percent": PD.completeness(prof.get("data") or {}, p),
+                "entities": q.get("entities", {}),
+                "places": q.get("places", {}),
+                "music": q.get("music", {}),
+                "ai_summary": summ.get("summary", ""), "ai_facts": summ.get("facts", []),
+                "ai_routine": summ.get("routine", ""), "ai_updated": summ.get("updated", ""),
+            }
+            if pic:
+                attrs["entity_picture"] = pic
+            attrs = {a: v for a, v in attrs.items() if v is not None}
+            state = (now.get("text") or now.get("location") or p.get("name", k))
+            out[f"sensor.person_profile_{k}"] = (str(state)[:255], attrs)
+            summary[k] = summ.get("summary") or now.get("text") or p.get("name", k)
+    out["sensor.person_profiles"] = (len(summary), {"friendly_name": "Person Profiles", "icon": "mdi:account-multiple", "profiles": summary})
+    return out
+
 BUILDERS = {"info": build_info, "music": build_music}
 last_sent = {}
 
@@ -774,14 +902,20 @@ def publish_all(only_changes=False):
         states = ha_states() if (any(isinstance(p, dict) and p.get("links") for g in ("household", "friends")
                                      for p in d[g].values()) or (SET.get(HOUSE_KEY) or {}).get("items")) else {}
         built = {"info": build_info(d, states), "music": build_music(d)}
+        profile_sensors = build_profiles(d, states)
     except Exception as e:
         print("Build failed:", e, flush=True)
         return
     # the live status changes often; only send when something besides the timestamp changed
     sig = json.dumps({k: (v[1] if k != "info" else {a: b for a, b in v[1].items() if a != "last_update"})
-                      for k, v in built.items()}, sort_keys=True, default=str)
+                      for k, v in built.items()}, sort_keys=True, default=str) + json.dumps(profile_sensors, sort_keys=True, default=str)
     if only_changes and last_sent.get("sig") == sig:
         return
+    for eid, (state, attrs) in profile_sensors.items():  # always plain REST: these have no unique id, like before
+        try:
+            rest_post(eid, state, attrs)
+        except Exception as e:
+            print("Could not publish", eid, e, flush=True)
     try:
         if client is not None:
             if not mq_ready:
@@ -1014,9 +1148,86 @@ async def get_preview(r):
     states = await loop.run_in_executor(None, ha_states)
     _, attrs = build_info(d, states)
     covered = {k: c for g in ("household", "friends") for k, p in d[g].items() if (c := covered_fields(d, p))}
+    people, ai = {}, load_profile_ai()
+    for g in ("household", "friends"):
+        for k, p in d[g].items():
+            if not isinstance(p, dict):
+                continue
+            links = p.get("links") if isinstance(p.get("links"), dict) else {}
+            ha_pic = (((states.get(str(links.get("person") or "")) or {}).get("attributes") or {}).get("entity_picture")) or ""
+            calc = calc_for(d, k, p)
+            people[k] = {"picture": photo_ui(p.get("photo")) or ha_pic,
+                         "complete": PD.completeness(((d.get("profiles") or {}).get(k) or {}).get("data") or {}, p),
+                         "calc": calc, "ai": ai.get(k) or {}}
+    place_pics = {k: photo_ui(pl.get("photo")) for k, pl in d["places"].items() if isinstance(pl, dict)}
     return web.json_response({"status": attrs["status"], "birthdays": attrs["birthdays"], "places": attrs["places"],
-                              "covered": covered,
+                              "covered": covered, "people": people, "place_pics": place_pics,
                               "birthdays_text": attrs["birthdays_text"]})
+
+async def get_schema(r):
+    return web.json_response(PD.schema())
+
+PHOTO_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}
+
+async def post_photo(r):
+    """Save a picture for a person or place. The page shrinks it first; this keeps it under 3 MB and checks the type."""
+    kind, key = r.query.get("kind", ""), slug(r.query.get("key", ""))
+    ext = PHOTO_TYPES.get((r.content_type or "").lower())
+    if kind not in ("person", "place") or not key or not ext:
+        return web.json_response({"ok": False, "error": "Send a JPEG, PNG or WebP picture."}, status=400)
+    body = await r.read()
+    if not body or len(body) > 3 * 1024 * 1024:
+        return web.json_response({"ok": False, "error": "That picture is too big (3 MB max)."}, status=400)
+    name = f"{kind}_{key}.{ext}"
+    try:
+        os.makedirs(PHOTO_DIR, exist_ok=True)
+        for e in set(PHOTO_TYPES.values()):  # one picture per person or place
+            old = os.path.join(PHOTO_DIR, f"{kind}_{key}.{e}")
+            if e != ext and os.path.isfile(old):
+                os.remove(old)
+        with open(os.path.join(PHOTO_DIR, name), "wb") as f:
+            f.write(body)
+    except OSError as e:
+        return web.json_response({"ok": False, "error": f"Could not save it: {e}"}, status=500)
+    return web.json_response({"ok": True, "name": name, "ui": photo_ui(name)})
+
+async def get_img(r):
+    path = photo_file(r.match_info["name"])
+    if not path:
+        raise web.HTTPNotFound()
+    return web.FileResponse(path, headers={"Cache-Control": "max-age=3600"})
+
+def profile_ai_job(key):
+    d = load()
+    p = d["household"].get(key) or d["friends"].get(key)
+    if not isinstance(p, dict):
+        raise RuntimeError("Save the person first.")
+    states = ha_states()
+    q = with_extras(d, {key: p}, states)[key]
+    calc = calc_for(d, key, p)
+    text = people_text({key: q})
+    prompt = ("You are building a short profile of one person from the notes and live Home Assistant data below.\n"
+              f"Today is {datetime.date.today().isoformat()}.\n{text}\n\n"
+              "Reply ONLY with JSON in this shape: "
+              '{"summary": "1-2 sentences, max 200 characters", "facts": ["short fact", "..."], '
+              '"routine": "short text about patterns you can see, or empty"}. '
+              "Max 8 facts. Use only the data above. Do not invent anything.")
+    r = ai_json(prompt)
+    cache = load_profile_ai()
+    cache[key] = {"summary": str(r.get("summary", ""))[:255], "facts": [str(f) for f in (r.get("facts") or [])][:8],
+                  "routine": str(r.get("routine", ""))[:500], "updated": datetime.datetime.now().isoformat(timespec="seconds")}
+    with open(PROFILE_AI_FILE, "w") as f:
+        json.dump(cache, f)
+    publish_all()
+    return cache[key]
+
+async def post_profile_ai(r):
+    b = await r.json()
+    try:
+        out = await asyncio.get_running_loop().run_in_executor(None, profile_ai_job, str((b or {}).get("person", "")))
+        return web.json_response({"ok": True, "ai": out})
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)})
 
 # ---------- AI help (Home Assistant AI Task) ----------
 AI_ENTITY = str(OPT.get("ai_task_entity") or "").strip()
@@ -1341,7 +1552,7 @@ def _spawn(coro):
     return task
 
 
-app = web.Application()
+app = web.Application(client_max_size=4 * 1024 * 1024)
 app.router.add_get("/", index)
 app.router.add_get("/api/data", get_data)
 app.router.add_post("/api/data", post_data)
@@ -1352,6 +1563,10 @@ app.router.add_get("/api/suggest_more", get_suggest_more)
 app.router.add_get("/api/house", get_house)
 app.router.add_post("/api/house", post_house)
 app.router.add_get("/api/preview", get_preview)
+app.router.add_get("/api/schema", get_schema)
+app.router.add_post("/api/photo", post_photo)
+app.router.add_get("/img/{name}", get_img)
+app.router.add_post("/api/profile_ai", post_profile_ai)
 app.router.add_get("/api/zone_suggest", get_zone_suggest)
 app.router.add_post("/api/settings", post_settings)
 app.router.add_post("/api/ai", post_ai)

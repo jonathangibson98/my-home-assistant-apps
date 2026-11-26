@@ -17,6 +17,7 @@ DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sun
 
 
 def F(key, label, typ="text", hint="", **kw):
+    # legacy="field": the value lives in the person's own fields (people.yaml) under that name, not in the profile data
     return {"key": key, "label": label, "type": typ, "hint": hint, **kw}
 
 
@@ -24,11 +25,11 @@ SECTIONS = [
     {"key": "about", "title": "About", "icon": "🙂", "sensor": True, "ai": True,
      "hint": "The basics. Birthday gives age, zodiac sign and a countdown to the next one.",
      "fields": [
-         F("first_name", "First name"), F("last_name", "Last name"), F("nickname", "Nickname"),
-         F("pronouns", "Pronouns"), F("birthday", "Birthday", "date"), F("birthplace", "Born in"),
+         F("first_name", "First name"), F("last_name", "Last name"), F("nickname", "Nickname", legacy="nickname"),
+         F("pronouns", "Pronouns", legacy="pronouns"), F("birthday", "Birthday", "text", "2000-01-15, or 01-15 without the year", legacy="birthday"),
+         F("birthplace", "Born in"),
          F("relationship", "Who they are to you", "text", "partner, son, best friend, coworker..."),
-         F("languages", "Languages", "tags"), F("photo", "Photo link", "url"),
-         F("bio", "A few lines about them", "long")]},
+         F("languages", "Languages", "tags"),          F("bio", "A few lines about them", "long")]},
     {"key": "contact", "title": "Contact", "icon": "📇", "sensor": False, "ai": False,
      "hint": "Off by default for the sensor and the AI (turn them on above if you want them there).",
      "fields": [
@@ -66,7 +67,7 @@ SECTIONS = [
          F("dislikes", "Dislikes", "tags"), F("diet", "Diet or food rules", "tags"),
          F("favorite_restaurants", "Favorite restaurants", "tags"), F("favorite_stores", "Favorite stores", "tags"),
          F("music", "Music and artists", "tags"), F("movies", "Movies", "tags"), F("shows", "Shows", "tags"),
-         F("games", "Games", "tags"), F("hobbies", "Hobbies", "tags"), F("sports_teams", "Sports teams", "tags"),
+         F("games", "Games", "tags", legacy="games"), F("hobbies", "Hobbies", "tags"), F("sports_teams", "Sports teams", "tags", legacy="favorite_teams"),
          F("favorite_colors", "Favorite colors", "tags"), F("scents", "Scents", "tags")]},
     {"key": "sizes", "title": "Sizes & gifts", "icon": "🎁", "sensor": True, "ai": True,
      "hint": "So you never have to guess.",
@@ -174,6 +175,8 @@ def clean_data(raw):
             continue
         vals = {}
         for f in sec["fields"]:
+            if f.get("legacy"):
+                continue
             if f["key"] in src:
                 v = clean_value(f, src[f["key"]])
                 if not empty(v):
@@ -249,11 +252,11 @@ def countdown(label, d, today, yearly=True, extra=None):
     return out
 
 
-def worked_out(data, today):
-    """Age, zodiac, birthday countdown and every upcoming date, from the saved data."""
+def worked_out(data, today, birthday=None):
+    """Age, zodiac, birthday countdown and every upcoming date. `birthday` is a datetime.date (or None) from the
+    person's own birthday field, which the rest of the add-on already uses."""
     out = {}
-    about = data.get("about", {})
-    bd = _d(about.get("birthday"))
+    bd = birthday
     if bd:
         age = today.year - bd.year - ((today.month, today.day) < (bd.month, bd.day))
         nb = countdown("Birthday", bd, today)
@@ -304,11 +307,13 @@ def _d(v):
         return None
 
 
-def completeness(data):
-    """Percent of the sections' fields that have something in them."""
+def completeness(data, person=None):
+    """Percent of the fields that have something in them. `person` is the person's own fields (for legacy ones)."""
+    person = person if isinstance(person, dict) else {}
     total = sum(len(s["fields"]) for s in SECTIONS)
     filled = sum(len(v) for v in data.values())
-    return round(100 * filled / total) if total else 0
+    filled += sum(1 for s in SECTIONS for f in s["fields"] if f.get("legacy") and not empty(person.get(f["legacy"])))
+    return min(100, round(100 * filled / total)) if total else 0
 
 
 # ---------- text for the sensor and the AI ----------
@@ -354,7 +359,12 @@ def sensor_profile(data, flags):
         if not flags.get(sec["key"], {}).get("sensor"):
             continue
         vals = data.get(sec["key"], {})
-        sub = {f["label"]: vals[f["key"]] for f in sec["fields"] if not empty(vals.get(f["key"]))}
+        sub = {}
+        for f in sec["fields"]:
+            v = vals.get(f["key"])
+            if empty(v) or f.get("legacy"):
+                continue
+            sub[f["label"]] = [x for x in _show(f, v).split(" | ")] if f["type"] == "items" else v
         if sub:
             out[sec["title"]] = sub
     return out
