@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.0
+
+Your older fields and the profile sections are now the same thing, so there is nothing to move.
+
+- Sections show and edit your existing fields in place: job (`occupation`), hobbies, friends, partner (`girlfriend` / `boyfriend`...), car, notes, wake and bed time, where they live (`home_location`), role or relationship, sports teams, games, PSN ID, breed, sex, traits and how they get around. They are saved under the field name you already use, so the info sensor, other add-ons and AI prompts see exactly what they saw before. Fields marked ↔ in a section are these.
+- Anything an earlier version stored in a section for one of those fields moves to the person's own field automatically.
+- The AI fill reads and writes these same fields, so it adds to what you have instead of creating a second copy.
+- `sensor.person_profile_<name>` now has a `details` attribute with all their own fields, so one sensor has everything about a person.
+- Removed the "Move old fields into sections" buttons: no longer needed.
+
 ## 1.2.0
 
 - **✨ Fill the sections with AI**: your AI Task reads everything saved about a person (any field names, any wording) and files it into the profile sections: work, likes, family and friends, vehicles, important dates, notes and more. It also adds teams and games to their own fields. You see exactly what it would add first. It only fills empty spots or adds to lists, never overwrites, and nothing is saved until you press Save changes.
