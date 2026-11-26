@@ -954,6 +954,28 @@ function applyFill(k, p, r, removeOld) {
 }
 const ownField = fk => { for (const s of SCHEMA) for (const f of s.fields) if (f.legacy && legacyKeys(f)[0] === fk) return f; return null; };
 const showVal = v => Array.isArray(v) ? v.map(x => typeof x === 'object' ? Object.values(x).filter(Boolean).join(', ') : x).join(' | ') : String(v);
+function trimFill(k, p, r) {   // keeps only what applyFill would really add, so the preview never lists things that are already there
+  const out = {...r, sections: {}, own_fields: {}}, prof = (D.profiles[k] || {}).data || {};
+  for (const [sk, vals] of Object.entries(r.sections || {})) {
+    const sec = SCHEMA.find(s => s.key === sk); if (!sec) continue;
+    for (const [fk, v] of Object.entries(vals)) {
+      const fd = sec.fields.find(f => f.key === fk); if (!fd || fd.legacy || emptyVal(v)) continue;
+      const cur = (prof[sk] || {})[fk];
+      let nv = v;
+      if (fd.type === 'tags') { const have = new Set(asList(cur).map(x => String(x).toLowerCase())); nv = asList(v).filter(x => !have.has(String(x).toLowerCase())); }
+      else if (fd.type === 'items') { const have = new Set((cur || []).map(itemKey)); nv = (Array.isArray(v) ? v : []).filter(x => x && !have.has(itemKey(x))); }
+      else if (!emptyVal(cur)) nv = null;
+      if (!emptyVal(nv)) (out.sections[sk] = out.sections[sk] || {})[fk] = nv;
+    }
+  }
+  for (const [fk, v] of Object.entries(r.own_fields || {})) {
+    const fd = ownField(fk); if (!fd) continue;
+    const cur = p[ownKey(fd, p)];
+    const nv = Array.isArray(v) ? v.filter(x => !asList(cur).map(y => String(y).toLowerCase()).includes(String(x).toLowerCase())) : (emptyVal(cur) ? v : null);
+    if (!emptyVal(nv)) out.own_fields[fk] = nv;
+  }
+  return out;
+}
 function fillLines(r) {
   const out = [];
   for (const [sk, vals] of Object.entries(r.sections || {})) {
@@ -971,39 +993,42 @@ function aiFillCard(g, k, p) {
   const box = h('div'), out = h('div'), msg = h('div', {className: 'meta'});
   const rm = h('input', {type: 'checkbox'});
   let result = null;
-  const go2 = h('button', {className: 'pri', textContent: 'Read their info and fill the sections', onclick: async e => {
-    e.target.disabled = true; msg.textContent = 'The AI is reading everything saved about ' + (p.name || k) + '… (up to a minute)'; out.replaceChildren();
-    const r = await ai({action: 'fill', group: g, key: k});
-    e.target.disabled = false;
+  const run = async (e, action) => {
+    const btns = [...box.querySelectorAll('button.run')]; btns.forEach(b => b.disabled = true);
+    msg.textContent = action === 'rules' ? 'Reading what is saved about ' + (p.name || k) + '…' : 'The AI is reading everything saved about ' + (p.name || k) + '… (up to a minute)'; out.replaceChildren();
+    const r = await ai({action, group: g, key: k});
+    btns.forEach(b => b.disabled = false);
     if (!r.ok) { msg.textContent = r.error; return; }
-    result = r; const ls = fillLines(r);
-    if (!ls.length) { msg.textContent = 'The AI found nothing new to add.'; return; }
-    msg.textContent = 'Here is what it would add (nothing already filled in is overwritten):';
+    result = trimFill(k, p, r); const ls = fillLines(result);
+    if (!ls.length) { msg.textContent = r.ai_error ? 'The AI could not answer (' + r.ai_error + ') and nothing new could be filled without it.' : 'Nothing new to add. Everything it found is already filled in.'; return; }
+    msg.textContent = (r.ai_error ? 'The AI could not answer (' + r.ai_error + '), so this is only what could be filled without it. ' : '') + 'Here is what it would add (nothing already filled in is overwritten):';
     out.replaceChildren(...ls.map(t => h('div', {className: 'note', textContent: '• ' + t})),
       h('label', {className: 'pickrow'}, rm, 'Also remove the old fields it moved (' + ((r.used_fields || []).map(pretty).join(', ') || 'none') + ')'),
       h('div', {className: 'add'}, h('button', {className: 'pri', textContent: 'Add these to their profile', onclick: () => {
         const n = applyFill(k, p, result, rm.checked); touch(); status('Added ' + n + ' things. Check them, then Save changes.', 'warn'); draw();
       }})));
-  }});
-  box.append(h('p', {className: 'note', textContent: 'Your AI Task reads every field saved about this person and files it into the sections: work, likes, family and friends, vehicles, dates and more. You see the result first, and nothing is saved until you press Save changes.'}), go2, msg, out);
+  };
+  const go2 = h('button', {className: 'pri run', textContent: 'Read their info and fill the sections', onclick: e => run(e, 'fill')});
+  const go3 = h('button', {className: 'run', textContent: 'Fill from what is saved (no AI)', onclick: e => run(e, 'rules')});
+  box.append(h('p', {className: 'note', textContent: 'Fill the sections from what is already saved about this person: name, work, address, anniversary and music need no AI; the AI button also reads the rest (work, likes, family, vehicles, dates). You see the result first, and nothing is saved until you press Save changes.'}), h('div', {className: 'row'}, go3, go2), msg, out);
   return box;
 }
 let FILLSTOP = false;
-async function fillEveryone(btn) {
+async function fillEveryone(btn, action = 'fill') {
   if (btn.dataset.running) { FILLSTOP = true; btn.textContent = 'Stopping…'; return; }
   const all = [];
   for (const g of ['household', 'friends']) for (const k of Object.keys(D[g])) if (D[g][k] && typeof D[g][k] === 'object') all.push([g, k]);
-  if (!confirm('Have the AI fill the profile sections for all ' + all.length + ' people? It takes about ' + Math.max(1, Math.round(all.length / 3)) + ' minutes. It only adds to empty spots, keeps your old fields, and nothing is saved until you press Save changes.')) return;
-  btn.dataset.running = '1'; FILLSTOP = false; let done = 0, added = 0, failed = [];
+  if (!confirm((action === 'rules' ? 'Fill the profile sections from what is saved for all ' + all.length + ' people (no AI, takes a second)?' : 'Have the AI fill the profile sections for all ' + all.length + ' people? It takes about ' + Math.max(1, Math.round(all.length / 3)) + ' minutes.') + ' It only adds to empty spots, keeps your old fields, and nothing is saved until you press Save changes.')) return;
+  btn.dataset.running = '1'; FILLSTOP = false; let done = 0, added = 0, failed = [], aiDown = '';
   for (const [g, k] of all) {
     if (FILLSTOP) break;
     btn.textContent = 'Stop (' + done + ' of ' + all.length + ' done)';
-    const r = await ai({action: 'fill', group: g, key: k});
-    if (r.ok) added += applyFill(k, D[g][k], r, false); else failed.push((D[g][k].name || k));
+    const r = await ai({action, group: g, key: k});
+    if (r.ok) { added += applyFill(k, D[g][k], r, false); if (r.ai_error) aiDown = r.ai_error; } else failed.push((D[g][k].name || k));
     done++;
   }
   delete btn.dataset.running; touch();
-  status('AI filled ' + added + ' things for ' + (done - failed.length) + ' people' + (failed.length ? '. Could not read: ' + failed.join(', ') : '') + '. Check them, then Save changes.', failed.length ? 'bad' : 'warn');
+  status((action === 'rules' ? 'Filled ' : 'AI filled ') + added + ' things for ' + (done - failed.length) + ' people' + (failed.length ? '. Could not read: ' + failed.join(', ') : '') + (aiDown ? '. The AI answered with an error (' + aiDown + '), so only the no-AI parts were filled' : '') + '. Check them, then Save changes.', failed.length ? 'bad' : 'warn');
   draw();
 }
 
@@ -1119,7 +1144,8 @@ function people() {
       ng[slug(n)] = {name: n, notes: []}; PERSON = {g: 'notable', k: slug(n)}; touch(); draw();
     }})));
   }
-  f.append(h('div', {className: 'row'}, h('button', {className: 'pri', textContent: '✨ Fill everyone\'s sections with AI', onclick: e => fillEveryone(e.target)})));
+  f.append(h('div', {className: 'row'}, h('button', {className: 'pri', textContent: 'Fill everyone from what is saved (no AI)', onclick: e => fillEveryone(e.target, 'rules')}),
+    h('button', {textContent: '✨ Fill everyone\'s sections with AI', onclick: e => fillEveryone(e.target)})));
   return f;
 }
 

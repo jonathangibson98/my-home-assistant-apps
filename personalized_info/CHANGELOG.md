@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.0
+
+Fills your profile sections from what you already saved, with no AI needed.
+
+- New: **Fill from what is saved (no AI)** on every person, and **Fill everyone from what is saved (no AI)** on the People tab. It files first and last name, employer and work address (from their work place), home address (from their home place), a yearly "Together with ..." date (from "together since ..." next to the partner), and their favorite artists. Nothing is guessed and nothing already filled in is overwritten.
+- New: people are filled this way automatically, once each, the first time the add-on sees them. A field you clear later stays cleared.
+- Fixed: the Birthday field only looked for `birthday`, so anyone saved with `dob` showed it empty. It now reads `dob`, `date_of_birth`, `birth_date` and `birthdate` too. Same for `nicknames` and `nick`, and `nickname_1`, `nickname_2` are joined into one nickname.
+- Fixed: when the AI errors out (busy, out of credit, bad answer), the AI fill now still returns what could be filled without it and tells you what the AI said, instead of failing with nothing.
+- The preview only lists what would really be added, not things that are already there.
+
 ## 1.3.0
 
 Your older fields and the profile sections are now the same thing, so there is nothing to move.
