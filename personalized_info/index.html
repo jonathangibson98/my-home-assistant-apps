@@ -896,93 +896,27 @@ function notablePage() {
     }})));
 }
 
-/* ---------- Move old free-form fields into the profile sections ---------- */
-const parseParen = t => { const m = String(t).match(/^(.*?)\s*\((.*)\)\s*$/); return m ? {name: m[1].trim(), notes: m[2].trim()} : {name: String(t).trim(), notes: ''}; };
-function parseCar(t) {
-  t = String(t).trim();
-  const m = t.match(/^(\d{4})\s+(.+)$/), year = m ? m[1] : '', rest = m ? m[2] : t, w = rest.split(/\s+/);
-  return w.length >= 2 ? {year, make: w[0], model: w.slice(1).join(' ')} : {year, nickname: rest};
-}
-function parseClock(t) {
-  const m = String(t).trim().match(/^(\d{1,2})(?::(\d{2}))?\s*([ap]m)?$/i);
-  if (!m) return '';
-  let hr = +m[1]; const ap = (m[3] || '').toLowerCase();
-  if (ap === 'pm' && hr < 12) hr += 12;
-  if (ap === 'am' && hr === 12) hr = 0;
-  return hr > 23 ? '' : String(hr).padStart(2, '0') + ':' + (m[2] || '00');
-}
 const asList = v => Array.isArray(v) ? v.map(String).filter(Boolean) : (v == null || v === '' ? [] : [String(v)]);
 const mergeUnique = (a, b) => { const out = (a || []).slice(); b.forEach(x => { if (!out.some(y => y.toLowerCase() === x.toLowerCase())) out.push(x); }); return out; };
-
-/* [{key, text, run}]: what each old field would become. `run` fills the section, the caller removes the old field. */
-function migratePlan(p, prof) {
-  const sec = n => (prof.data[n] = prof.data[n] || {});
-  const plan = [], add = (key, text, run) => plan.push({key, text, run});
-  for (const key of Object.keys(p)) {
-    const v = p[key], k = slug(key);
-    if (emptyVal(v) || RESERVED[key]) continue;
-    if (/^(occupation|job|job_title|works_as)$/.test(k) && !sec('work').job_title && typeof v !== 'object')
-      add(key, 'Work, job or occupation: ' + v, () => { sec('work').job_title = String(v); });
-    else if (/^(girlfriend|boyfriend|wife|husband|partner|spouse|fiance|fiancee)$/.test(k) && typeof v !== 'object')
-      add(key, 'Family and friends: ' + parseParen(v).name + ' (' + k + ')', () => {
-        const r = parseParen(v); const f = sec('family'); f.people = f.people || [];
-        f.people.push({name: r.name, relation: k, birthday: '', notes: r.notes});
-      });
-    else if (k === 'friends' && Array.isArray(v))
-      add(key, 'Family and friends: ' + v.length + ' friends (' + v.slice(0, 3).map(x => parseParen(x).name).join(', ') + (v.length > 3 ? '...' : '') + ')', () => {
-        const f = sec('family'); f.people = f.people || [];
-        v.forEach(x => { const r = parseParen(x); if (r.name) f.people.push({name: r.name, relation: 'friend', birthday: '', notes: r.notes}); });
-      });
-    else if (k === 'hobbies' && Array.isArray(v))
-      add(key, 'Likes, hobbies: ' + v.length + ' items', () => { sec('likes').hobbies = mergeUnique(sec('likes').hobbies, asList(v)); });
-    else if (/^(sports|sports_teams|teams)$/.test(k) && Array.isArray(v) && key !== 'favorite_teams')
-      add(key, 'Likes, sports teams: ' + v.join(', '), () => { p.favorite_teams = mergeUnique(asList(p.favorite_teams), asList(v)); });
-    else if (/^(car|vehicle|truck)$/.test(k) && typeof v !== 'object')
-      add(key, 'Vehicles: ' + v, () => { const s2 = sec('vehicles'); s2.cars = s2.cars || []; s2.cars.push(Object.assign({nickname: '', year: '', make: '', model: '', color: '', plate: ''}, parseCar(v))); });
-    else if (/^(role|relationship|relation)$/.test(k) && typeof v !== 'object' && !sec('about').relationship)
-      add(key, 'About, who they are to you: ' + v, () => { sec('about').relationship = String(v); });
-    else if (k === 'notes' && (typeof v !== 'object' || Array.isArray(v)))
-      add(key, 'Notes: ' + asList(v).length + ' note' + (asList(v).length === 1 ? '' : 's'), () => {
-        const s2 = sec('notes'); s2.notes = [s2.notes || '', ...asList(v)].filter(Boolean).join('\n');
-      });
-    else if (/^(usual_wake_time|wake_time)$/.test(k) && parseClock(v) && !sec('routine').wake_time)
-      add(key, 'Routine, wakes up: ' + v, () => { sec('routine').wake_time = parseClock(v); });
-    else if (/^(usual_bedtime|bedtime)$/.test(k) && parseClock(v) && !sec('routine').bedtime)
-      add(key, 'Routine, goes to bed: ' + v, () => { sec('routine').bedtime = parseClock(v); });
-  }
-  return plan;
-}
 function profOf(k) {
   const prof = D.profiles[k] = D.profiles[k] || {data: {}, flags: {}};
   prof.data = prof.data || {}; prof.flags = prof.flags || {};
   return prof;
 }
-function migrateCard(k, p) {
-  const prof = profOf(k), plan = migratePlan(p, prof);
-  if (!plan.length) return null;
-  const boxes = plan.map(it => h('input', {type: 'checkbox', checked: true}));
-  return card('mig' + k, '🧹 Move old fields into sections (' + plan.length + ')', h('div', {},
-    h('p', {className: 'note', textContent: 'Your older free-form fields can live in the profile sections instead. Tick what to move. Moved fields are removed from Your own fields, so nothing is on the sensor twice. Nothing is final until you press Save changes.'}),
-    ...plan.map((it, i) => h('label', {className: 'pickrow'}, boxes[i], it.text)),
-    h('div', {className: 'add'}, h('button', {className: 'pri', textContent: 'Move selected', onclick: () => {
-      plan.forEach((it, i) => { if (boxes[i].checked) { it.run(); delete p[it.key]; } });
-      touch(); draw();
-    }}))));
+/* Profile fields that are the person's own fields (job, hobbies, friends, wake time...): saved under the name they already
+   use, so everything that read those fields before keeps working. */
+const legacyKeys = fd => [].concat(fd.legacy || []);
+const ownKey = (fd, p) => fd.legacy === 'birthday' ? (BIRTHDAY_KEYS.find(b => b in p) || 'birthday') : (legacyKeys(fd).find(x => x in p) || legacyKeys(fd)[0]);
+function ownGet(fd, p) {
+  const v = p[ownKey(fd, p)];
+  if (fd.type === 'tags') return asList(v);
+  if (Array.isArray(v)) return v.join(fd.type === 'long' ? '\n' : ', ');
+  return v == null ? '' : String(v);
 }
-function migrateEveryone() {
-  let fields = 0, people = 0;
-  for (const g of ['household', 'friends']) for (const k of Object.keys(D[g])) {
-    const p = D[g][k]; if (!p || typeof p !== 'object') continue;
-    const plan = migratePlan(p, profOf(k));
-    if (plan.length) { people++; fields += plan.length; }
-  }
-  if (!fields) { status('Nothing to move.', 'ok'); return; }
-  if (!confirm('Move ' + fields + ' old fields for ' + people + ' people into their profile sections? Nothing is saved until you press Save changes. Reload the page to undo.')) return;
-  for (const g of ['household', 'friends']) for (const k of Object.keys(D[g])) {
-    const p = D[g][k]; if (!p || typeof p !== 'object') continue;
-    migratePlan(p, profOf(k)).forEach(it => { it.run(); delete p[it.key]; });
-  }
-  touch(); draw();
+function ownSet(fd, p, v) {
+  const key = ownKey(fd, p);
+  if (emptyVal(v)) { delete p[key]; return; }
+  p[key] = (fd.type === 'long' && Array.isArray(p[key])) ? String(v).split('\n').map(x => x.trim()).filter(Boolean) : v;
 }
 
 /* ---------- AI fill: the AI Task reads everything saved about a person and fills the profile sections ---------- */
@@ -1009,12 +943,16 @@ function applyFill(k, p, r, removeOld) {
     }
   }
   for (const [fk, v] of Object.entries(r.own_fields || {})) {
-    if (Array.isArray(v)) { const m = mergeUnique(asList(p[fk]), v); if (m.length !== asList(p[fk]).length) { p[fk] = m; n++; } }
-    else if (emptyVal(p[fk])) { p[fk] = v; n++; }
+    const fd = ownField(fk);
+    if (!fd) continue;
+    const key = ownKey(fd, p);
+    if (Array.isArray(v)) { const m = mergeUnique(asList(p[key]), v); if (m.length !== asList(p[key]).length) { p[key] = m; n++; } }
+    else if (emptyVal(p[key])) { p[key] = v; n++; }
   }
   if (removeOld) (r.used_fields || []).forEach(f => { if (f in p && !RESERVED[f]) delete p[f]; });
   return n;
 }
+const ownField = fk => { for (const s of SCHEMA) for (const f of s.fields) if (f.legacy && legacyKeys(f)[0] === fk) return f; return null; };
 const showVal = v => Array.isArray(v) ? v.map(x => typeof x === 'object' ? Object.values(x).filter(Boolean).join(', ') : x).join(' | ') : String(v);
 function fillLines(r) {
   const out = [];
@@ -1026,7 +964,7 @@ function fillLines(r) {
       if (fd && !fd.legacy) out.push(sec.title + ' › ' + fd.label + ': ' + showVal(v));
     }
   }
-  for (const [fk, v] of Object.entries(r.own_fields || {})) out.push('Own field › ' + pretty(fk) + ': ' + showVal(v));
+  for (const [fk, v] of Object.entries(r.own_fields || {})) { const fd = ownField(fk); if (fd) out.push('Your own field › ' + fd.label + ': ' + showVal(v)); }
   return out;
 }
 function aiFillCard(g, k, p) {
@@ -1181,8 +1119,7 @@ function people() {
       ng[slug(n)] = {name: n, notes: []}; PERSON = {g: 'notable', k: slug(n)}; touch(); draw();
     }})));
   }
-  f.append(h('div', {className: 'row'}, h('button', {className: 'pri', textContent: '✨ Fill everyone\'s sections with AI', onclick: e => fillEveryone(e.target)})),
-    h('div', {className: 'row'}, h('button', {className: 'ghost', textContent: '🧹 Move old fields into sections for everyone', onclick: migrateEveryone})));
+  f.append(h('div', {className: 'row'}, h('button', {className: 'pri', textContent: '✨ Fill everyone\'s sections with AI', onclick: e => fillEveryone(e.target)})));
   return f;
 }
 
@@ -1238,17 +1175,14 @@ function widget(fd, get, set) {
 function sectionCard(sec, k, p, prof) {
   const data = prof.data[sec.key] = prof.data[sec.key] || {};
   const flags = prof.flags[sec.key] = prof.flags[sec.key] || {sensor: sec.sensor, ai: sec.ai};
-  const bound = fd => fd.legacy === 'birthday' ? (BIRTHDAY_KEYS.find(b => b in p) || 'birthday') : fd.legacy;
-  const get = fd => fd.legacy ? p[bound(fd)] : data[fd.key];
-  const set = (fd, v) => {
-    if (fd.legacy) { if (emptyVal(v)) delete p[bound(fd)]; else p[bound(fd)] = v; } else data[fd.key] = v;
-    touch();
-  };
+  const get = fd => fd.legacy ? ownGet(fd, p) : data[fd.key];
+  const set = (fd, v) => { if (fd.legacy) ownSet(fd, p, v); else data[fd.key] = v; touch(); };
   const n = sec.fields.filter(fd => !emptyVal(get(fd))).length;
   const body = h('div', {}, h('p', {className: 'note', textContent: sec.hint}),
     h('label', {className: 'pickrow'}, h('input', {type: 'checkbox', checked: !!flags.sensor, onchange: e => { flags.sensor = e.target.checked; touch(); }}),
       'Show on the sensors (and so to your AI tasks)'));
-  sec.fields.forEach(fd => body.append(h('label', {textContent: fd.label + (fd.hint ? ' (' + fd.hint + ')' : '')}),
+  if (sec.fields.some(fd => fd.legacy)) body.append(h('div', {className: 'hint', textContent: 'Fields marked ↔ are your own fields. They are saved under the names you already use, so nothing that read them before changes.'}));
+  sec.fields.forEach(fd => body.append(h('label', {textContent: fd.label + (fd.legacy ? ' ↔' : '') + (fd.hint ? ' (' + fd.hint + ')' : '')}),
     widget(fd, () => get(fd), v => set(fd, v))));
   return card('s' + k + sec.key, h('span', {}, sec.icon + ' ' + sec.title, n ? h('span', {className: 'now', textContent: '  ' + n + ' set'}) : null), body);
 }
@@ -1295,8 +1229,6 @@ function personPage() {
         h('div', {className: 'meta', textContent: 'sensor.person_profile_' + k}))),
     photoRow('person', k, p), statsCard(k, p));
   f.append(card('fill' + k, '✨ Fill the sections with AI', aiFillCard(g, k, p)));
-  const mig = migrateCard(k, p);
-  if (mig) f.append(mig);
   SCHEMA.forEach(sec => f.append(sectionCard(sec, k, p, prof)));
   f.append(card('more' + k, '✏️ Your own fields', h('div', {}, coveredNote(k, p),
       fields(p, [...Object.keys(RESERVED), ...Object.keys(covered(k, p))]), quickAdd(p), adder(p, RESERVED))),

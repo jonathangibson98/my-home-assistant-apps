@@ -23,11 +23,11 @@ Each person also gets **`sensor.person_profile_<name>`** (state: what they are d
 
 ## Let the AI fill the sections
 
-Open a person and use **✨ Fill the sections with AI**, or use **✨ Fill everyone's sections with AI** at the bottom of the People tab. Your AI Task (the `ai_task_entity` option, the Default AI in ⚙️ Settings, or the first AI Task it finds) reads everything saved about the person, whatever the field names are, and files it into the sections. It never overwrites something already filled in, only adds. Check the result, then press **Save changes**. Tick "also remove the old fields it moved" if you don't want the old copies. What is on the page is sent to your AI provider.
+Open a person and use **✨ Fill the sections with AI**, or use **✨ Fill everyone's sections with AI** at the bottom of the People tab. Your AI Task (the `ai_task_entity` option, the Default AI in ⚙️ Settings, or the first AI Task it finds) reads everything saved about the person, whatever the field names are, and files it into the sections. It never overwrites something already filled in, only adds, and it reads and writes the same fields as above. Check the result, then press **Save changes**. Tick "also remove the old fields it moved" if you don't want the old copies. What is on the page is sent to your AI provider.
 
-## Moving your old fields into the sections (no AI)
+## Your own fields and the sections are the same data
 
-Fields you added by hand over time (`occupation`, `girlfriend`, `friends`, `hobbies`, `sports`, `car`, `role`, `notes`, `usual_wake_time`) can live in the profile sections instead. Open **🧹 Move old fields into sections** on a person, tick what to move and press **Move selected**, or use the button at the bottom of the People tab for everyone. Then press **Save changes**. Reload the page first if you change your mind. Fields it doesn't recognise stay in Your own fields.
+Fields you added by hand over time (`occupation`, `hobbies`, `friends`, `girlfriend`, `car`, `notes`, `usual_wake_time`, `home_location`, `sports`, `games`, `psn_id`...) show up in the matching profile section, marked ↔, and editing them there edits the original field under the name you already use. Nothing is copied or moved, so everything that reads those fields (the info sensor, other add-ons, AI prompts) keeps working. Other fields stay under **Your own fields**.
 
 ## Notable people
 

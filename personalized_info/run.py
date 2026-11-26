@@ -129,6 +129,28 @@ def write_yaml(path, data, header):
         yaml.dump(data, f, sort_keys=False, allow_unicode=True, default_flow_style=False)
     os.replace(tmp, path)
 
+def adopt_legacy(d, raw):
+    """Profile fields that are now a person's own fields (job, hobbies, friends...): a value an earlier version kept in
+    profiles.yaml moves to the person's own field, so it is not lost. True if anything moved."""
+    moved = False
+    for g in ("household", "friends"):
+        for k, p in d[g].items():
+            data = ((raw or {}).get(k) or {}).get("data") if isinstance((raw or {}).get(k), dict) else None
+            if not isinstance(p, dict) or not isinstance(data, dict):
+                continue
+            for sec in PD.SECTIONS:
+                vals = data.get(sec["key"])
+                for f in sec["fields"]:
+                    keys = PD.legacy_keys(f)
+                    if not keys or not isinstance(vals, dict) or PD.empty(vals.get(f["key"])):
+                        continue
+                    if not any(not PD.empty(p.get(x)) for x in keys):
+                        v = vals[f["key"]]
+                        p[keys[0]] = v if f["type"] == "tags" else str(v)
+                        moved = True
+                    vals.pop(f["key"], None)
+    return moved
+
 def clean_profiles(raw):
     out = {}
     for k, v in (raw.items() if isinstance(raw, dict) else []):
@@ -241,10 +263,12 @@ def load():
                 places.setdefault(k, v)
     d["places"] = places
     try:
-        d["profiles"] = clean_profiles(yaml.safe_load(open(PROFILES_FILE)) or {}) if os.path.exists(PROFILES_FILE) else {}
+        raw_profiles = yaml.safe_load(open(PROFILES_FILE)) or {} if os.path.exists(PROFILES_FILE) else {}
     except Exception as e:
         print("profiles.yaml unreadable:", e, flush=True)
-        d["profiles"] = {}
+        raw_profiles = {}
+    moved = adopt_legacy(d, raw_profiles) or moved
+    d["profiles"] = clean_profiles(raw_profiles)
     # music written inside a person (top_artists / music) moves to the music file
     moved = fold_person_music(d) or moved
     if migrate or moved:
@@ -862,6 +886,7 @@ def build_profiles(d, states):
                 "birthday_today": calc.get("birthday_today"),
                 "upcoming_dates": calc.get("upcoming_dates", []), "dates_next_30_days": calc.get("dates_next_30_days", []),
                 "profile": q.get("profile", {}), "profile_complete_percent": PD.completeness(prof.get("data") or {}, p),
+                "details": {f: v for f, v in q.items() if f not in ("now", "entities", "places", "music", "profile", "entity_picture", "name", "coming_up")},
                 "entities": q.get("entities", {}),
                 "places": q.get("places", {}),
                 "music": q.get("music", {}),
@@ -1274,7 +1299,9 @@ def all_field_names(d):
                     seen[k] = seen.get(k, 0) + 1
     return sorted(seen, key=lambda k: -seen[k])
 
-OWN_FILL = {"birthday": "text", "nickname": "text", "pronouns": "text", "favorite_teams": "list", "games": "list"}
+# the profile fields that are the person's own fields: canonical name -> (label, "text" or "list")
+OWN_FILL = {PD.legacy_keys(f)[0]: (f["label"], "list" if f["type"] == "tags" else "text")
+            for sec in PD.SECTIONS for f in sec["fields"] if f.get("legacy")}
 
 def fill_spec():
     """The profile form as plain text for the AI: section, field, what shape the value has."""
@@ -1292,6 +1319,9 @@ def fill_spec():
         out.append(f"  {sec['key']} ({sec['title']}):\n" + "\n".join(fs))
     return "\n".join(out)
 
+def own_spec():
+    return "\n".join(f"  {k}: {'list of short strings' if kind == 'list' else 'text'}   ({label})" for k, (label, kind) in OWN_FILL.items())
+
 def fill_person(d, group, key, person):
     """Ask the AI to file everything saved about one person into the profile sections."""
     notes = {k: v for k, v in person.items() if k not in ("links", "places", "photo")}
@@ -1304,8 +1334,8 @@ def fill_person(d, group, key, person):
         raise ValueError("Nothing is saved about them yet.")
     out = ai_json(
         "You are filing what a household knows about one person into a profile form.\n\nTHE FORM (section, then field: shape):\n"
-        + fill_spec() + "\n\nYou may also set these of the person's own fields, only when the notes say it: "
-        "birthday (text, keep their wording), nickname, pronouns, favorite_teams (list: sports teams they follow), games (list).\n\n"
+        + fill_spec() + "\n\nTHE PERSON'S OWN FIELDS (these are shown in the form too). Set one only if the notes say it and it is not "
+        "already saved under that name or a similar one; keep their wording:\n" + own_spec() + "\n\n"
         f"WHAT IS SAVED ABOUT {str(person.get('name', key)).upper()} (group: {group}):\n{text[:9000]}\n\n"
         f"Today is {datetime.date.today().isoformat()}.\n"
         "Rules: use ONLY facts in the notes and never guess or invent. Leave out fields with nothing. Dates are YYYY-MM-DD, and skip a "
@@ -1313,13 +1343,14 @@ def fill_person(d, group, key, person):
         "A together-since or anniversary date goes in dates.important with yearly true. Job, employer and workplace go in work. Hobbies, "
         "food, music, shows and other likes go in likes. Anything that fits nowhere goes in notes.notes. A pet has no job. Do not invent "
         "contact details.\n"
-        'Reply ONLY with JSON: {"sections": {"section": {"field": value}}, "own_fields": {"favorite_teams": [..]}, '
+        'Reply ONLY with JSON: {"sections": {"section": {"field": value}}, "own_fields": {"hobbies": [..]}, '
         '"used_fields": ["the name of each saved field whose content you fully captured"]}.')
     own = {}
     for k, v in (out.get("own_fields") or {}).items() if isinstance(out.get("own_fields"), dict) else []:
-        if OWN_FILL.get(k) == "list" and v:
+        kind = (OWN_FILL.get(k) or ("", ""))[1]
+        if kind == "list" and v:
             v = [str(x).strip() for x in (v if isinstance(v, list) else [v]) if str(x).strip()]
-        elif OWN_FILL.get(k) == "text" and v:
+        elif kind == "text" and v:
             v = str(v).strip()
         else:
             continue
