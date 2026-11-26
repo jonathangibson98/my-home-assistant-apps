@@ -1,5 +1,24 @@
 # Person Profiles: Documentation
 
+## The web page
+
+Open **Person Profiles** in the sidebar, pick a person and fill in whatever you know. Press **Save** and their sensor updates right away.
+
+Sections: About, Contact, Work and school, Health, Daily routine, Likes and preferences, Sizes and gifts, Vehicles, Important dates, Family friends and pets, Memberships and subscriptions, Notes and your own custom fields.
+
+Every section has two switches:
+
+- **Show on the sensor**: puts it in the `profile` attribute. Contact, Health and Memberships start off, because anything in a sensor can be read by anyone with access to Home Assistant.
+- **Share with the AI**: the AI reads it when it builds summaries and answers questions.
+
+Worked out for you: age, zodiac sign, days until the birthday, and countdowns for important dates, family birthdays, vehicle registration, insurance and service dates, renewals and checkups.
+
+**Linked entities**: search any entity and link it to the person (their Work Hours sensor, a fitness tracker, a phone battery). Linked entities always appear in the sensor and the AI data. Entities found automatically can be hidden.
+
+Please do not store passwords, card numbers or ID numbers. There are no fields for them on purpose. Your data is saved in the add-on's own storage (`/data/profiles.json`) and is included in add-on backups.
+
+New sensor attributes: `profile`, `age`, `zodiac`, `next_birthday`, `days_until_birthday`, `birthday_today`, `upcoming_dates`, `dates_next_30_days`, `profile_complete_percent`.
+
 ## Sensors
 
 ### `sensor.person_profile_<name>`

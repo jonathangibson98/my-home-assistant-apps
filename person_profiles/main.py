@@ -7,12 +7,18 @@ import re
 from datetime import datetime, timezone
 
 import aiohttp
+from aiohttp import web
+
+import profile_data as PD
 
 OPT = json.load(open("/data/options.json"))
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 API = "http://supervisor/core/api"
 WS_URL = "ws://supervisor/core/websocket"
 CACHE_FILE = "/data/cache.json"
+PROFILES_FILE = "/data/profiles.json"
+PORT = 8099
+TZ_NAME = ["UTC"]
 
 logging.basicConfig(
     level=getattr(logging, str(OPT.get("log_level", "info")).upper(), logging.INFO),
@@ -51,6 +57,36 @@ def save_cache(cache):
         json.dump(cache, open(CACHE_FILE, "w"))
     except Exception as e:
         log.warning("Could not save cache: %s", e)
+
+
+def load_store():
+    try:
+        d = json.load(open(PROFILES_FILE))
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_store(store):
+    tmp = PROFILES_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(store, f)
+    os.replace(tmp, PROFILES_FILE)
+
+
+def local_today():
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo(TZ_NAME[0])).date()
+    except Exception:
+        return datetime.now().date()
+
+
+def entry(store, slug):
+    """What the web page saved for one person, always cleaned."""
+    e = store.get(slug) or {}
+    return {"data": PD.clean_data(e.get("data")), "flags": PD.clean_flags(e.get("flags")),
+            "links": PD.clean_links(e.get("links")), "ignore": PD.clean_ids(e.get("ignore"))}
 
 
 class HA:
@@ -150,6 +186,7 @@ class App:
         self.ent_reg = []
         self.dev_reg = []
         self.last_ai = {}
+        self.store = load_store()
 
     async def load_registry(self):
         loop_time = asyncio.get_running_loop().time()
@@ -205,6 +242,10 @@ class App:
                         related.setdefault(e, "same device as tracker")
             for e in extras.get(pid, []):
                 related.setdefault(e, "manual")
+            mine = entry(self.store, slug)
+            link_labels = {l["entity_id"]: l["label"] for l in mine["links"]}
+            for l in mine["links"]:
+                related[l["entity_id"]] = "linked in web page"
             if OPT.get("name_matching", True):
                 tokens = {norm(slug), norm(name), norm(name.split(" ")[0])}
                 tokens = {t for t in tokens if len(t) >= 3}
@@ -218,27 +259,43 @@ class App:
             ents = []
             for eid, why in related.items():
                 st = states.get(eid)
-                if not self.keep(eid, st, reg_by_entity.get(eid)):
+                if eid in mine["ignore"] and eid not in link_labels:
+                    continue
+                if why != "linked in web page" and not self.keep(eid, st, reg_by_entity.get(eid)):
+                    continue
+                if st is None:
                     continue
                 a = st.get("attributes", {})
                 ents.append({
                     "entity_id": eid,
-                    "name": a.get("friendly_name", eid),
+                    "name": link_labels.get(eid) or a.get("friendly_name", eid),
                     "state": st["state"],
                     "unit": a.get("unit_of_measurement", ""),
                     "device_class": a.get("device_class", ""),
                     "why": why,
                 })
-            ents.sort(key=lambda x: (x["why"] != "tracker", x["entity_id"]))
+            ents.sort(key=lambda x: (x["why"] != "linked in web page", x["why"] != "tracker", x["entity_id"]))
             profiles[slug] = {
                 "entity_id": pid, "slug": slug, "name": name, "state": pst["state"],
                 "attrs": attrs, "trackers": {t: states.get(t, {}).get("state", "unknown") for t in trackers},
-                "entities": ents,
+                "entities": ents, "mine": mine,
             }
         return profiles
 
     def data_text(self, p):
         lines = [f"Person: {p['name']} ({p['entity_id']}), location state: {p['state']}"]
+        mine = p.get("mine") or {}
+        known = PD.profile_text(mine.get("data", {}), mine.get("flags", {}), "ai")
+        today = local_today()
+        calc = PD.worked_out(mine.get("data", {}), today)
+        lines.append(f"Today is {today.isoformat()}.")
+        if known:
+            lines.append("\nWhat the household told us about them (trust this over guesses):\n" + known)
+        if calc.get("age") is not None:
+            lines.append(f"Age {calc['age']}, {calc['zodiac']}, birthday in {calc['days_until_birthday']} days.")
+        if calc.get("dates_next_30_days"):
+            lines.append("Coming up: " + "; ".join(f"{e['label']} in {e['days_until']} days" for e in calc["dates_next_30_days"]))
+        lines.append("\nLive Home Assistant data:")
         for e in p["entities"][: int(OPT.get("max_entities_for_ai", 150))]:
             lines.append(f"- {e['name']} ({e['entity_id']}): {e['state']} {e['unit']}".rstrip())
         return "\n".join(lines)
@@ -313,8 +370,16 @@ class App:
             "last_answer_time": qa.get("time", ""),
             "last_updated": now_iso(),
         }
+        mine = p.get("mine") or {"data": {}, "flags": {}}
+        calc = PD.worked_out(mine["data"], local_today())
+        attributes.update({k: v for k, v in calc.items() if v is not None})
+        attributes["profile"] = PD.sensor_profile(mine["data"], mine["flags"])
+        attributes["profile_complete_percent"] = PD.completeness(mine["data"])
+        pic = (mine["data"].get("about") or {}).get("photo")
         if a.get("entity_picture"):
             attributes["entity_picture"] = a["entity_picture"]
+        elif pic:
+            attributes["entity_picture"] = pic
         await self.ha.set_state(f"sensor.person_profile_{p['slug']}", self.simple_summary(p), attributes)
 
     async def cycle(self, force_ai=False, only=None):
@@ -382,10 +447,138 @@ class App:
             log.warning("Event %s failed: %s", etype, e)
 
 
+
+CUR = {"app": None}
+INDEX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
+
+
+def jerr(msg, status=400):
+    return web.json_response({"error": msg}, status=status)
+
+
+async def h_index(request):
+    return web.FileResponse(INDEX, headers={"Cache-Control": "no-store"})
+
+
+async def h_schema(request):
+    return web.json_response(PD.schema())
+
+
+async def h_people(request):
+    app = CUR["app"]
+    if not app:
+        return jerr("Still connecting to Home Assistant, try again in a few seconds", 503)
+    states = await app.ha.call({"type": "get_states"})
+    wanted = set(OPT.get("people") or [])
+    out = []
+    for s in states:
+        eid = s["entity_id"]
+        if not eid.startswith("person.") or (wanted and eid not in wanted):
+            continue
+        slug = eid.split(".")[1]
+        e = entry(app.store, slug)
+        out.append({"slug": slug, "entity_id": eid, "name": s["attributes"].get("friendly_name") or slug,
+                    "state": s["state"], "picture": s["attributes"].get("entity_picture", ""),
+                    "complete": PD.completeness(e["data"])})
+    out.sort(key=lambda x: x["name"].lower())
+    return web.json_response({"people": out, "ai": ai_available()})
+
+
+async def h_profile_get(request):
+    app = CUR["app"]
+    if not app:
+        return jerr("Still connecting to Home Assistant", 503)
+    slug = request.match_info["slug"]
+    profiles = await app.collect()
+    p = profiles.get(slug)
+    if not p:
+        return jerr("No such person", 404)
+    mine = p["mine"]
+    return web.json_response({
+        "slug": slug, "name": p["name"], "entity_id": p["entity_id"], "state": p["state"],
+        "data": mine["data"], "flags": mine["flags"], "links": mine["links"], "ignore": mine["ignore"],
+        "worked_out": PD.worked_out(mine["data"], local_today()),
+        "complete": PD.completeness(mine["data"]),
+        "entities": [{k: e[k] for k in ("entity_id", "name", "state", "unit", "why")} for e in p["entities"]],
+        "ai": app.cache["ai"].get(slug, {}), "ai_available": ai_available()})
+
+
+async def h_profile_save(request):
+    app = CUR["app"]
+    if not app:
+        return jerr("Still connecting to Home Assistant", 503)
+    slug = request.match_info["slug"]
+    try:
+        body = await request.json()
+    except Exception:
+        return jerr("That was not valid JSON")
+    new = {"data": PD.clean_data(body.get("data")), "flags": PD.clean_flags(body.get("flags")),
+           "links": PD.clean_links(body.get("links")), "ignore": PD.clean_ids(body.get("ignore"))}
+    app.store[slug] = new
+    try:
+        save_store(app.store)
+    except Exception as e:
+        return jerr("Could not save: %s" % e, 500)
+    profiles = await app.collect()
+    if slug in profiles:
+        await app.publish(profiles[slug])
+    return web.json_response({"ok": True, "complete": PD.completeness(new["data"]),
+                              "worked_out": PD.worked_out(new["data"], local_today())})
+
+
+async def h_ai(request):
+    app = CUR["app"]
+    if not app:
+        return jerr("Still connecting to Home Assistant", 503)
+    if not ai_available():
+        return jerr("Set ai_task_entity (or conversation_agent) in the add-on Configuration first")
+    slug = request.match_info["slug"]
+    await app.cycle(force_ai=True, only=slug)
+    return web.json_response({"ok": True, "ai": app.cache["ai"].get(slug, {})})
+
+
+async def h_entities(request):
+    app = CUR["app"]
+    if not app:
+        return jerr("Still connecting to Home Assistant", 503)
+    q = request.query.get("q", "").strip().lower()
+    states = await app.ha.call({"type": "get_states"})
+    out = []
+    for s in states:
+        eid = s["entity_id"]
+        if eid.startswith("sensor.person_profile") or eid.split(".")[0] in ("update", "tts", "stt"):
+            continue
+        name = s["attributes"].get("friendly_name", eid)
+        if q and q not in eid.lower() and q not in name.lower():
+            continue
+        out.append({"entity_id": eid, "name": name, "state": s["state"],
+                    "unit": s["attributes"].get("unit_of_measurement", "")})
+        if len(out) >= 60:
+            break
+    return web.json_response(out)
+
+
+async def start_web():
+    w = web.Application(client_max_size=1024 * 1024)
+    w.add_routes([web.get("/", h_index), web.get("/api/schema", h_schema), web.get("/api/people", h_people),
+                  web.get("/api/profile/{slug}", h_profile_get), web.post("/api/profile/{slug}", h_profile_save),
+                  web.post("/api/ai/{slug}", h_ai), web.get("/api/entities", h_entities)])
+    runner = web.AppRunner(w)
+    await runner.setup()
+    await web.TCPSite(runner, "0.0.0.0", PORT).start()
+    log.info("Web page on port %s (open it from the sidebar)", PORT)
+
+
 async def session_loop(session):
     ha = HA(session)
     await ha.connect()
     app = App(ha)
+    try:
+        cfg = await ha.call({"type": "get_config"})
+        TZ_NAME[0] = (cfg or {}).get("time_zone") or "UTC"
+    except Exception as e:
+        log.warning("Could not read the time zone: %s", e)
+    CUR["app"] = app
     ha.on_event = app.on_event
     reader = asyncio.create_task(ha.reader())
     for t in ("person_profile_refresh", "person_profile_ask"):
@@ -402,6 +595,7 @@ async def session_loop(session):
 
 
 async def main():
+    await start_web()
     async with aiohttp.ClientSession() as session:
         while True:
             try:
