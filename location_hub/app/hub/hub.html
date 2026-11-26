@@ -934,10 +934,46 @@ function cardV(){
     <div class="row">${fld("Household title",inp(K("household_title"),c.household_title))}${fld("Friends title",inp(K("friends_title"),c.friends_title))}</div>
     ${fld("Columns",inp(K("columns"),c.columns,"number",'min="1" max="8" inputmode="numeric"'))}
     <div class="hd" style="padding:12px 0 0;cursor:default"><b>Bubble separator<small>Adds the Bubble Card separator on top</small></b>${sw(K("separator"),c.separator)}</div></details>
-  <details class="card dt"><summary>Card YAML (copy into your dashboard)</summary>
+  ${dashV()}
+  <details class="card dt"><summary>Card YAML (only if you want to paste it yourself)</summary>
     <div class="hint">In your dashboard: Edit, Add card, Manual, paste. Needs Mushroom and Bubble Card from HACS.</div>
     <textarea id="yaml" readonly style="min-height:260px;font:12px/1.4 ui-monospace,monospace;white-space:pre">${esc(cardLive.yaml||c.yaml)}</textarea>
     <div class="btns"><button class="b pri" data-act="copy">Copy card YAML</button></div></details>`;
+}
+/* the card, kept up to date in Home Assistant by the add-on */
+let dashList=null,dashAsked=false;
+function syncLine(){
+  const y=loc.card.sync||{},d=loc.card.dash||{};
+  if(!d.auto)return "";
+  if(y.ok===false)return `<div class="res err">${esc(y.msg||"Could not update the dashboard.")}</div>`;
+  if(!y.t)return `<div class="hint">Waiting for the first update…</div>`;
+  const ago=Math.max(0,Math.round(Date.now()/1000-y.t));
+  const when=ago<90?"just now":Math.round(ago/60)+" min ago";
+  const miss=(y.missing||[]).length?`<div class="res err">${esc(y.missing.join(" and "))} ${y.missing.length>1?"are":"is"} not installed as a dashboard resource, so the card shows an error until you add ${y.missing.length>1?"them":"it"} from HACS.</div>`:"";
+  return `<div class="hint">Checked ${when}${y.changed?", and updated the dashboard":", already up to date"}. <a href="${esc(y.url||"#")}" target="_top">Open it</a></div>`+miss;
+}
+function dashV(){
+  const d=loc.card.dash||(loc.card.dash={auto:false,mode:"own",target:"",title:"Location Hub",view_title:"People",sidebar:true});
+  const on=!!d.auto;
+  let h=`<div class="card"><div class="hd" style="cursor:default"><b>Keep a dashboard card up to date<small>The add-on creates the card in Home Assistant and updates it whenever people, pictures or titles change. No copying and pasting.</small></b>${sw("loc.card.dash.auto",on)}</div>`;
+  if(on){
+    h+=`<div class="bd"><div class="gseg"><button class="${d.mode!=="existing"?"on":""}" data-act="dashmode" data-m="own">Its own dashboard</button><button class="${d.mode==="existing"?"on":""}" data-act="dashmode" data-m="existing">Add to one I have</button></div>`;
+    if(d.mode==="existing"){
+      if(!dashList&&!dashAsked){dashAsked=true;loadDashList()}
+      const L=dashList||[{url:"",title:"Overview (default)"}];
+      h+=fld("Dashboard",`<select data-k="loc.card.dash.target">${L.map(x=>`<option value="${esc(x.url)}" ${x.url===(d.target||"")?"selected":""}>${esc(x.title)}</option>`).join("")}</select>`,"It adds one view (page) to this dashboard. Everything else in it is left alone. A dashboard that is still automatic has to be taken control of first.");
+      h+=fld("View title",inp("loc.card.dash.view_title",d.view_title));
+    }else{
+      h+=fld("Dashboard name",inp("loc.card.dash.title",d.title),"Created for you at /location-hub. Don't put your own cards on its People view: the add-on rewrites that view when something changes.");
+      h+=`<div class="hd" style="padding:12px 0 0;cursor:default"><b>Show in the sidebar</b>${sw("loc.card.dash.sidebar",d.sidebar!==false)}</div>`;
+    }
+    h+=`<div id="dsync">${syncLine()}</div><div class="btns"><button class="b pri" data-act="dashnow">Update now</button></div></div>`;
+  }
+  return h+`</div>`;
+}
+async function loadDashList(){
+  try{dashList=await api("api/hub/card/dashboards")}catch(e){dashList=[{url:"",title:"Overview (default)"}]}
+  if(tab==="card")render();
 }
 /* picture picker: a sheet with Automatic, upload, a link, Home Assistant pictures and your images */
 function showPicker(){
@@ -1084,7 +1120,7 @@ async function save(quiet){
     if(had.has("devices"))await api("api/hub/devices",{entities:loc.devices.filter(d=>(d.label||"").trim()&&(d.entity_id||"").trim()).map(d=>({label:d.label.trim(),entity_id:d.entity_id.trim(),home_state:(d.home_state||"").trim()}))});
     if(had.has("settings"))await api("api/hub/settings",{name:(loc.settings.name||"").trim(),entity_id:(loc.settings.entity_id||"").trim()});
     if(had.has("trackers"))await api("api/hub/trackers",{trackers:loc.trackers});
-    if(had.has("card"))await api("api/hub/card",loc.card);
+    if(had.has("card")){const r=await api("api/hub/card",loc.card);if(r&&r.sync)loc.card.sync=r.sync}
     if(had.has("arrivals")){await api("api/hub/arrivals",{settings:arr.settings,places:arr.places});await loadArr()}
     dirty.clear();stat();
     if([...had].some(g=>g!=="alerts")){await loadLoc();render()}
@@ -1092,7 +1128,7 @@ async function save(quiet){
   }catch(e){toast("Save failed: "+e.message);throw e}
 }
 
-document.addEventListener("input",e=>{const t=e.target;if(t.dataset.k){setPath(t.dataset.k,t.type==="number"?Number(t.value):t.type==="checkbox"?t.checked:t.value)}});
+document.addEventListener("input",e=>{const t=e.target;if(t.dataset.k){setPath(t.dataset.k,t.type==="number"?Number(t.value):t.type==="checkbox"?t.checked:t.value);if(t.dataset.k==="loc.card.dash.auto")render()}});
 document.addEventListener("change",e=>{
   const t=e.target,d=t.dataset;
   if(t.id==="bkfile"&&t.files[0]){
@@ -1145,6 +1181,11 @@ document.addEventListener("click",async e=>{
     const ids=[...document.querySelectorAll('input[data-tp]:checked')].filter(x=>x.dataset.tp===d.zone).map(x=>x.value);
     try{const r=await api("api/hub/arrivals/test",{zone:d.zone,people:ids});toast("Test arrival: "+r.state);loadArrLive()}
     catch(err){toast("Test failed: "+err.message)}
+  }
+  if(d.act==="dashmode"){loc.card.dash.mode=d.m;mark("card");if(d.m==="existing"&&!dashList)loadDashList();render()}
+  if(d.act==="dashnow"){
+    try{await save(true);const r=await api("api/hub/card/sync",{});loc.card.sync=r;toast(r.ok===false?"Could not update: "+r.msg:"Dashboard updated");render()}
+    catch(err){toast("Failed: "+err.message)}
   }
   if(d.act==="pickpic")openPicker(i);
   if(d.act==="picclose")closePicker();

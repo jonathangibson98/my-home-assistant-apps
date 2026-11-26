@@ -714,7 +714,24 @@ def load_card():
         "columns": max(1, min(8, cols)),
         "separator": bool(data.get("separator", True)),
         "rows": rows,
+        "dash": clean_dash(data.get("dash")),
     }
+
+DASH_DEFAULT = {"auto": False, "mode": "own", "target": "", "title": "Location Hub", "view_title": "People", "sidebar": True}
+VIEW_PATH = "location-hub"      # the view this add-on owns inside the dashboard
+OWN_DASH = "location-hub"       # url of the dashboard it creates in "own" mode
+
+def clean_dash(d):
+    d = d if isinstance(d, dict) else {}
+    out = dict(DASH_DEFAULT)
+    out["auto"] = bool(d.get("auto", False))
+    out["mode"] = "existing" if d.get("mode") == "existing" else "own"
+    t = str(d.get("target") or "").strip()[:80]
+    out["target"] = t if re.fullmatch(r"[a-z0-9_-]*", t) else ""
+    out["title"] = str(d.get("title") or "").strip()[:60] or DASH_DEFAULT["title"]
+    out["view_title"] = str(d.get("view_title") or "").strip()[:60] or DASH_DEFAULT["view_title"]
+    out["sidebar"] = bool(d.get("sidebar", True))
+    return out
 
 def save_card(card):
     out = {
@@ -724,6 +741,7 @@ def save_card(card):
         "separator": bool(card.get("separator", True)),
         "rows": {r["key"]: {"group": r["group"], "entity": r["entity"], "picture": r["picture"]}
                  for r in card.get("rows", [])},
+        "dash": clean_dash(card.get("dash")),
     }
     with open(CARD_PATH, "w") as f:
         json.dump(out, f, indent=2)
@@ -792,6 +810,181 @@ def build_card_yaml(card=None):
     out += ["  - type: vertical-stack", "    cards:"] + grids
     return "\n".join(out) + "\n"
 
+# ---------------- Dashboard card, kept up to date in Home Assistant ----------------
+# The same card as the YAML above, as data, written into a view this add-on owns ("location-hub").
+# "own": a dashboard it creates. "existing": one view added to a dashboard you already have.
+# Nothing else in the dashboard is touched.
+card_sync = {"ok": None, "msg": "", "t": 0.0, "hash": "", "missing": [], "url": "", "changed": False}
+
+def tile_object(row, sensor):
+    key, ent = row["key"], row["entity"]
+    toggle = ent.startswith("input_boolean.")
+    home_if = "is_state_attr('" + sensor + "','" + key + "','Home')"
+    if row["picture"]:
+        pic = row["picture"]
+    elif ent.startswith("person."):
+        pic = "{{ state_attr('" + ent + "','entity_picture') }}"
+    else:
+        pic = "/local/person/" + key + ".png"
+    t = {"type": "custom:mushroom-template-card", "primary": row["label"],
+         "secondary": "{{ state_attr('" + sensor + "','" + key + "') }}"}
+    if ent:
+        t["entity"] = ent
+    t["picture"] = pic
+    t["badge_icon"] = "{{ 'mdi:home' if " + home_if + " else 'mdi:home-off' }}"
+    t["badge_color"] = "{{ 'green' if " + home_if + " else 'red' }}"
+    if toggle:
+        t["tap_action"] = {"action": "toggle"}
+        t["icon_tap_action"] = {"action": "toggle"}
+    else:
+        t["tap_action"] = {"action": "none"}
+        t["hold_action"] = {"action": "none"}
+        t["double_tap_action"] = {"action": "none"}
+    return t
+
+def card_object(card=None):
+    """The dashboard card as data (None when nobody is on it). Matches build_card_yaml."""
+    card = card or load_card()
+    sensor = entity_id()
+    grids = []
+    for grp, title in (("household", card["household_title"]), ("friends", card["friends_title"])):
+        rows = [r for r in card["rows"] if r["group"] == grp]
+        if rows:
+            grids.append({"type": "grid", "title": title, "columns": card["columns"], "square": False,
+                          "cards": [tile_object(r, sensor) for r in rows]})
+    if not grids:
+        return None
+    cards = []
+    if card["separator"]:
+        cards.append({"type": "custom:bubble-card", "card_type": "separator", "sub_button": {"main": [], "bottom": []}})
+    cards.append({"type": "vertical-stack", "cards": grids})
+    return {"type": "vertical-stack", "cards": cards}
+
+async def with_ws(s, fn):
+    """Run fn(call) on one authenticated Home Assistant websocket. call(payload) returns the result or raises."""
+    async with s.ws_connect(WS, max_msg_size=0, timeout=20) as ws:
+        await ws.receive_json()
+        await ws.send_json({"type": "auth", "access_token": TOKEN})
+        if (await ws.receive_json()).get("type") != "auth_ok":
+            raise RuntimeError("Home Assistant refused the connection")
+        n = [0]
+        async def call(payload):
+            n[0] += 1
+            r = await _ws_call(ws, n[0], payload)
+            if not r.get("success"):
+                e = r.get("error") or {}
+                raise RuntimeError(f"{e.get('code') or 'error'}: {e.get('message') or 'Home Assistant said no'}")
+            return r.get("result")
+        return await fn(call)
+
+def card_sync_public():
+    return {k: card_sync[k] for k in ("ok", "msg", "t", "missing", "url", "changed")}
+
+async def sync_card(s, force=False):
+    card = load_card()
+    d = card["dash"]
+    if not d["auto"]:
+        return card_sync_public()
+    obj = card_object(card)
+    if obj is None:
+        card_sync.update(ok=False, msg="Nobody is on the card yet, so there is nothing to put on a dashboard.", t=time.time(), changed=False)
+        return card_sync_public()
+    h = hashlib.sha1(json.dumps([obj, d, entity_id()], sort_keys=True).encode()).hexdigest()
+    if not force and h == card_sync["hash"] and time.time() - card_sync["t"] < 1800:
+        return card_sync_public()
+    view = {"title": d["view_title"], "path": VIEW_PATH, "icon": "mdi:map-marker-account", "cards": [obj]}
+    out = {}
+
+    async def work(call):
+        if d["mode"] == "own":
+            url = OWN_DASH
+            boards = await call({"type": "lovelace/dashboards/list"}) or []
+            mine = next((b for b in boards if b.get("url_path") == url), None)
+            if not mine:
+                await call({"type": "lovelace/dashboards/create", "url_path": url, "title": d["title"],
+                            "icon": "mdi:map-marker-account", "show_in_sidebar": d["sidebar"],
+                            "require_admin": False, "mode": "storage"})
+            elif mine.get("title") != d["title"] or bool(mine.get("show_in_sidebar")) != d["sidebar"]:
+                await call({"type": "lovelace/dashboards/update", "dashboard_id": mine["id"],
+                            "title": d["title"], "show_in_sidebar": d["sidebar"]})
+        else:
+            url = d["target"] or None
+        msg = {"type": "lovelace/config", "force": True}
+        if url:
+            msg["url_path"] = url
+        try:
+            now = await call(msg)
+        except RuntimeError as e:
+            if "config_not_found" not in str(e):
+                raise
+            if d["mode"] != "own":   # an automatic dashboard: saving would replace everything it shows
+                raise RuntimeError("That dashboard is still automatic. Open it, tap the pencil, then the three dots and Take control, then try again.")
+            now = None
+        now = dict(now or {})
+        views = list(now.get("views") or [])
+        i = next((k for k, v in enumerate(views) if v.get("path") == VIEW_PATH), None)
+        if i is not None and views[i] == view:
+            out["changed"] = False
+        else:
+            if i is None:
+                views.append(view)
+            else:
+                views[i] = view
+            now["views"] = views
+            save = {"type": "lovelace/config/save", "config": now}
+            if url:
+                save["url_path"] = url
+            await call(save)
+            out["changed"] = True
+        out["url"] = "/" + (url or "lovelace") + "/" + VIEW_PATH
+        try:
+            res = await call({"type": "lovelace/resources"}) or []
+        except RuntimeError:
+            res = []
+        names = " ".join(str(r.get("url") or "") for r in res).lower()
+        out["missing"] = [n for n, need in (("Mushroom", "mushroom"), ("Bubble Card", "bubble-card"))
+                          if (need != "bubble-card" or card["separator"]) and need not in names]
+
+    try:
+        await with_ws(s, work)
+        card_sync.update(ok=True, msg="", t=time.time(), hash=h, **out)
+        if out.get("changed"):
+            logging.info("Dashboard card updated in Home Assistant (%s)", out.get("url"))
+    except Exception as e:  # noqa: BLE001
+        card_sync.update(ok=False, msg=str(e) or type(e).__name__, t=time.time(), changed=False)
+        logging.warning("Could not update the dashboard card: %s", card_sync["msg"])
+    return card_sync_public()
+
+async def sync_card_safe(s, force=False):
+    try:
+        return await asyncio.wait_for(sync_card(s, force), 25)
+    except Exception as e:  # noqa: BLE001
+        card_sync.update(ok=False, msg=str(e) or type(e).__name__, t=time.time())
+        return card_sync_public()
+
+async def card_sync_loop(s):
+    await asyncio.sleep(20)   # let Home Assistant finish starting
+    while True:
+        await sync_card_safe(s)
+        await asyncio.sleep(120)
+
+async def handle_card_sync(request):
+    return web.json_response(await sync_card_safe(request.app["session"], force=True))
+
+async def handle_card_dashboards(request):
+    """Dashboards a card can be added to (storage mode only: that is all Home Assistant lets an add-on edit)."""
+    async def work(call):
+        return await call({"type": "lovelace/dashboards/list"}) or []
+    try:
+        boards = await with_ws(request.app["session"], work)
+    except Exception as e:  # noqa: BLE001
+        return web.json_response({"error": str(e)}, status=502)
+    out = [{"url": "", "title": "Overview (default)"}]
+    for b in boards:
+        if b.get("mode") == "storage" and b.get("url_path") and b.get("url_path") != OWN_DASH:
+            out.append({"url": b["url_path"], "title": b.get("title") or b["url_path"]})
+    return web.json_response(out)
+
 # ---------------- Clickable switches ----------------
 TOGGLE_DOMAINS = ("input_boolean", "switch")
 
@@ -848,6 +1041,7 @@ async def handle_post_devices(request):
     ENT = refresh_entities_map()
     logging.info("Updated device list via Web UI")
     await safe_update_all(request.app["session"])
+    _spawn(sync_card_safe(request.app["session"]))   # a new or renamed person shows up on the dashboard card
     return web.json_response({"status": "ok"})
 
 async def handle_get_trackers(request):
@@ -898,6 +1092,7 @@ async def handle_post_trackers(request):
 async def handle_get_card(request):
     card = load_card()
     card["yaml"] = build_card_yaml(card)
+    card["sync"] = card_sync_public()
     return web.json_response(card)
 
 def clean_card(data):
@@ -924,12 +1119,14 @@ def clean_card(data):
         "columns": max(1, min(8, cols)),
         "separator": bool(data.get("separator", True)),
         "rows": rows,
+        "dash": clean_dash(data.get("dash")),
     }
 
 async def handle_post_card(request):
     save_card(clean_card(await request.json()))
     logging.info("Updated dashboard card settings via Web UI")
-    return web.json_response({"status": "ok"})
+    sync = await sync_card_safe(request.app["session"], force=True)
+    return web.json_response({"status": "ok", "sync": sync})
 
 # ---------------- Card preview and picture picker ----------------
 def merged_card(data):
@@ -1123,6 +1320,8 @@ def add_routes(app):
     r.add_get('/api/hub/card', handle_get_card)
     r.add_post('/api/hub/card', handle_post_card)
     r.add_post('/api/hub/card/preview', handle_card_preview)
+    r.add_post('/api/hub/card/sync', handle_card_sync)
+    r.add_get('/api/hub/card/dashboards', handle_card_dashboards)
     r.add_get('/api/hub/card/pictures', handle_card_pictures)
     r.add_post('/api/hub/card/upload', handle_card_upload)
     r.add_get('/api/hub/switches', handle_get_switches)
@@ -1143,6 +1342,7 @@ def _spawn(coro):
 async def run_background(s):
     _spawn(backstop(s))
     _spawn(idle_watch(s))
+    _spawn(card_sync_loop(s))
     while True:
         try:
             await listen(s)

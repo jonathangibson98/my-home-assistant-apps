@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.8.0 - 2026-11-25
+
+- **The dashboard card is created and updated for you.** On the Dashboard card tab, turn on **Keep a dashboard card up to date** and the add-on puts the card into Home Assistant itself, so there is no more copying YAML. It rechecks when you save, when you change devices, and every couple of minutes, and only writes when something actually changed.
+  - **Its own dashboard** (default): creates a **Location Hub** dashboard (optionally in the sidebar) with a People view.
+  - **Add to one I have**: adds a single **People** view to a dashboard you already use. Everything else in that dashboard is left alone. A dashboard that is still automatic must be taken control of first (the page says so), because saving would otherwise replace it.
+  - The page shows when it last checked, whether it changed anything, a link to open it, and a warning when Mushroom or Bubble Card isn't installed as a dashboard resource.
+  - **Update now** forces a refresh. The old **Card YAML** is still there, folded away, if you would rather paste it.
+- The add-on only ever rewrites its own **People** view (path `location-hub`). Don't add your own cards to that view.
+
 ## 3.7.0 - 2026-11-23
 
 - **Dashboard card tab, simpler and with a live preview.**
