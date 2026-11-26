@@ -22,8 +22,8 @@ ICONS = {"info": "mdi:account-group", "music": "mdi:music"}
 # media player, the phone app a device tracker, battery sensor and notify service.
 LINK_ROLES = {
     "person": "Person", "phone": "Phone (device tracker)", "notify": "Phone notifications", "asleep": "Asleep",
-    "at_work": "At work", "work_hours": "Work hours", "gaming": "Game console", "calendar": "Calendar",
-    "location": "Location sensor", "day_off": "Day off (Work Hours)",
+    "at_work": "At work (older sensor)", "work_hours": "Work hours (one sensor: at work, schedule, days off)", "gaming": "Game console", "calendar": "Calendar",
+    "location": "Location sensor", "day_off": "Day off (older sensor)",
 }
 HOUSE_KEY = "house"  # the house's own entity list lives in /data/settings.json under this name
 LIVE_EVERY = 60  # seconds between live status checks (published only when something changed)
@@ -296,6 +296,14 @@ def suggest_zone(d, key, states, name=None):
                 return "zone.home"
     return best
 
+def clock12(t):
+    """'06:30' -> '6:30 AM'."""
+    try:
+        h, m = str(t).split(":")
+        return f"{int(h) % 12 or 12}:{m} {'AM' if int(h) < 12 else 'PM'}"
+    except Exception:
+        return str(t or "")
+
 def live_status(d, p, states):
     """What a linked person is doing right now, from their linked entities. None when nothing is linked."""
     links = p.get("links") if isinstance(p, dict) else None
@@ -363,6 +371,33 @@ def live_status(d, p, states):
             words.append("off today" + (f" ({out['day_off_reason']})" if out["day_off_reason"] else ""))
         if a.get("next_date"):
             out["next_day_off"] = f"{a.get('next_name') or 'day off'} on {a['next_date']}"
+    wh = st("work_hours")
+    wa = (wh.get("attributes") or {}) if wh else {}
+    if "clocked_in" in wa:  # the one Work Hours sensor per person has all of this in its attributes
+        if "at_work" not in out:
+            out["at_work"] = bool(wa["clocked_in"])
+            if out["at_work"]:
+                words.append("at work")
+        if "day_off" not in out and "day_off_today" in wa:
+            out["day_off"] = bool(wa["day_off_today"])
+            if out["day_off"]:
+                out["day_off_reason"] = wa.get("day_off_reason") or ""
+                words.append("off today" + (f" ({out['day_off_reason']})" if out["day_off_reason"] else ""))
+        if wa.get("next_day_off") and "next_day_off" not in out:
+            out["next_day_off"] = f"{wa.get('next_day_off_name') or 'day off'} on {wa['next_day_off']}"
+        if wa.get("has_schedule"):
+            out["work_schedule"] = wa.get("schedule_text")
+            sh = wa.get("scheduled_today")
+            if isinstance(sh, dict) and not out.get("day_off"):
+                out["scheduled_today"] = f"{clock12(sh.get('start'))} to {clock12(sh.get('end'))}"
+                if not out.get("at_work"):
+                    words.append(f"scheduled today {out['scheduled_today']}")
+            ns = wa.get("next_shift")
+            if isinstance(ns, dict):
+                out["next_shift"] = f"{ns.get('weekday')} {ns.get('date')} {clock12(ns.get('start'))} to {clock12(ns.get('end'))}"
+        for k in ("status", "period_hours", "week_hours", "today_hours", "week_overtime_hours", "scheduled_hours_this_week"):
+            if wa.get(k) not in (None, ""):
+                out["work_" + k] = wa[k]
     phone = str(links.get("phone") or "")
     if phone.startswith("device_tracker."):
         b = states.get(f"sensor.{phone.split('.', 1)[1]}_battery_level")
