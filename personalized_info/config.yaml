@@ -1,5 +1,5 @@
 name: Personalized Info
-version: "1.1.0"
+version: "1.2.0"
 slug: personalized_info
 image: "ghcr.io/jonathangibson98/{arch}-addon-personalized_info"
 description: "Everyone in one place: a profile for each person (pictures, about, work, health, vehicles, dates, likes and more), plus places, music, live status, sensors and AI help"

@@ -1274,6 +1274,60 @@ def all_field_names(d):
                     seen[k] = seen.get(k, 0) + 1
     return sorted(seen, key=lambda k: -seen[k])
 
+OWN_FILL = {"birthday": "text", "nickname": "text", "pronouns": "text", "favorite_teams": "list", "games": "list"}
+
+def fill_spec():
+    """The profile form as plain text for the AI: section, field, what shape the value has."""
+    out = []
+    for sec in PD.SECTIONS:
+        fs = []
+        for f in sec["fields"]:
+            if f.get("legacy"):
+                continue
+            t = f["type"]
+            how = ("list of objects with keys: " + ", ".join(f"{x['key']} ({x['type']})" for x in f["fields"]) if t == "items"
+                   else "list of short strings" if t == "tags" else "YYYY-MM-DD" if t == "date" else "HH:MM, 24 hour" if t == "time"
+                   else "one of: " + ", ".join(o for o in f["options"] if o) if t == "select" else "true or false" if t == "check" else "text")
+            fs.append(f"    {f['key']}: {how}   ({f['label']})")
+        out.append(f"  {sec['key']} ({sec['title']}):\n" + "\n".join(fs))
+    return "\n".join(out)
+
+def fill_person(d, group, key, person):
+    """Ask the AI to file everything saved about one person into the profile sections."""
+    notes = {k: v for k, v in person.items() if k not in ("links", "places", "photo")}
+    places = []
+    for label, pk in (person.get("places") or {}).items() if isinstance(person.get("places"), dict) else []:
+        pl = (d.get("places") or {}).get(pk) or {}
+        places.append(f"{label}: {pl.get('name', pk)}" + (f", {pl['address']}" if pl.get("address") else ""))
+    text = "\n".join(to_text(notes)) + ("\nplaces they use:\n  " + "\n  ".join(places) if places else "")
+    if not text.strip():
+        raise ValueError("Nothing is saved about them yet.")
+    out = ai_json(
+        "You are filing what a household knows about one person into a profile form.\n\nTHE FORM (section, then field: shape):\n"
+        + fill_spec() + "\n\nYou may also set these of the person's own fields, only when the notes say it: "
+        "birthday (text, keep their wording), nickname, pronouns, favorite_teams (list: sports teams they follow), games (list).\n\n"
+        f"WHAT IS SAVED ABOUT {str(person.get('name', key)).upper()} (group: {group}):\n{text[:9000]}\n\n"
+        f"Today is {datetime.date.today().isoformat()}.\n"
+        "Rules: use ONLY facts in the notes and never guess or invent. Leave out fields with nothing. Dates are YYYY-MM-DD, and skip a "
+        "date that has no year. Put people in their life (partner, friends, family, pets) in family.people with a relation and a short note. "
+        "A together-since or anniversary date goes in dates.important with yearly true. Job, employer and workplace go in work. Hobbies, "
+        "food, music, shows and other likes go in likes. Anything that fits nowhere goes in notes.notes. A pet has no job. Do not invent "
+        "contact details.\n"
+        'Reply ONLY with JSON: {"sections": {"section": {"field": value}}, "own_fields": {"favorite_teams": [..]}, '
+        '"used_fields": ["the name of each saved field whose content you fully captured"]}.')
+    own = {}
+    for k, v in (out.get("own_fields") or {}).items() if isinstance(out.get("own_fields"), dict) else []:
+        if OWN_FILL.get(k) == "list" and v:
+            v = [str(x).strip() for x in (v if isinstance(v, list) else [v]) if str(x).strip()]
+        elif OWN_FILL.get(k) == "text" and v:
+            v = str(v).strip()
+        else:
+            continue
+        if v:
+            own[k] = v
+    return {"sections": PD.clean_data(out.get("sections")), "own_fields": own,
+            "used_fields": [f for f in (out.get("used_fields") or []) if isinstance(f, str) and f in person and f not in ("links", "places", "photo")]}
+
 def ai_job(b):
     d = load()
     if isinstance(b.get("data"), dict) and all(k in b["data"] for k in ("household", "friends")):
@@ -1301,6 +1355,8 @@ def ai_job(b):
     if not isinstance(person, dict):
         raise ValueError("That person doesn't exist yet (save first).")
     shown = {k: v for k, v in person.items() if k not in ("links",)}
+    if action == "fill":
+        return fill_person(d, group, key, person)
     if action == "suggest":
         out = ai_json("A home-automation app keeps notes about people so its voice assistant and dashboards can be personal "
                       "(birthdays, nicknames, favorite teams, games, shows, routines...). Suggest up to 8 useful NEW fields for "

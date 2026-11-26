@@ -985,6 +985,90 @@ function migrateEveryone() {
   touch(); draw();
 }
 
+/* ---------- AI fill: the AI Task reads everything saved about a person and fills the profile sections ---------- */
+const itemKey = r => String(r.name || r.label || r.item || ((r.make || '') + ' ' + (r.model || '')) || '').trim().toLowerCase();
+function mergeField(d, fk, fd, v) {   // adds what is new, never overwrites something already filled in. Returns how many things were added.
+  const cur = d[fk];
+  if (fd.type === 'tags') { const m = mergeUnique(cur || [], asList(v)); if (m.length === (cur || []).length) return 0; d[fk] = m; return m.length - (cur || []).length; }
+  if (fd.type === 'items') {
+    const have = new Set((cur || []).map(itemKey)), add = (Array.isArray(v) ? v : []).filter(r => r && !have.has(itemKey(r)));
+    if (!add.length) return 0; d[fk] = (cur || []).concat(add); return add.length;
+  }
+  if (emptyVal(cur)) { d[fk] = v; return 1; }
+  return 0;
+}
+function applyFill(k, p, r, removeOld) {
+  const prof = profOf(k); let n = 0;
+  for (const [sk, vals] of Object.entries(r.sections || {})) {
+    const sec = SCHEMA.find(s => s.key === sk);
+    if (!sec) continue;
+    const d = prof.data[sk] = prof.data[sk] || {};
+    for (const [fk, v] of Object.entries(vals)) {
+      const fd = sec.fields.find(f => f.key === fk);
+      if (fd && !fd.legacy && !emptyVal(v)) n += mergeField(d, fk, fd, v);
+    }
+  }
+  for (const [fk, v] of Object.entries(r.own_fields || {})) {
+    if (Array.isArray(v)) { const m = mergeUnique(asList(p[fk]), v); if (m.length !== asList(p[fk]).length) { p[fk] = m; n++; } }
+    else if (emptyVal(p[fk])) { p[fk] = v; n++; }
+  }
+  if (removeOld) (r.used_fields || []).forEach(f => { if (f in p && !RESERVED[f]) delete p[f]; });
+  return n;
+}
+const showVal = v => Array.isArray(v) ? v.map(x => typeof x === 'object' ? Object.values(x).filter(Boolean).join(', ') : x).join(' | ') : String(v);
+function fillLines(r) {
+  const out = [];
+  for (const [sk, vals] of Object.entries(r.sections || {})) {
+    const sec = SCHEMA.find(s => s.key === sk);
+    if (!sec) continue;
+    for (const [fk, v] of Object.entries(vals)) {
+      const fd = sec.fields.find(f => f.key === fk);
+      if (fd && !fd.legacy) out.push(sec.title + ' › ' + fd.label + ': ' + showVal(v));
+    }
+  }
+  for (const [fk, v] of Object.entries(r.own_fields || {})) out.push('Own field › ' + pretty(fk) + ': ' + showVal(v));
+  return out;
+}
+function aiFillCard(g, k, p) {
+  const box = h('div'), out = h('div'), msg = h('div', {className: 'meta'});
+  const rm = h('input', {type: 'checkbox'});
+  let result = null;
+  const go2 = h('button', {className: 'pri', textContent: 'Read their info and fill the sections', onclick: async e => {
+    e.target.disabled = true; msg.textContent = 'The AI is reading everything saved about ' + (p.name || k) + '… (up to a minute)'; out.replaceChildren();
+    const r = await ai({action: 'fill', group: g, key: k});
+    e.target.disabled = false;
+    if (!r.ok) { msg.textContent = r.error; return; }
+    result = r; const ls = fillLines(r);
+    if (!ls.length) { msg.textContent = 'The AI found nothing new to add.'; return; }
+    msg.textContent = 'Here is what it would add (nothing already filled in is overwritten):';
+    out.replaceChildren(...ls.map(t => h('div', {className: 'note', textContent: '• ' + t})),
+      h('label', {className: 'pickrow'}, rm, 'Also remove the old fields it moved (' + ((r.used_fields || []).map(pretty).join(', ') || 'none') + ')'),
+      h('div', {className: 'add'}, h('button', {className: 'pri', textContent: 'Add these to their profile', onclick: () => {
+        const n = applyFill(k, p, result, rm.checked); touch(); status('Added ' + n + ' things. Check them, then Save changes.', 'warn'); draw();
+      }})));
+  }});
+  box.append(h('p', {className: 'note', textContent: 'Your AI Task reads every field saved about this person and files it into the sections: work, likes, family and friends, vehicles, dates and more. You see the result first, and nothing is saved until you press Save changes.'}), go2, msg, out);
+  return box;
+}
+let FILLSTOP = false;
+async function fillEveryone(btn) {
+  if (btn.dataset.running) { FILLSTOP = true; btn.textContent = 'Stopping…'; return; }
+  const all = [];
+  for (const g of ['household', 'friends']) for (const k of Object.keys(D[g])) if (D[g][k] && typeof D[g][k] === 'object') all.push([g, k]);
+  if (!confirm('Have the AI fill the profile sections for all ' + all.length + ' people? It takes about ' + Math.max(1, Math.round(all.length / 3)) + ' minutes. It only adds to empty spots, keeps your old fields, and nothing is saved until you press Save changes.')) return;
+  btn.dataset.running = '1'; FILLSTOP = false; let done = 0, added = 0, failed = [];
+  for (const [g, k] of all) {
+    if (FILLSTOP) break;
+    btn.textContent = 'Stop (' + done + ' of ' + all.length + ' done)';
+    const r = await ai({action: 'fill', group: g, key: k});
+    if (r.ok) added += applyFill(k, D[g][k], r, false); else failed.push((D[g][k].name || k));
+    done++;
+  }
+  delete btn.dataset.running; touch();
+  status('AI filled ' + added + ' things for ' + (done - failed.length) + ' people' + (failed.length ? '. Could not read: ' + failed.join(', ') : '') + '. Check them, then Save changes.', failed.length ? 'bad' : 'warn');
+  draw();
+}
+
 /* ---------- People tab: a grid of people (picture, where they are now); tap one to open everything about them ---------- */
 let SCHEMA = [], PERSON = null;
 const PICS = {};  // pictures just uploaded, until the page is reloaded
@@ -1097,7 +1181,8 @@ function people() {
       ng[slug(n)] = {name: n, notes: []}; PERSON = {g: 'notable', k: slug(n)}; touch(); draw();
     }})));
   }
-  f.append(h('div', {className: 'row'}, h('button', {className: 'ghost', textContent: '🧹 Move old fields into sections for everyone', onclick: migrateEveryone})));
+  f.append(h('div', {className: 'row'}, h('button', {className: 'pri', textContent: '✨ Fill everyone\'s sections with AI', onclick: e => fillEveryone(e.target)})),
+    h('div', {className: 'row'}, h('button', {className: 'ghost', textContent: '🧹 Move old fields into sections for everyone', onclick: migrateEveryone})));
   return f;
 }
 
@@ -1209,6 +1294,7 @@ function personPage() {
       h('div', {}, h('h1', {textContent: p.name || k}), h('div', {className: 'note', textContent: now || 'Nothing live yet. Link their Home Assistant entities below.'}),
         h('div', {className: 'meta', textContent: 'sensor.person_profile_' + k}))),
     photoRow('person', k, p), statsCard(k, p));
+  f.append(card('fill' + k, '✨ Fill the sections with AI', aiFillCard(g, k, p)));
   const mig = migrateCard(k, p);
   if (mig) f.append(mig);
   SCHEMA.forEach(sec => f.append(sectionCard(sec, k, p, prof)));
