@@ -1,5 +1,5 @@
 name: Personalized Info
-version: "0.9.0"
+version: "0.10.0"
 slug: personalized_info
 image: "ghcr.io/jonathangibson98/{arch}-addon-personalized_info"
 description: Edit everyone's info and music in one place, with AI that suggests fields, fills them from notes and answers questions
