@@ -1,5 +1,5 @@
 name: Person Profiles
-version: "0.2.0"
+version: "0.2.1"
 slug: person_profiles
 image: "ghcr.io/jonathangibson98/{arch}-addon-person_profiles"
 description: A web page to fill in everything about each person, plus a profile sensor per person (their info, linked entities, dates, optional AI summary)

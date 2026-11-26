@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+
+- Fix: the new web page said "still connecting" for about a minute after the add-on started, because the time zone was requested before the connection was listening for replies. It now connects straight away.
+
 ## 0.2.0
 
 - New web page in the sidebar: pick a person and fill in everything about them. Sections: About, Contact, Work and school, Health, Daily routine, Likes, Sizes and gifts, Vehicles, Important dates, Family friends and pets, Memberships, Notes and your own custom fields.
