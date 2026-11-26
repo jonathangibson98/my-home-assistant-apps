@@ -11,7 +11,6 @@ homeassistant_api: true
 
 # One sidebar entry: the page where you fill in each person's profile.
 ingress: true
-ingress_port: 8099
 panel_icon: "mdi:account-details"
 panel_title: "Person Profiles"
 options:
