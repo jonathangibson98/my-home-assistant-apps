@@ -31,7 +31,7 @@ Open **Relationships between people** on the People tab, pick two people, choose
 
 ## Choosing a picture
 
-**Add a picture** / **Change picture** on a person or place opens a sheet: upload from your device, paste a link, pick Automatic (the picture on their Home Assistant person), tap a Home Assistant person's picture, or tap any image in your `www` folder. Uploads are saved to `www/personalized_info`.
+**Add a picture** / **Change picture** on a person or place opens a sheet: upload from your device, paste a link, pick Automatic (the picture on their Home Assistant person), tap a Home Assistant person's picture, tap a **zone icon** (the icon set on that zone in Home Assistant, saved as a round picture; pick it again if you change the icon), or tap any image in your `www` folder. Uploads are saved to `www/personalized_info`.
 
 ## Fill the sections without the AI
 
