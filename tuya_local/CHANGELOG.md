@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.0
+
+- **One Home Assistant device**: every entity from every Tuya device now lives under a single device called **Tuya Local**, instead of one device per lamp or plug. Each entity name starts with the Tuya device's name (for example `Dresser Lamp Light`), so entity IDs read `light.dresser_lamp_light`. Entities keep their unique IDs, so history and dashboards carry over. The old per-device entries are left empty in Settings → Devices: delete them there.
+
 ## 1.0.0
 
 First release.
