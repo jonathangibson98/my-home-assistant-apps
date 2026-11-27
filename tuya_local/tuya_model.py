@@ -430,7 +430,7 @@ def discovery(dev, ent, base="tuya_local"):
         "state_topic": f"{tbase}/state",
         "availability": [{"topic": f"{base}/status"}, {"topic": f"{base}/{did}/available"}],
         "availability_mode": "all",
-        "device": {"identifiers": ["tuya_local_hub"], "name": "Tuya Local", "manufacturer": "Tuya", "model": "Local control"},
+        "device": {"identifiers": ["tuya_local_hub"], "name": "Local Devices", "manufacturer": "Tuya", "model": "Local control"},
     }
     if p in ("switch", "number", "select", "light", "vacuum"):
         cfg["command_topic"] = f"{tbase}/set"

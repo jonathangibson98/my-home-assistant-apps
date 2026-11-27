@@ -1,4 +1,4 @@
-# Tuya Local: Documentation
+# Local Devices: Documentation
 
 ## What you need
 
@@ -13,7 +13,7 @@
 3. **Find tab, Scan now**: devices on your network show up with their IP address. Saved devices get their IP address updated.
 4. **Devices tab**: each device connects by itself. Open *Entities in Home Assistant* to rename an entity or hide one you do not want. The *On / Off* buttons let you test a switch or light.
 
-All entities appear under one Home Assistant device called **Tuya Local** (Settings → Devices). Each entity's name starts with its Tuya device's name, so rename the device on its Settings panel *before* you rely on the entity IDs. Renaming later changes the display name; Home Assistant keeps the old entity ID.
+All entities appear under one Home Assistant device called **Local Devices** (Settings → Devices). Each entity's name starts with its Tuya device's name, so rename the device on its Settings panel *before* you rely on the entity IDs. Renaming later changes the display name; Home Assistant keeps the old entity ID.
 
 ## When a device will not connect
 
@@ -41,6 +41,10 @@ The add-on tries every protocol version by itself and remembers the one that wor
 Things that are not mapped by hand (vacuums, climate, covers, fans) still work: their data points show up as switches, selects, numbers and sensors you can use in automations. Older lights that use the first-generation colour format (`colour_data` without `_v2`) are brightness and colour temperature only. Data points named *countdown* are hidden by default.
 
 If the account has no data point list for a device (or you added it by hand), the add-on reads what the device reports and makes a switch for each on/off value and a sensor for each other value.
+
+## Cloud Intelligence plug codes
+
+The **Cloud Intelligence** tab gets the four codes (device name, access key, access token, product key) that the Cloud Intelligence Plugs integration asks for. Tap **Start capture**, set your phone's Wi-Fi proxy to the server and port shown, install and trust the certificate from http://mitm.it, then open the Cloud Intelligence app and tap into each plug. The codes appear on the page. Press **Stop and clear** afterwards, turn the phone's proxy off and delete the certificate profile. The capture stops by itself after 30 minutes and keeps nothing on disk. Treat the codes like passwords.
 
 ## Robot vacuums and friendly names
 
