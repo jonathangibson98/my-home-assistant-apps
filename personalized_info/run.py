@@ -715,6 +715,10 @@ def covered_fields(d, p):
         for f in p:
             if rx.match(slug(f)) and f not in out:
                 out[f] = f"{pl.get('name') or key} ({what} place with a {how})"
+    if not PD.empty(p.get("nickname")):  # nickname_1, nickname_2... were joined into the nickname field
+        for f in p:
+            if re.fullmatch(r"nickname_\d+", f):
+                out[f] = "their nickname field"
     used, b = birthday_of(p)
     if used:
         for f in BIRTHDAY_KEYS:

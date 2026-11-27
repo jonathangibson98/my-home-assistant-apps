@@ -100,12 +100,8 @@
     return box;
   }
 
-  const baseHaLinks = haLinks;
-  haLinks = function (g, k, p) {
-    const box = baseHaLinks(g, k, p);
-    box.append(moreEntities(g, k, p));
-    return box;
-  };
+  // any other entities about a person: shown in their Notes section
+  extraLinks = function (g, k, p) { return moreEntities(g, k, p); };
 
   /* ---------- the house ---------- */
   let HOUSE = null, houseOpen = false;

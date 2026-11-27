@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.6.0
+
+Tidy-up of the person page.
+
+- **Birthday** is a real date picker, with a "I don't know the year" box that switches it to month and day. It reads whatever you had saved (`dob`, `May 6, 1998`, `05-06`, `5/6/1998`) and saves it back in a format the add-on understands. If a saved value can't be read it tells you.
+- **Home**: pick **Type an address** or **Link a Home Assistant zone**. A zone is linked through a home place (an existing place with that zone is reused, otherwise one is made for you), so "at home" works in their status.
+- **Home Assistant links moved into the sections**: person and location sensor in About, phone and phone notifications in Contact, at work, work hours and day off in Work, asleep in Routine, game console in Likes, calendar in Dates, and other entities in Notes. "Find their Home Assistant entities automatically" is in About. The separate Home Assistant card is gone.
+- **Your own fields** only lists fields with no spot in the sections, so nothing shows up twice. Each field is in its own box, the name has its own box at the top of the page, and `nickname_1`, `nickname_2` hide once the nickname is filled in (with a Remove button).
+- Removed **Relationships between people** from the bottom of the People tab. Each person's own Relationships card is still on their page.
+
 ## 1.5.0
 
 Link people to each other, with nobody as the "main" person.

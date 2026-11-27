@@ -21,6 +21,10 @@ Profile sections are saved in `/homeassistant/ai_memory/profiles.yaml`. Pictures
 
 Each person also gets **`sensor.person_profile_<name>`** (state: what they are doing now) with `profile`, `age`, `zodiac`, `days_until_birthday`, `upcoming_dates`, `dates_next_30_days`, `entity_picture`, `ai_summary` and more, and **`sensor.person_profiles` lists everyone. Add `sensor.person_profile_*` to your recorder excludes: they can be large.
 
+## Birthday, home and Home Assistant links
+
+Birthday is a date picker (tick "I don't know the year" for month and day only). Home is either a typed address or a linked Home Assistant zone; picking a zone links the person to a home place with that zone. Each Home Assistant entity link is in the section it belongs to (person and location in About, phone and notifications in Contact, at work and work hours in Work, asleep in Routine, game console in Likes, calendar in Dates). Your own fields lists only what has no section.
+
 ## Relationships
 
 Open **Relationships between people** on the People tab, pick two people, choose how they are linked (dating, friends, siblings, parent / child, owner / pet...) and press Add link. The same card is on each person's page. A link belongs to both people, so nobody is the main one and it shows on both pages. The first time the add-on starts it builds links from the `girlfriend`, `boyfriend`, `partner` and `friends` fields you already had, and saves them in `relationships.yaml`. The sensors get `relationships` and `relationship_links`.
