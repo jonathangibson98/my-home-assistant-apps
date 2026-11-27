@@ -9,6 +9,7 @@ Link people to each other, with nobody as the "main" person.
 - First run builds the links from what you already saved: `girlfriend` / `boyfriend` / `partner` (with "together since" as the date), `friends` lists, "Jon and MJ's dog", and "MJ's sister". They are saved in `relationships.yaml`.
 - Once a person's partner or friends are all linked, their old `girlfriend` / `friends` fields show as "covered by the Relationships card" with a button to remove them. Until then they stay as they were.
 - The Family section no longer has Partner and Friends fields (the card replaces them). Relatives and pets with details are still there.
+- **Picture picker** for people and places, like the one on the Location Hub card: a sheet with Upload, paste a link, Automatic, your Home Assistant people's pictures, and the images in your `www` folder. Tap one to use it.
 - `sensor.person_profile_<name>` has `relationships` (for example "Dating MJ since 2023-05-19") and `relationship_links`. The Ask tab and AI prompts see the links too.
 
 ## 1.4.0
