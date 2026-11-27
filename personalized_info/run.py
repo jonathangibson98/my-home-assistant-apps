@@ -1478,6 +1478,63 @@ async def post_zone_icon(r):
         return web.json_response({"ok": False, "error": f"Could not save it: {e}"}, status=500)
     return web.json_response({"ok": True, "name": name, "ui": photo_ui(name)})
 
+# ---------- custom icons from the config folder ----------
+CUSTOM_ICON_DIRS = {"icons": "/homeassistant/icons", "local_icons": "/homeassistant/local_icons"}  # /config/icons and /config/local_icons
+ICON_EXTS = (".svg", ".png", ".jpg", ".jpeg", ".webp", ".gif")
+
+def custom_icon_name(src):
+    """File name a custom icon gets when it is used as a picture: custom_<folder>_<name>.<ext>."""
+    folder, _, rel = src.partition("/")
+    stem, ext = os.path.splitext(rel)
+    return f"custom_{folder}_{slug(stem)}{ext.lower()}"
+
+def custom_icon_file(src):
+    """Real path of 'icons/foo.svg' or 'local_icons/foo.svg', only when it sits inside one of the two folders."""
+    folder, _, rel = str(src or "").partition("/")
+    base = CUSTOM_ICON_DIRS.get(folder)
+    if not base or not rel or not rel.lower().endswith(ICON_EXTS):
+        return None
+    full = os.path.realpath(os.path.join(base, rel))
+    if not full.startswith(os.path.realpath(base) + os.sep) or not os.path.isfile(full) or os.path.getsize(full) > 3 * 1024 * 1024:
+        return None
+    return full
+
+def list_custom_icons(limit=400):
+    out = []
+    for folder, base in CUSTOM_ICON_DIRS.items():
+        if not os.path.isdir(base):
+            continue
+        for root, dirs, files in os.walk(base):
+            depth = 0 if root == base else os.path.relpath(root, base).count(os.sep) + 1
+            dirs[:] = [x for x in dirs if not x.startswith(".") and depth < 2]
+            for f in sorted(files):
+                if f.lower().endswith(ICON_EXTS):
+                    src = folder + "/" + os.path.relpath(os.path.join(root, f), base).replace(os.sep, "/")
+                    if custom_icon_file(src):
+                        out.append({"src": src, "name": os.path.splitext(f)[0], "folder": folder, "name_saved": custom_icon_name(src),
+                                    "url": "api/custom_icon?f=" + urllib.parse.quote(src)})
+    return out[:limit]
+
+async def get_custom_icon(r):
+    path = custom_icon_file(r.query.get("f", ""))
+    if not path:
+        raise web.HTTPNotFound()
+    return web.FileResponse(path, headers={"Cache-Control": "max-age=300", "Content-Security-Policy": "sandbox"})
+
+async def post_custom_icon(r):
+    """Use one of the custom icons as a picture: copied to the pictures folder, so it works like any other picture."""
+    src = r.query.get("f", "")
+    path = custom_icon_file(src)
+    if not path:
+        return web.json_response({"ok": False, "error": "That icon was not found."}, status=400)
+    name = custom_icon_name(src)
+    try:
+        os.makedirs(PHOTO_DIR, exist_ok=True)
+        shutil.copyfile(path, os.path.join(PHOTO_DIR, name))
+    except OSError as e:
+        return web.json_response({"ok": False, "error": f"Could not save it: {e}"}, status=500)
+    return web.json_response({"ok": True, "name": name, "ui": photo_ui(name)})
+
 async def get_pictures(r):
     """What the picture picker offers: Home Assistant people with a picture, zone icons, and images in the www folder."""
     loop = asyncio.get_running_loop()
@@ -1489,7 +1546,8 @@ async def get_pictures(r):
                      for e, s in states.items() if e.startswith("person.") and (s.get("attributes") or {}).get("entity_picture")),
                     key=lambda x: x["name"].lower())
     images = await loop.run_in_executor(None, list_www_images)
-    return web.json_response({"people": people, "zones": zones, "images": images, "www_ok": os.path.isdir(WWW_DIR)})
+    custom = await loop.run_in_executor(None, list_custom_icons)
+    return web.json_response({"people": people, "zones": zones, "custom": custom, "images": images, "www_ok": os.path.isdir(WWW_DIR)})
 
 async def get_img(r):
     path = photo_file(r.match_info["name"])
@@ -2033,6 +2091,8 @@ app.router.add_post("/api/photo", post_photo)
 app.router.add_get("/img/{name}", get_img)
 app.router.add_get("/api/pictures", get_pictures)
 app.router.add_get("/api/icon", get_icon)
+app.router.add_get("/api/custom_icon", get_custom_icon)
+app.router.add_post("/api/custom_icon", post_custom_icon)
 app.router.add_post("/api/zone_icon", post_zone_icon)
 app.router.add_post("/api/profile_ai", post_profile_ai)
 app.router.add_get("/api/zone_suggest", get_zone_suggest)
