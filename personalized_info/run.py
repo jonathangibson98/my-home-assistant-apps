@@ -169,6 +169,9 @@ def save(d):
     if "profiles" in d:  # an older web page won't send profiles, so don't wipe the file
         write_yaml(PROFILES_FILE, clean_profiles(d["profiles"]),
                    "# Profile sections for each person (about, work, health, vehicles...). Safe to hand-edit.\n")
+    if "relationships" in d:  # an older web page won't send them, so don't wipe the file
+        write_yaml(RELS_FILE, clean_rels(d["relationships"], person_keys(d)),
+                   "# Who is linked to whom (dating, friends, family...). Each link belongs to both people. Safe to hand-edit.\n")
     if "places" in d:  # an older web page won't send places, so don't wipe the file
         write_yaml(PLACES_FILE, d["places"],
                    "# Places that people link to (home, work, hangouts). Safe to hand-edit.\n")
@@ -267,6 +270,16 @@ def load():
     except Exception as e:
         print("profiles.yaml unreadable:", e, flush=True)
         raw_profiles = {}
+    keys = person_keys(d)
+    if os.path.exists(RELS_FILE):
+        try:
+            d["relationships"] = clean_rels(yaml.safe_load(open(RELS_FILE)) or [], keys)
+        except Exception as e:
+            print("relationships.yaml unreadable:", e, flush=True)
+            d["relationships"] = []
+    else:  # first run: build the links from the partner and friends fields people already have
+        d["relationships"] = import_rels(d)
+        migrate = True
     moved = adopt_legacy(d, raw_profiles) or moved
     d["profiles"] = clean_profiles(raw_profiles)
     # music written inside a person (top_artists / music) moves to the music file
@@ -563,11 +576,136 @@ def linked_place(d, p, labels):
                 return key, pl
     return None, None
 
+RELS_FILE = f"{DIR}/relationships.yaml"  # who is dating, friends, family... with whom. Neutral: nobody is the "main" person
+# type -> (what it says from the first person's side, from the second's). Same words both ways means it has no direction.
+# Keep in sync with RELTYPES in index.html.
+REL_TYPES = {
+    "dating": ("Dating", "Dating"), "engaged": ("Engaged", "Engaged"), "married": ("Married", "Married"), "exes": ("Exes", "Exes"),
+    "best_friends": ("Best friends", "Best friends"), "friends": ("Friends", "Friends"), "roommates": ("Roommates", "Roommates"),
+    "coworkers": ("Coworkers", "Coworkers"), "neighbors": ("Neighbors", "Neighbors"), "siblings": ("Siblings", "Siblings"),
+    "cousins": ("Cousins", "Cousins"), "family": ("Family", "Family"),
+    "parent_child": ("Parent of", "Child of"), "owner_pet": ("Owner of", "Pet of"), "dislikes": ("Doesn't like", "Not liked by"),
+}
+PARTNER_TYPES = ("dating", "engaged", "married")
+FRIEND_TYPES = ("friends", "best_friends")
+PARTNER_FIELDS = ("girlfriend", "boyfriend", "partner", "spouse", "wife", "husband", "fiance", "fiancee")
+
+def clean_rels(raw, keys):
+    """The relationship list with only real people, known types, no self-links and no duplicates."""
+    out, seen = [], set()
+    for r in (raw if isinstance(raw, list) else []):
+        if not isinstance(r, dict):
+            continue
+        a, b, t = str(r.get("a") or ""), str(r.get("b") or ""), str(r.get("type") or "")
+        if a == b or a not in keys or b not in keys or t not in REL_TYPES:
+            continue
+        sig = (t,) + (tuple(sorted((a, b))) if REL_TYPES[t][0] == REL_TYPES[t][1] else (a, b))
+        if sig in seen:
+            continue
+        seen.add(sig)
+        since = str(r.get("since") or "").strip()[:10]
+        out.append({"a": a, "b": b, "type": t, "since": since if re.fullmatch(r"\d{4}-\d{2}-\d{2}", since) else "",
+                    "note": re.sub(r"\s+", " ", str(r.get("note") or "")).strip()[:200]})
+    return out
+
+def person_keys(d):
+    return {k for g in ("household", "friends") for k, p in (d.get(g) or {}).items() if isinstance(p, dict)}
+
+def person_name(d, k):
+    p = (d.get("household") or {}).get(k) or (d.get("friends") or {}).get(k) or {}
+    return str(p.get("name") or k)
+
+def rels_of(d, k):
+    """[(relationship, other person's key, wording from k's side)] for one person."""
+    out = []
+    for r in d.get("relationships") or []:
+        if k in (r["a"], r["b"]):
+            first = r["a"] == k
+            out.append((r, r["b"] if first else r["a"], REL_TYPES[r["type"]][0 if first else 1]))
+    return out
+
+def rel_texts(d, k):
+    return [f"{label} {person_name(d, o)}" + (f" since {r['since']}" if r["since"] else "") + (f" ({r['note']})" if r["note"] else "")
+            for r, o, label in rels_of(d, k)]
+
+def rel_detail(d, k):
+    return [{"with": person_name(d, o), "key": o, "type": r["type"], "label": label, "since": r["since"], "note": r["note"]}
+            for r, o, label in rels_of(d, k)]
+
+def rel_lines(d):
+    return [f"{person_name(d, r['a'])} - {REL_TYPES[r['type']][0]} - {person_name(d, r['b'])}"
+            + (f" since {r['since']}" if r["since"] else "") + (f" ({r['note']})" if r["note"] else "")
+            for r in d.get("relationships") or []]
+
+def _name_note(t):
+    m = re.match(r"^\s*([^(]+?)\s*(?:\((.*)\))?\s*$", str(t))
+    return (m.group(1).strip(), (m.group(2) or "").strip()) if m else (str(t).strip(), "")
+
+def _since(text):
+    m = re.search(r"since\s+([A-Za-z]+\.?\s+\d{1,2},?\s*\d{4}|\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{4})", str(text))
+    b = parse_birthday(m.group(1)) if m else None
+    return ("%04d-%02d-%02d" % (b[0], b[1], b[2]), m) if b and b[0] else ("", None)
+
+def import_rels(d):
+    """First run only: turn what is already saved (girlfriend, friends, 'Jon and MJ's dog', 'MJ's sister') into links."""
+    names = {}
+    for k in person_keys(d):
+        names[k.lower()] = k
+        names[person_name(d, k).lower()] = k
+    out = []
+    def add(a, b, t, since="", note=""):
+        if a and b and a != b:
+            out.append({"a": a, "b": b, "type": t, "since": since, "note": note})
+    for g in ("household", "friends"):
+        for k, p in d[g].items():
+            if not isinstance(p, dict):
+                continue
+            for f in PARTNER_FIELDS:
+                for item in flat(p.get(f)) if p.get(f) else []:
+                    nm, note = _name_note(item)
+                    since, m = _since(note)
+                    if m:
+                        note = re.sub(r"\s*,?\s*(together\s+)?" + re.escape(m.group(0)), "", note, flags=re.I).strip(" ,;")
+                    add(k, names.get(nm.lower()), {"wife": "married", "husband": "married", "fiance": "engaged", "fiancee": "engaged"}.get(f, "dating"), since, note)
+            for item in flat(p.get("friends")) if p.get("friends") else []:
+                nm, note = _name_note(item)
+                add(k, names.get(nm.lower()), "best_friends" if "best friend" in (nm + " " + note).lower() else "friends", "", note)
+            role = str(p.get("role") or p.get("relationship") or p.get("relation") or "")
+            if p.get("breed") or re.search(r"\b(dog|cat|pet)\b", role, re.I):
+                for nm, o in names.items():
+                    if o != k and re.search(r"\b" + re.escape(nm) + r"\b", role, re.I):
+                        add(o, k, "owner_pet")
+            m = re.match(r"^(.+?)[\u2019']s\s+(sister|brother)\b", role.strip(), re.I)
+            if m:
+                add(names.get(m.group(1).strip().lower()), k, "siblings")
+    return clean_rels(out, person_keys(d))
+
+def rel_covered(d, k, p):
+    """{field: why} for the old partner / friends fields once the Relationships card holds the same people."""
+    out = {}
+    rels = rels_of(d, k)
+    if any(r["type"] in PARTNER_TYPES for r, _, _ in rels):
+        for f in PARTNER_FIELDS:
+            if not PD.empty(p.get(f)):
+                out[f] = "the Relationships card"
+    if not PD.empty(p.get("friends")):
+        names = {}
+        for kk in person_keys(d):
+            names[kk.lower()] = kk
+            names[person_name(d, kk).lower()] = kk
+        linked = {o for r, o, _ in rels if r["type"] in FRIEND_TYPES}
+        if all(names.get(_name_note(i)[0].lower()) in linked for i in flat(p["friends"])):
+            out["friends"] = "the Relationships card"
+    return out
+
 def covered_fields(d, p):
     """{field: why it's covered} for one person."""
     if not isinstance(p, dict):
         return {}
     out = {}
+    pk = next((k for g in ("household", "friends") for k, q in (d.get(g) or {}).items() if q is p), None)
+    if pk:
+        out.update(rel_covered(d, pk, p))
     for rx, labels, what in ((HOME_FIELDS, r"home", "home"), (WORK_FIELDS, r"work|job|office", "work")):
         key, pl = linked_place(d, p, labels)
         if not pl:
@@ -771,6 +909,9 @@ def with_extras(d, group, states=None):
         m = person_music(d, k)
         if m:
             q["music"] = m
+        rt = rel_texts(d, k)
+        if rt:
+            q["relationships"] = rt
         fixpic(q)
         prof = (d.get("profiles") or {}).get(k) or {}
         sp = PD.sensor_profile(prof.get("data") or {}, prof.get("flags") or PD.clean_flags({}))
@@ -887,7 +1028,8 @@ def build_profiles(d, states):
                 "birthday_today": calc.get("birthday_today"),
                 "upcoming_dates": calc.get("upcoming_dates", []), "dates_next_30_days": calc.get("dates_next_30_days", []),
                 "profile": q.get("profile", {}), "profile_complete_percent": PD.completeness(prof.get("data") or {}, p),
-                "details": {f: v for f, v in q.items() if f not in ("now", "entities", "places", "music", "profile", "entity_picture", "name", "coming_up")},
+                "details": {f: v for f, v in q.items() if f not in ("now", "entities", "places", "music", "profile", "entity_picture", "name", "coming_up", "relationships")},
+                "relationships": q.get("relationships", []), "relationship_links": rel_detail(d, k),
                 "entities": q.get("entities", {}),
                 "places": q.get("places", {}),
                 "music": q.get("music", {}),
@@ -1111,6 +1253,8 @@ async def post_data(r):
     if not isinstance(d, dict) or not all(k in d for k in KEYS):
         return web.json_response({"ok": False}, status=400)
     XL.clean_all(d)
+    if "relationships" in d:
+        d["relationships"] = clean_rels(d["relationships"], person_keys(d))
     save(d)
     publish_all()
     return web.json_response({"ok": True})
@@ -1459,7 +1603,9 @@ def ai_job(b):
         q = str(b.get("question") or "").strip()[:1500]
         if not q:
             raise ValueError("Ask something first.")
-        ctx = people_text({**(d.get("household") or {}), **(d.get("friends") or {})})
+        d["relationships"] = clean_rels(d.get("relationships"), person_keys(d))
+        ctx = people_text({**(d.get("household") or {}), **(d.get("friends") or {})}) + (
+            "\n\nRELATIONSHIPS (each belongs to both people):\n" + "\n".join(rel_lines(d)) if d["relationships"] else "")
         return {"text": ai_ask("Here is what this household keeps about its people:\n\n" + ctx[:30000] +
                                "\n\nToday is " + datetime.date.today().isoformat() + ". Answer briefly and kindly, using only this info "
                                "(say so if it isn't there): " + q)}

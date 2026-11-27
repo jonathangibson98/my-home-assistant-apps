@@ -63,7 +63,7 @@ input[type=checkbox]{width:22px;height:22px}
 .hint{font-size:12px;color:var(--dim);margin-top:6px}
 .bday{background:var(--card);border-radius:10px;padding:10px 12px;margin-top:10px;font-size:14px}
 h1{font-size:20px;margin:0 0 4px}
-.people{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.rel{border:1px solid var(--line,rgba(255,255,255,.14));border-radius:14px;padding:10px;margin:8px 0}.rel .top{display:flex;gap:10px;align-items:center;margin-bottom:6px}.rel .top b{flex:1}.rel select,.rel input{margin:3px 0}.people{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
 .person{background:var(--card);border-radius:12px;padding:14px 10px;text-align:center;cursor:pointer;border:1px solid transparent;min-width:0}
 .person:hover,.person:focus-visible{border-color:var(--acc)}
 .person .note{margin:4px 0;min-height:1.2em;overflow-wrap:anywhere}
@@ -1144,6 +1144,7 @@ function people() {
       ng[slug(n)] = {name: n, notes: []}; PERSON = {g: 'notable', k: slug(n)}; touch(); draw();
     }})));
   }
+  f.append(card('relall', '💞 Relationships between people (' + (D.relationships || []).length + ')', relBody(null)));
   f.append(h('div', {className: 'row'}, h('button', {className: 'pri', textContent: 'Fill everyone from what is saved (no AI)', onclick: e => fillEveryone(e.target, 'rules')}),
     h('button', {textContent: '✨ Fill everyone\'s sections with AI', onclick: e => fillEveryone(e.target)})));
   return f;
@@ -1243,6 +1244,79 @@ function statsCard(k, p) {
   return box;
 }
 
+/* ---------- Relationships: a link belongs to both people, so nobody is the "main" person ---------- */
+// type -> [wording from the first person's side, from the second's]. Same words both ways = no direction. Keep in sync with REL_TYPES in run.py.
+const RELTYPES = {
+  dating: ['Dating', 'Dating'], engaged: ['Engaged', 'Engaged'], married: ['Married', 'Married'], exes: ['Exes', 'Exes'],
+  best_friends: ['Best friends', 'Best friends'], friends: ['Friends', 'Friends'], roommates: ['Roommates', 'Roommates'],
+  coworkers: ['Coworkers', 'Coworkers'], neighbors: ['Neighbors', 'Neighbors'], siblings: ['Siblings', 'Siblings'],
+  cousins: ['Cousins', 'Cousins'], family: ['Family', 'Family'],
+  parent_child: ['Parent of', 'Child of'], owner_pet: ['Owner of', 'Pet of'], dislikes: ["Doesn't like", 'Not liked by']
+};
+const personKeys = () => ['household', 'friends'].flatMap(g => Object.keys(D[g] || {}).filter(k => D[g][k] && typeof D[g][k] === 'object'));
+const personObj = k => (D.household || {})[k] || (D.friends || {})[k] || {};
+const personNm = k => personObj(k).name || k;
+const relsOf = k => (D.relationships || []).filter(r => r.a === k || r.b === k);
+// the choices for the type list, worded from `me`'s side. "parent_child:rev" means me is the second person.
+function relOptions() {
+  const o = [];
+  for (const [t, [x, y]] of Object.entries(RELTYPES)) { o.push([t, x]); if (x !== y) o.push([t + ':rev', y]); }
+  return o;
+}
+const relValue = (r, me) => r.a === me || RELTYPES[r.type][0] === RELTYPES[r.type][1] ? r.type : r.type + ':rev';
+function relSelect(value, onchange) {
+  const sel = h('select', {onchange: e => onchange(e.target.value)});
+  relOptions().forEach(([v, l]) => sel.append(h('option', {value: v, textContent: l, selected: v === value})));
+  return sel;
+}
+// make `me` the first person when the chosen wording is the "from the second side" one, or the second when it is the first
+function setType(r, me, val) {
+  const rev = val.endsWith(':rev'); r.type = val.replace(':rev', '');
+  if (RELTYPES[r.type][0] !== RELTYPES[r.type][1] && ((rev && r.a === me) || (!rev && r.b === me))) [r.a, r.b] = [r.b, r.a];
+}
+function relRow(r, me) {   // me = the person whose page this is; null in the everyone view (then the first person is "me")
+  const who = me || r.a, other = r.a === who ? r.b : r.a;
+  const since = h('input', {type: 'date', value: r.since || '', oninput: e => { r.since = e.target.value; touch(); }});
+  const note = h('input', {type: 'text', value: r.note || '', placeholder: 'Note (optional)', oninput: e => { r.note = e.target.value; touch(); }});
+  return h('div', {className: 'rel'},
+    h('div', {className: 'top'}, avatar(personPic(other, personObj(other)), personNm(other)),
+      h('b', {textContent: me ? personNm(other) : personNm(r.a) + ' & ' + personNm(r.b)}),
+      h('button', {className: 'del', textContent: 'Remove', onclick: () => { D.relationships.splice(D.relationships.indexOf(r), 1); touch(); draw(); }})),
+    relSelect(relValue(r, who), v => { setType(r, who, v); touch(); draw(); }),
+    h('label', {textContent: 'Since (optional)'}), since, note);
+}
+function relAdder(me) {
+  const keys = personKeys();
+  const pick = (id, skip, val) => { const s = h('select', {id}); s.append(h('option', {value: '', textContent: 'Choose a person…'}));
+    keys.filter(k => k !== skip).forEach(k => s.append(h('option', {value: k, textContent: personNm(k), selected: k === val}))); return s; };
+  const a = me ? null : pick('rel-a', ''), b = pick('rel-b', me || '');
+  let type = 'dating'; const tsel = relSelect(type, v => { type = v; });
+  const since = h('input', {type: 'date'}), note = h('input', {type: 'text', placeholder: 'Note (optional)'});
+  return h('div', {className: 'rel'},
+    h('label', {textContent: me ? 'Link ' + personNm(me) + ' with' : 'Link these two'}),
+    ...(a ? [a, h('label', {textContent: 'are / is'}), tsel, h('label', {textContent: 'with'}), b] : [tsel, b]),
+    h('label', {textContent: 'Since (optional)'}), since, note,
+    h('div', {className: 'add'}, h('button', {className: 'pri', textContent: '+ Add link', onclick: () => {
+      const x = me || a.value, y = b.value;
+      if (!x || !y || x === y) { status('Pick two different people.', 'bad'); return; }
+      const r = {a: x, b: y, type: type.replace(':rev', ''), since: since.value, note: note.value.trim()};
+      setType(r, x, type);
+      const sym = RELTYPES[r.type][0] === RELTYPES[r.type][1];
+      if ((D.relationships || []).some(o => o.type === r.type && ((o.a === r.a && o.b === r.b) || (sym && o.a === r.b && o.b === r.a)))) { status('They are already linked like that.', 'warn'); return; }
+      (D.relationships = D.relationships || []).push(r); touch(); draw();
+    }})));
+}
+function relBody(me) {
+  const list = me ? relsOf(me) : (D.relationships || []);
+  const box = h('div', {}, h('p', {className: 'note', textContent: me
+    ? 'Each link belongs to both people, so it shows on both pages. Add it from either one.'
+    : 'Link any two people. Each link belongs to both of them, so nobody is the main person.'}));
+  list.forEach(r => box.append(relRow(r, me)));
+  if (!list.length) box.append(h('div', {className: 'note', textContent: 'No links yet.'}));
+  box.append(relAdder(me));
+  return box;
+}
+
 function personPage() {
   const {g, k} = PERSON, p = (D[g] || {})[k];
   if (!p) { PERSON = null; return people(); }
@@ -1254,6 +1328,7 @@ function personPage() {
       h('div', {}, h('h1', {textContent: p.name || k}), h('div', {className: 'note', textContent: now || 'Nothing live yet. Link their Home Assistant entities below.'}),
         h('div', {className: 'meta', textContent: 'sensor.person_profile_' + k}))),
     photoRow('person', k, p), statsCard(k, p));
+  f.append(card('rel' + k, '💞 Relationships (' + relsOf(k).length + ')', relBody(k)));
   f.append(card('fill' + k, '✨ Fill the sections with AI', aiFillCard(g, k, p)));
   SCHEMA.forEach(sec => f.append(sectionCard(sec, k, p, prof)));
   f.append(card('more' + k, '✏️ Your own fields', h('div', {}, coveredNote(k, p),
@@ -1263,7 +1338,7 @@ function personPage() {
     card('ha' + k, '🔗 Home Assistant', haLinks(g, k, p)),
     h('div', {className: 'add'}, h('button', {className: 'del', textContent: 'Delete person', onclick: () => {
       if (confirm('Delete ' + (p.name || k) + ', their profile and their music?')) {
-        delete D[g][k]; delete D.music[k]; delete D.profiles[k]; PERSON = null; touch(); draw(); window.scrollTo(0, 0);
+        delete D[g][k]; delete D.music[k]; delete D.profiles[k]; D.relationships = (D.relationships || []).filter(r => r.a !== k && r.b !== k); PERSON = null; touch(); draw(); window.scrollTo(0, 0);
       }
     }})));
   return f;
@@ -1832,6 +1907,7 @@ window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); 
 fetch('api/data').then(r => r.json()).then(d => {
   D = d;
   for (const k of ['household', 'friends', 'music', 'places', 'other', 'profiles']) D[k] = D[k] || {};
+  if (!Array.isArray(D.relationships)) D.relationships = [];
   status('Loaded', 'ok');
   draw();
   loadSensors(); loadAiDefault(); loadShuffle();

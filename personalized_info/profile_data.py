@@ -99,10 +99,8 @@ SECTIONS = [
      "fields": [
          F("important", "Dates", "items", fields=[F("label", "What"), F("date", "Date", "date"), F("yearly", "Every year", "check")])]},
     {"key": "family", "title": "Family, friends & pets", "icon": "👨‍👩‍👧", "sensor": True, "ai": True,
-     "hint": "The people and pets in their life.",
+     "hint": "Relatives and pets with details. Who is dating or friends with whom is linked in the Relationships card.",
      "fields": [
-         F("partner", "Partner", "text", "girlfriend, boyfriend, wife, husband...", legacy=["girlfriend", "boyfriend", "partner", "spouse", "wife", "husband", "fiance", "fiancee"]),
-         F("friends", "Friends", "tags", legacy="friends"),
          F("people", "People and pets, with details", "items", fields=[
              F("name", "Name"), F("relation", "Relation (mom, dog, best friend...)"), F("birthday", "Birthday", "date"), F("notes", "Notes")])]},
     {"key": "subscriptions", "title": "Memberships & subscriptions", "icon": "🔁", "sensor": False, "ai": False,
