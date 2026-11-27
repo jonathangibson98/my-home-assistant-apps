@@ -63,6 +63,7 @@ input[type=checkbox]{width:22px;height:22px}
 .hint{font-size:12px;color:var(--dim);margin-top:6px}
 .bday{background:var(--card);border-radius:10px;padding:10px 12px;margin-top:10px;font-size:14px}
 h1{font-size:20px;margin:0 0 4px}
+.ownf{border:1px solid var(--line);border-radius:12px;padding:8px 10px;margin:8px 0}.ownf>.hd{margin-top:0}.ownf .grp{margin-top:6px}.bd2{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.bd2 select,.bd2 input{flex:1;min-width:90px;width:auto}.sub{font-size:12px;color:var(--dim);font-weight:700;margin:14px 0 2px;letter-spacing:.02em}
 .sheetbk{position:absolute;inset:0;background:rgba(0,0,0,.6)}
 #picov{position:fixed;inset:0;z-index:30;display:flex;align-items:flex-end;justify-content:center}
 #picov .sheet{position:relative;width:100%;max-width:560px;max-height:86vh;overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:18px 18px 0 0;padding:16px 14px calc(18px + env(safe-area-inset-bottom,0px))}
@@ -834,10 +835,11 @@ function adder(obj, reserved = {}) {
 }
 
 function fields(obj, skip = []) {
-  const wrap = h('div');
+  let wrap = h('div');
   for (const k of Object.keys(obj)) {
     if (skip.includes(k)) continue;
-    const v = obj[k];
+    const v = obj[k], row = h('div', {className: 'ownf'}), real = wrap;
+    wrap.append(row); wrap = row;   // everything for this field goes inside its own box
     wrap.append(h('div', {className: 'hd'},
       h('label', {textContent: pretty(k)}),
       h('button', {className: 'del', textContent: 'Remove', onclick: () => {
@@ -872,6 +874,7 @@ function fields(obj, skip = []) {
       wrap.append(inp);
     }
     if (HINTS[k]) wrap.append(h('div', {className: 'hint', textContent: HINTS[k]}));
+    wrap = real;
   }
   return wrap;
 }
@@ -1188,7 +1191,6 @@ function people() {
       ng[slug(n)] = {name: n, notes: []}; PERSON = {g: 'notable', k: slug(n)}; touch(); draw();
     }})));
   }
-  f.append(card('relall', '💞 Relationships between people (' + (D.relationships || []).length + ')', relBody(null)));
   f.append(h('div', {className: 'row'}, h('button', {className: 'pri', textContent: 'Fill everyone from what is saved (no AI)', onclick: e => fillEveryone(e.target, 'rules')}),
     h('button', {textContent: '✨ Fill everyone\'s sections with AI', onclick: e => fillEveryone(e.target)})));
   return f;
@@ -1243,6 +1245,91 @@ function widget(fd, get, set) {
   if (t === 'items') return itemsWidget(fd, get, set);
   return h('input', {type: {date: 'date', time: 'time', url: 'url'}[t] || 'text', value: v || '', oninput: e => set(e.target.value)});
 }
+/* ---------- Birthday: a date picker (or month and day when the year is unknown) ---------- */
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+function parseBd(v) {   // {y, m, d} (y 0 = no year) from any way it might be written, or null
+  const t = String(v || '').trim(); let m;
+  if ((m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return {y: +m[1], m: +m[2], d: +m[3]};
+  if ((m = t.match(/^(\d{1,2})-(\d{1,2})$/))) return {y: 0, m: +m[1], d: +m[2]};
+  if ((m = t.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/))) return {y: m[3] ? (m[3].length === 2 ? (+m[3] > 30 ? 1900 : 2000) + +m[3] : +m[3]) : 0, m: +m[1], d: +m[2]};
+  if ((m = t.match(/^([A-Za-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})?$/))) {
+    const i = MONTH_NAMES.findIndex(x => x.toLowerCase().slice(0, 3) === m[1].toLowerCase().slice(0, 3));
+    if (i >= 0) return {y: +(m[3] || 0), m: i + 1, d: +m[2]};
+  }
+  return null;
+}
+const pad2 = n => String(n).padStart(2, '0');
+const fmtBd = b => (b.y ? b.y + '-' : '') + pad2(b.m) + '-' + pad2(b.d);
+function birthdayWidget(fd, p) {
+  const box = h('div'), cur = ownGet(fd, p), first = parseBd(cur), now = () => parseBd(ownGet(fd, p));
+  const bad = cur && !first;
+  let noYear = first ? !first.y : false;
+  const save = b => { ownSet(fd, p, b ? fmtBd(b) : ''); touch(); };
+  const row = h('div', {className: 'bd2'});
+  const draw3 = () => {
+    row.replaceChildren();
+    const parsed = now();
+    if (!noYear) {
+      row.append(h('input', {type: 'date', value: parsed && parsed.y ? fmtBd(parsed) : '', max: '2100-12-31', onchange: e => {
+        const b = parseBd(e.target.value); save(b);
+      }}));
+    } else {
+      const mo = h('select', {}, ...MONTH_NAMES.map((n, i) => h('option', {value: i + 1, textContent: n})));
+      const da = h('select', {}, ...Array.from({length: 31}, (_, i) => h('option', {value: i + 1, textContent: i + 1})));
+      mo.value = parsed ? parsed.m : 1; da.value = parsed ? parsed.d : 1;
+      const upd = () => save({y: 0, m: +mo.value, d: +da.value});
+      mo.onchange = da.onchange = upd;
+      if (!parsed) { mo.value = ''; da.value = ''; }
+      row.append(mo, da);
+    }
+  };
+  draw3();
+  const ny = h('input', {type: 'checkbox', checked: noYear, onchange: e => { noYear = e.target.checked; const q = now(); if (q && noYear && q.y) save({...q, y: 0}); draw3(); }});
+  box.append(row, h('label', {className: 'pickrow'}, ny, "I don't know the year"));
+  if (bad) box.append(h('div', {className: 'hint', textContent: 'Saved as "' + cur + '", which the add-on cannot read as a date. Pick the date above to fix it.'}));
+  else box.append(h('div', {className: 'hint', textContent: 'Gives their age, zodiac sign and a countdown to the next birthday.'}));
+  return box;
+}
+
+/* ---------- Home: type an address, or link a zone ---------- */
+const HOMEMODE = {};
+function homeWidget(fd, k, p) {
+  const homeKey = p.places && p.places.home, place = homeKey && D.places[homeKey];
+  const mode = HOMEMODE[k] || (place && place.zone ? 'zone' : 'address');
+  const box = h('div');
+  const pick = h('select', {onchange: e => {
+    HOMEMODE[k] = e.target.value;
+    if (e.target.value === 'address' && place && place.zone && p.places) { delete p.places.home; if (!Object.keys(p.places).length) delete p.places; touch(); }
+    draw();
+  }}, h('option', {value: 'address', textContent: 'Type an address'}), h('option', {value: 'zone', textContent: 'Link a Home Assistant zone'}));
+  pick.value = mode;
+  box.append(pick);
+  if (mode === 'address') {
+    box.append(h('input', {type: 'text', value: ownGet(fd, p), placeholder: 'Street address, or just the town', oninput: e => { ownSet(fd, p, e.target.value.trim()); touch(); }}));
+    if (place && place.address) box.append(h('div', {className: 'hint', textContent: 'Their linked home place (' + (place.name || homeKey) + ') has the address ' + place.address + '. Edit it in the Places tab.'}));
+  } else {
+    const zs = ENTS.filter(e => e.id.startsWith('zone.'));
+    const sel = h('select', {onchange: e => {
+      const zid = e.target.value;
+      if (!zid) return;
+      let key = Object.keys(D.places).find(x => D.places[x] && D.places[x].zone === zid);
+      if (!key) {
+        const nm = (zs.find(z => z.id === zid) || {}).name || zid;
+        let base = slug(nm) || 'home', i = 2; key = base;
+        while (D.places[key]) key = base + '_' + i++;
+        D.places[key] = Object.assign(TEMPLATES.residence(), {name: nm, zone: zid});
+      }
+      if (!p.places || typeof p.places !== 'object') p.places = {};
+      p.places.home = key; touch(); draw();
+    }}, h('option', {value: '', textContent: zs.length ? 'Choose a zone…' : 'No zones loaded yet'}),
+      ...zs.map(z => h('option', {value: z.id, textContent: z.name + ' (' + z.id + ')'})));
+    sel.value = place && place.zone ? place.zone : '';
+    box.append(sel);
+    if (place && place.zone) box.append(h('div', {className: 'hint', textContent: 'Linked through the place "' + (place.name || homeKey) + '"' + (place.address ? ' (' + place.address + ')' : '') + '. When they are in this zone their status says they are home.'}));
+  }
+  return box;
+}
+
 function sectionCard(sec, k, p, prof) {
   const data = prof.data[sec.key] = prof.data[sec.key] || {};
   const flags = prof.flags[sec.key] = prof.flags[sec.key] || {sensor: sec.sensor, ai: sec.ai};
@@ -1253,9 +1340,17 @@ function sectionCard(sec, k, p, prof) {
     h('label', {className: 'pickrow'}, h('input', {type: 'checkbox', checked: !!flags.sensor, onchange: e => { flags.sensor = e.target.checked; touch(); }}),
       'Show on the sensors (and so to your AI tasks)'));
   if (sec.fields.some(fd => fd.legacy)) body.append(h('div', {className: 'hint', textContent: 'Fields marked ↔ are your own fields. They are saved under the names you already use, so nothing that read them before changes.'}));
-  sec.fields.forEach(fd => body.append(h('label', {textContent: fd.label + (fd.legacy ? ' ↔' : '') + (fd.hint ? ' (' + fd.hint + ')' : '')}),
-    widget(fd, () => get(fd), v => set(fd, v))));
-  return card('s' + k + sec.key, h('span', {}, sec.icon + ' ' + sec.title, n ? h('span', {className: 'now', textContent: '  ' + n + ' set'}) : null), body);
+  sec.fields.forEach(fd => {
+    if (fd.key === 'birthday') { body.append(h('label', {textContent: 'Birthday ↔'}), birthdayWidget(fd, p)); return; }
+    if (fd.key === 'lives_in') { body.append(h('label', {textContent: 'Home ↔'}), homeWidget(fd, k, p)); return; }
+    body.append(h('label', {textContent: fd.label + (fd.legacy ? ' ↔' : '') + (fd.hint ? ' (' + fd.hint + ')' : '')}),
+      widget(fd, () => get(fd), v => set(fd, v)));
+  });
+  body.append(...roleInputs(p, sec.key));
+  if (sec.key === 'about') body.append(findLinks(k, p));
+  if (sec.key === 'notes' && PERSON) { const more = extraLinks(PERSON.g, k, p); if (more) body.append(h('div', {className: 'sub', textContent: 'OTHER HOME ASSISTANT ENTITIES'}), more); }
+  const total = n + linkCount(p, sec.key);
+  return card('s' + k + sec.key, h('span', {}, sec.icon + ' ' + sec.title, total ? h('span', {className: 'now', textContent: '  ' + total + ' set'}) : null), body);
 }
 
 function statsCard(k, p) {
@@ -1371,15 +1466,20 @@ function personPage() {
     h('div', {className: 'phead'}, avatar(personPic(k, p), p.name || k, 'big'),
       h('div', {}, h('h1', {textContent: p.name || k}), h('div', {className: 'note', textContent: now || 'Nothing live yet. Link their Home Assistant entities below.'}),
         h('div', {className: 'meta', textContent: 'sensor.person_profile_' + k}))),
-    photoRow('person', k, p), statsCard(k, p));
+    photoRow('person', k, p),
+    h('label', {textContent: 'Name'}), h('input', {type: 'text', value: p.name || '', oninput: e => { p.name = e.target.value; touch(); }}),
+    statsCard(k, p));
   f.append(card('rel' + k, '💞 Relationships (' + relsOf(k).length + ')', relBody(k)));
   f.append(card('fill' + k, '✨ Fill the sections with AI', aiFillCard(g, k, p)));
   SCHEMA.forEach(sec => f.append(sectionCard(sec, k, p, prof)));
-  f.append(card('more' + k, '✏️ Your own fields', h('div', {}, coveredNote(k, p),
-      fields(p, [...Object.keys(RESERVED), ...Object.keys(covered(k, p))]), quickAdd(p), adder(p, RESERVED))),
+  const hidden = [...Object.keys(RESERVED), ...Object.keys(covered(k, p)), ...boundKeys(), 'name'];
+  const extra = Object.keys(p).filter(x => !hidden.includes(x)).length;
+  f.append(card('more' + k, '✏️ Your own fields' + (extra ? ' (' + extra + ')' : ''), h('div', {},
+      h('p', {className: 'note', textContent: 'Anything that has no spot in the sections above. Fields that do (birthday, job, hobbies, car, friends...) are edited in their section, so they are not listed here.'}),
+      coveredNote(k, p), fields(p, hidden),
+      extra ? null : h('div', {className: 'note', textContent: 'No extra fields yet.'}), quickAdd(p), adder(p, RESERVED))),
     card('ai' + k, '✨ AI help', aiBox(g, k, p)),
     card('pl' + k, '📍 Places', placeLinks(p)),
-    card('ha' + k, '🔗 Home Assistant', haLinks(g, k, p)),
     h('div', {className: 'add'}, h('button', {className: 'del', textContent: 'Delete person', onclick: () => {
       if (confirm('Delete ' + (p.name || k) + ', their profile and their music?')) {
         delete D[g][k]; delete D.music[k]; delete D.profiles[k]; D.relationships = (D.relationships || []).filter(r => r.a !== k && r.b !== k); PERSON = null; touch(); draw(); window.scrollTo(0, 0);
@@ -1410,8 +1510,10 @@ function coveredNote(k, p) {
 }
 
 /* ---------- quick-add fields ---------- */
+const boundKeys = () => [...new Set(SCHEMA.flatMap(sc => sc.fields.flatMap(fd => fd.legacy ? legacyKeys(fd) : [])))];
 function quickAdd(p) {
-  const missing = Object.keys(QUICK).filter(k => !(k in p) && !(k === 'birthday' && BIRTHDAY_KEYS.some(b => b in p)));
+  const bound = boundKeys();
+  const missing = Object.keys(QUICK).filter(k => !(k in p) && !bound.includes(k) && !(k === 'birthday' && BIRTHDAY_KEYS.some(b => b in p)));
   if (!missing.length) return null;
   return h('div', {}, h('label', {textContent: 'Quick add'}),
     h('div', {className: 'chips'}, missing.map(k => h('button', {textContent: '+ ' + QUICK[k][0], onclick: () => {
@@ -1420,12 +1522,18 @@ function quickAdd(p) {
 }
 
 /* ---------- Home Assistant links ---------- */
-function haLinks(g, k, p) {
-  const box = h('div', {className: 'ha'});
-  box.append(h('label', {textContent: 'Home Assistant'}),
-    h('div', {className: 'hint', textContent: 'Link their entities so the info sensor says what they are doing right now: where they are, asleep (Sleep Tracker), at work (Work Hours), gaming (PS5 Status), their calendar. Pick from the list or type an entity id.'}));
-  const links = (p.links && typeof p.links === 'object') ? p.links : {};
-  for (const [role, label] of Object.entries(ROLES)) {
+// each Home Assistant link lives in the section it belongs to
+let extraLinks = () => null;   // extra_links.js fills this in: any other entities about the person
+const SECTION_ROLES = {about: ['person', 'location'], contact: ['phone', 'notify'], work: ['at_work', 'work_hours', 'day_off'],
+  routine: ['asleep'], likes: ['gaming'], dates: ['calendar']};
+const rolesFor = sec => Object.keys(ROLES).filter(r => (Object.keys(SECTION_ROLES).find(s => SECTION_ROLES[s].includes(r)) || 'notes') === sec);
+const linkCount = (p, sec) => rolesFor(sec).filter(r => p.links && p.links[r]).length;
+function roleInputs(p, sec) {
+  const roles = rolesFor(sec);
+  if (!roles.length) return [];
+  const out = [h('div', {className: 'sub', textContent: 'HOME ASSISTANT'})];
+  for (const role of roles) {
+    const links = (p.links && typeof p.links === 'object') ? p.links : {};
     const inp = h('input', {type: 'text', value: links[role] || '', placeholder: role === 'notify' ? 'notify.mobile_app_...' : 'entity id',
       oninput: e => {
         const v = e.target.value.trim();
@@ -1435,20 +1543,23 @@ function haLinks(g, k, p) {
         touch();
       }});
     inp.setAttribute('list', 'ents');
-    box.append(h('div', {className: 'rl'}, h('label', {textContent: label}), inp));
+    out.push(h('label', {textContent: ROLES[role]}), inp);
   }
+  return out;
+}
+function findLinks(k, p) {   // "find all their entities automatically", shown once in About
   const msg = h('div', {className: 'meta'});
-  box.append(h('div', {className: 'add'}, h('button', {textContent: 'Find automatically', onclick: async () => {
+  const box = h('div', {}, h('div', {className: 'add'}, h('button', {textContent: 'Find their Home Assistant entities automatically', onclick: async () => {
     if (dirty) { msg.textContent = 'Save first, then find.'; return; }
     msg.textContent = 'Looking...';
     try {
       const r = await (await fetch('api/suggest?person=' + encodeURIComponent(k))).json();
       if (!r.ok) { msg.textContent = r.error; return; }
       const n = Object.keys(r.new).length;
-      if (!n) { msg.textContent = Object.keys(r.found).length ? 'Everything found is already linked.' : 'Nothing found. Link them by hand.'; return; }
+      if (!n) { msg.textContent = Object.keys(r.found).length ? 'Everything found is already linked.' : 'Nothing found. Link them by hand in each section.'; return; }
       p.links = Object.assign({}, p.links || {}, r.new);
       touch(); draw();
-      status('Found ' + n + ' entit' + (n === 1 ? 'y' : 'ies') + '. Check them, then Save.', 'warn');
+      status('Found ' + n + ' entit' + (n === 1 ? 'y' : 'ies') + '. They are filled in under their sections. Check them, then Save.', 'warn');
     } catch (e) { msg.textContent = 'That failed. Check the app log.'; }
   }})), msg);
   const now = LIVE.status[k];
