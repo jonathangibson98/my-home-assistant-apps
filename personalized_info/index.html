@@ -1122,6 +1122,16 @@ async function openPicSheet(kind, key, obj) {
     } catch (e) { fail('Could not use that icon.'); }
   }}, h('div', {className: 'avatar'}, h('img', {src: z.url, alt: '', loading: 'lazy', onerror: e => e.target.remove()})),
     h('small', {textContent: z.name}));
+  // icons saved in /config/icons and /config/local_icons, copied in as pictures
+  const iconTile = c => h('button', {className: 'po' + (cur === c.name_saved ? ' on' : ''), title: c.src, onclick: async () => {
+    msg.replaceChildren(h('div', {className: 'note', textContent: 'Getting the icon…'}));
+    try {
+      const r = await (await fetch('api/custom_icon?f=' + encodeURIComponent(c.src), {method: 'POST'})).json();
+      if (!r.ok) { fail(r.error || 'Could not use that icon.'); return; }
+      choose(r.name, r.ui);
+    } catch (e) { fail('Could not use that icon.'); }
+  }}, h('div', {className: 'avatar'}, h('img', {src: c.url, alt: '', loading: 'lazy', style: 'object-fit:contain;background:#e2e8f0;padding:6px;box-sizing:border-box', onerror: e => e.target.remove()})),
+    h('small', {textContent: c.name}));
   const ov = h('div', {id: 'picov'}, h('div', {className: 'sheetbk', onclick: closePicSheet}),
     h('div', {className: 'sheet'},
       h('h3', {textContent: 'Picture for ' + name}), h('div', {className: 'note', textContent: 'Tap one to use it. You can change it any time.'}), msg,
@@ -1133,7 +1143,7 @@ async function openPicSheet(kind, key, obj) {
       }})),
       grids, h('div', {className: 'add'}, h('button', {textContent: 'Close', onclick: closePicSheet}))));
   document.body.append(ov);
-  let data = {people: [], zones: [], images: [], www_ok: true};
+  let data = {people: [], zones: [], custom: [], images: [], www_ok: true};
   try { data = await (await fetch('api/pictures')).json(); } catch (e) { fail('Could not load your pictures.'); }
   if (!document.getElementById('picov')) return;
   const live = kind === 'person' ? ((LIVE.people || {})[key] || {}).picture : '';
@@ -1146,6 +1156,9 @@ async function openPicSheet(kind, key, obj) {
     ...(zones.length ? [h('div', {className: 'psec', textContent: 'ZONE ICONS'}),
       h('div', {className: 'note', textContent: 'The icon you set on the zone in Home Assistant.' + (kind === 'place' && mine ? ' This place\'s zone is first.' : '')}),
       h('div', {className: 'pgrid'}, ...zones.map(zoneTile))] : []),
+    ...((data.custom || []).length ? [h('div', {className: 'psec', textContent: 'CUSTOM ICONS'}),
+      h('div', {className: 'note', textContent: 'Icons you saved in /config/icons and /config/local_icons.'}),
+      h('div', {className: 'pgrid'}, ...data.custom.map(iconTile))] : []),
     h('div', {className: 'psec', textContent: 'YOUR IMAGES'}),
     data.images.length ? h('div', {className: 'pgrid'}, ...data.images.map(i => tile(i.value, i.name.split('/').pop(), i.url)))
       : h('div', {className: 'note', textContent: data.www_ok ? 'No pictures in your www folder yet. Upload one above.' : 'The add-on cannot see your Home Assistant config folder yet. Update and restart the add-on.'}));
