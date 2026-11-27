@@ -21,6 +21,10 @@ Profile sections are saved in `/homeassistant/ai_memory/profiles.yaml`. Pictures
 
 Each person also gets **`sensor.person_profile_<name>`** (state: what they are doing now) with `profile`, `age`, `zodiac`, `days_until_birthday`, `upcoming_dates`, `dates_next_30_days`, `entity_picture`, `ai_summary` and more, and **`sensor.person_profiles` lists everyone. Add `sensor.person_profile_*` to your recorder excludes: they can be large.
 
+## Relationships
+
+Open **Relationships between people** on the People tab, pick two people, choose how they are linked (dating, friends, siblings, parent / child, owner / pet...) and press Add link. The same card is on each person's page. A link belongs to both people, so nobody is the main one and it shows on both pages. The first time the add-on starts it builds links from the `girlfriend`, `boyfriend`, `partner` and `friends` fields you already had, and saves them in `relationships.yaml`. The sensors get `relationships` and `relationship_links`.
+
 ## Fill the sections without the AI
 
 Every person has a **Fill from what is saved (no AI)** button, and the People tab has one for everyone. It uses only what is already saved: name, work and home place addresses, "together since" dates and favorite artists. It never overwrites anything. New people are also filled this way automatically, once, and a field you clear stays cleared. If the AI button errors (busy, out of credit), the no-AI parts are still filled and the error is shown.

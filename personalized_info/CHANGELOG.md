@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.0
+
+Link people to each other, with nobody as the "main" person.
+
+- New **Relationships** card on every person, and **Relationships between people** on the People tab. Pick any two people and how they are linked: dating, engaged, married, exes, best friends, friends, roommates, coworkers, neighbors, siblings, cousins, family, parent / child, owner / pet, or doesn't like. Add a date they started and a note.
+- A link belongs to both people, so it shows on both pages and you can add or remove it from either one. Directional ones (parent / child, owner / pet) read correctly from each side.
+- First run builds the links from what you already saved: `girlfriend` / `boyfriend` / `partner` (with "together since" as the date), `friends` lists, "Jon and MJ's dog", and "MJ's sister". They are saved in `relationships.yaml`.
+- Once a person's partner or friends are all linked, their old `girlfriend` / `friends` fields show as "covered by the Relationships card" with a button to remove them. Until then they stay as they were.
+- The Family section no longer has Partner and Friends fields (the card replaces them). Relatives and pets with details are still there.
+- `sensor.person_profile_<name>` has `relationships` (for example "Dating MJ since 2023-05-19") and `relationship_links`. The Ask tab and AI prompts see the links too.
+
 ## 1.4.0
 
 Fills your profile sections from what you already saved, with no AI needed.
