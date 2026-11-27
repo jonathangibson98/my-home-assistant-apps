@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Tuya Local</title>
+<title>Local Devices</title>
 <style>
 :root{
   --bg:#0f172a; --card:#1e293b; --field:#0b1222; --line:#334155;
@@ -711,6 +711,7 @@ window.__hbAddon = "tuya_local";
   <button data-t="devices" onclick="go('devices')">Devices</button>
   <button data-t="find" onclick="go('find')">Find</button>
   <button data-t="account" onclick="go('account')">Account</button>
+  <button data-t="ci" onclick="go('ci')">Cloud Intelligence</button>
 </nav>
 <main id="main"></main>
 <script>
@@ -741,7 +742,7 @@ async function load() {
   if (!j.devices) return;
   S = j;
   const busy = document.querySelector('#main details[open]') || /INPUT|SELECT|TEXTAREA/.test((document.activeElement || {}).tagName || '');
-  if (tab === 'devices' && busy) patch(); else if (!(tab === 'account' && $('#user_code') && document.activeElement === $('#user_code'))) draw();
+  if (tab === 'devices' && busy) patch(); else if (tab !== 'ci' && !(tab === 'account' && $('#user_code') && document.activeElement === $('#user_code'))) draw();
 }
 
 // ---------- devices ----------
@@ -955,9 +956,56 @@ function accountView() {
   return v;
 }
 
+
+// ---------- Cloud Intelligence codes ----------
+let ciTimer = null;
+function ciView() {
+  const v = h('div'), live = h('div');
+  const step = (n, t) => h('li', {textContent: t});
+  const copyBtn = (text) => h('button', {className: 'sm', textContent: 'Copy', onclick: async (ev) => {
+    try { await navigator.clipboard.writeText(text); ev.target.textContent = 'Copied'; } catch (e) { ev.target.textContent = 'Press and hold the code to copy'; }
+    setTimeout(() => ev.target.textContent = 'Copy', 1500); }});
+  async function refresh() {
+    const j = await api('ci');
+    if (tab !== 'ci') return;
+    const kids = [];
+    if (!j.available) kids.push(h('p', {className: 'meta bad', textContent: 'The capture tool is not in this add-on build. Update the add-on and try again.'}));
+    else if (!j.running) kids.push(h('div', {className: 'row'}, h('button', {className: 'pri', textContent: 'Start capture', onclick: async () => {
+      const r = await api('ci/start', {}); if (r.error) alert(r.error); refresh(); }})));
+    else {
+      kids.push(h('div', {className: 'card'}, h('div', {className: 'hd'}, h('b', {textContent: 'Capture is running'}), h('span', {className: 'chip online', textContent: j.minutes_left + ' min left'})),
+        h('p', {className: 'note', textContent: 'On your phone, set the Wi-Fi proxy to Manual, Server ' + j.ip + ', Port ' + j.port + '.'}),
+        h('div', {className: 'row'}, h('button', {textContent: 'Stop and clear', onclick: async () => { await api('ci/stop', {}); refresh(); }}))));
+    }
+    if (j.keys.length) {
+      kids.push(h('h2', {textContent: 'Codes found (' + j.keys.length + ')'}));
+      for (const k of j.keys) {
+        const row = (label, val) => h('div', {className: 'row'}, h('span', {className: 'meta', textContent: label}), h('code', {textContent: val || '(not in this response)', style: 'word-break:break-all;user-select:all'}), val ? copyBtn(val) : null);
+        kids.push(h('div', {className: 'card'}, h('b', {textContent: k.deviceName || 'Plug'}),
+          row('Device name', k.deviceName), row('Access key', k.accessKey), row('Access token', k.accessToken), row('Product key', k.productKey)));
+      }
+      kids.push(h('p', {className: 'note', textContent: 'Paste each plug\'s four codes into Settings → Devices & Services → Add Integration → Cloud Intelligence Plugs. Press Stop and clear when you are done: that also forgets these codes here.'}));
+    } else if (j.running) kids.push(h('p', {className: 'meta', textContent: 'Waiting. Open Cloud Intelligence on your phone and tap into each plug. Its codes show up here.'}));
+    live.replaceChildren(...kids);
+  }
+  v.append(h('h2', {textContent: 'Cloud Intelligence plug codes'}),
+    h('div', {className: 'card'}, h('p', {className: 'note', textContent: 'Plugs that use the Cloud Intelligence app need four codes before Home Assistant can control them with the Cloud Intelligence Plugs integration. The app downloads them when it opens. This page starts a short-lived capture that reads them from your phone\'s own traffic.'}),
+      h('ol', {}, step(1, 'Tap Start capture below.'),
+        step(2, 'iPhone: Settings → Wi-Fi → your network → Configure Proxy → Manual. Enter the server and port shown after you start.'),
+        step(3, 'In Safari open http://mitm.it and install the certificate. Then Settings → General → VPN & Device Management → install it, and Settings → General → About → Certificate Trust Settings → turn it on.'),
+        step(4, 'Open the Cloud Intelligence app and tap into each plug. Its codes appear here.'),
+        step(5, 'Press Stop and clear, turn the Wi-Fi proxy back to Off, and delete the certificate profile from your phone.')),
+      h('p', {className: 'meta', textContent: 'Treat the codes like passwords. The capture stops by itself after 30 minutes and nothing is saved permanently.'}),
+      h('p', {className: 'meta'}, 'Integration: ', h('a', {href: 'https://github.com/jonathangibson98/ha-cloud-intelligence-plugs', target: '_blank', rel: 'noopener', textContent: 'jonathangibson98/ha-cloud-intelligence-plugs'}))),
+    live);
+  refresh(); clearInterval(ciTimer); ciTimer = setInterval(refresh, 3000);
+  return v;
+}
+
 function draw(force) {
   if (tab !== 'account') clearInterval(qrTimer);
-  const view = tab === 'devices' ? devicesView() : tab === 'find' ? findView() : accountView();
+  if (tab !== 'ci') clearInterval(ciTimer);
+  const view = tab === 'devices' ? devicesView() : tab === 'find' ? findView() : tab === 'ci' ? ciView() : accountView();
   $('#main').replaceChildren(view);
   document.querySelectorAll('nav button').forEach(b => b.className = b.dataset.t === tab ? 'on' : '');
 }

@@ -1,4 +1,4 @@
-"""Tuya Local: finds your Tuya devices on the network, talks to them directly (no cloud needed to control them) and
+"""Local Devices: finds your Tuya devices on the network, talks to them directly (no cloud needed to control them) and
 publishes them to Home Assistant through MQTT discovery. The Tuya account is only used once, to get each device's
 local key."""
 import asyncio
@@ -7,7 +7,9 @@ import json
 import os
 import queue
 import re
+import shutil
 import socket
+import subprocess
 import threading
 import time
 import urllib.request
@@ -567,6 +569,86 @@ async def index(r):
                         content_type="text/html", headers={"Cache-Control": "no-store"})
 
 
+
+# ---------- Cloud Intelligence key capture (a proxy you start on purpose) ----------
+CI_FILE = os.environ.get("CI_KEYS_FILE", "/tmp/ci_keys.json")
+CI_PORT = 8080
+CI_MINUTES = 30
+ci = {"proc": None, "until": 0.0}
+
+
+def ci_running():
+    p = ci["proc"]
+    if p and p.poll() is None:
+        if time.time() > ci["until"]:
+            ci_stop()
+            return False
+        return True
+    return False
+
+
+def ci_stop():
+    p = ci["proc"]
+    ci["proc"] = None
+    if p and p.poll() is None:
+        p.terminate()
+        try:
+            p.wait(5)
+        except subprocess.TimeoutExpired:
+            p.kill()
+
+
+def lan_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("192.0.2.1", 9))  # no packet is sent; this only picks the interface
+        return s.getsockname()[0]
+    except OSError:
+        return ""
+    finally:
+        s.close()
+
+
+def ci_keys():
+    try:
+        with open(CI_FILE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return []
+
+
+async def get_ci(r):
+    run = ci_running()
+    return web.json_response({"running": run, "ip": lan_ip(), "port": CI_PORT, "minutes_left": max(0, int((ci["until"] - time.time()) / 60)) if run else 0,
+                              "available": bool(shutil.which("mitmdump")), "keys": ci_keys()})
+
+
+async def post_ci_start(r):
+    exe = shutil.which("mitmdump")
+    if not exe:
+        return web.json_response({"ok": False, "error": "The capture tool (mitmproxy) is not installed in this add-on build."}, status=500)
+    if not ci_running():
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ci_capture.py")
+        env = dict(os.environ, CI_KEYS_FILE=CI_FILE)
+        ci["proc"] = subprocess.Popen([exe, "-q", "--listen-port", str(CI_PORT), "--set", "confdir=/tmp/mitm", "-s", script], env=env,
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    ci["until"] = time.time() + CI_MINUTES * 60
+    time.sleep(1)
+    if ci["proc"].poll() is not None:
+        ci["proc"] = None
+        return web.json_response({"ok": False, "error": "The capture proxy would not start. Is port %d already in use?" % CI_PORT}, status=500)
+    return web.json_response({"ok": True})
+
+
+async def post_ci_stop(r):
+    ci_stop()
+    try:
+        os.remove(CI_FILE)  # keys do not stay on disk once you are done
+    except OSError:
+        pass
+    return web.json_response({"ok": True})
+
+
 async def get_state(r):
     a = store.d.get("auth")
     devs = sorted((device_view(d) for d in store.d["devices"].values()), key=lambda x: x["name"].lower())
@@ -895,6 +977,9 @@ async def start_bg(app):
 app = web.Application(middlewares=[only_local], client_max_size=2 * 1024 * 1024)
 app.router.add_get("/", index)
 app.router.add_get("/api/state", get_state)
+app.router.add_get("/api/ci", get_ci)
+app.router.add_post("/api/ci/start", post_ci_start)
+app.router.add_post("/api/ci/stop", post_ci_stop)
 app.router.add_post("/api/scan", post_scan)
 app.router.add_post("/api/device", post_device)
 app.router.add_get("/api/device", get_device)

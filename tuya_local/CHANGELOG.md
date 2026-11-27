@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.0
+
+- **Renamed to Local Devices** (sidebar, page title and the Home Assistant device). The add-on keeps its internal ID, so nothing needs reinstalling and your settings stay. The device in Settings → Devices is renamed on its own.
+- **Cloud Intelligence tab**: a short-lived capture (starts only when you tap it, stops after 30 minutes) that shows the device name, access key, access token and product key for your Cloud Intelligence plugs, with copy buttons, ready to paste into the [Cloud Intelligence Plugs](https://github.com/jonathangibson98/ha-cloud-intelligence-plugs) integration. Stop and clear forgets the codes.
+
 ## 1.2.0
 
 - **Robot vacuums**: a device page now has a **Robot vacuum setup** panel. It guesses which data points are the status, start/pause, mode and battery, you check the numbers, and it creates one proper Home Assistant vacuum (start, pause, stop, return to dock, battery, status, optional fan speed and find-my-robot). Cloud sync sets this up on its own for vacuums it recognises.
