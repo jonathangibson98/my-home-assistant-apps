@@ -103,6 +103,18 @@ def build_entities(dps, category=""):
             used.add(mode["code"])
         out.append(ent)
 
+    if "power_go" in by_code or (category == "sd" and "status" in by_code):
+        cfg = {"status": (by_code.get("status") or {}).get("dp") or by_code["power_go"]["dp"]}
+        for key, code in (("go", "power_go"), ("power", "power"), ("battery", "electricity_left"), ("locate", "seek")):
+            if code in by_code:
+                cfg[key] = by_code[code]["dp"]
+        if "mode" in by_code:
+            cfg["mode"], cfg["mode_options"] = by_code["mode"]["dp"], [str(x) for x in by_code["mode"]["desc"].get("range") or []]
+        if "suction" in by_code:
+            cfg["fan"], cfg["fan_options"] = by_code["suction"]["dp"], [str(x) for x in by_code["suction"]["desc"].get("range") or []]
+        out.append(vacuum_spec(cfg))
+        used.update({"power", "power_go", "seek", "direction_control", "suction"})
+
     for d in dps:
         code = d.get("code") or f"dp_{d['dp']}"
         if code in used:
@@ -147,6 +159,10 @@ def merge_entities(old, new):
             e["enabled"] = o.get("enabled", e["enabled"])
             if o.get("name"):
                 e["name"] = o["name"]
+            if o.get("labels"):
+                e["labels"] = o["labels"]
+            if isinstance(o.get("fan"), dict) and isinstance(e.get("fan"), dict) and o["fan"].get("labels"):
+                e["fan"]["labels"] = o["fan"]["labels"]
     return new
 
 
@@ -158,7 +174,7 @@ def entities_from_values(values, taken=()):
         dp = int(k)
         if dp in taken:
             continue
-        ent = {"id": f"dp_{dp}", "name": f"DP {dp}", "dp": dp, "enabled": True}
+        ent = {"id": f"dp_{dp}", "name": f"DP {dp}", "dp": dp, "enabled": False}  # unnamed: shown only if the user turns them on
         if isinstance(v, bool):
             ent.update(platform="switch", kind="bool", writable=True)
         elif isinstance(v, (int, float)):
@@ -168,10 +184,117 @@ def entities_from_values(values, taken=()):
         out.append(ent)
     return out
 
+# ---------- robot vacuums ----------
+VAC_STATE = {
+    "cleaning": "cleaning", "smart": "cleaning", "zone_clean": "cleaning", "part_clean": "cleaning", "pose": "cleaning",
+    "goto_pos": "cleaning", "pos_arrived": "cleaning", "pos_unarrive": "cleaning", "mop": "cleaning", "spot": "cleaning",
+    "goto_charge": "returning", "chargego": "returning", "docking": "returning", "returning": "returning",
+    "charging": "docked", "charge_done": "docked", "docked": "docked", "paused": "paused", "pause": "paused",
+    "standby": "idle", "sleep": "idle", "stop": "idle", "idle": "idle", "fault": "error", "error": "error",
+}
+VAC_DIRECTION = {"forward", "backward", "turn_left", "turn_right", "stop"}
+VAC_MODE_WORDS = {"smart", "zone", "pose", "part", "chargego", "standby", "auto", "spot", "edge", "mop", "single", "spiral"}
+
+
+def guess_vacuum(values, entities):
+    """Best guess of a vacuum's data points from what it reports now and the entities already made for it."""
+    vals = {}
+    for k, v in (values or {}).items():
+        try:
+            vals[int(k)] = v
+        except ValueError:
+            pass
+
+    def sv(dp):
+        v = vals.get(dp)
+        return v.lower() if isinstance(v, str) else None
+
+    status = 5 if sv(5) in VAC_STATE else next(
+        (dp for dp in sorted(vals) if sv(dp) in VAC_STATE and sv(dp) not in VAC_DIRECTION and sv(dp) != "standby"), None)
+    direction = next((dp for dp in sorted(vals) if sv(dp) in VAC_DIRECTION and dp != status), None)
+    battery = next((e["dp"] for e in entities if e.get("platform") == "sensor" and ("battery" in e["name"].lower() or e.get("device_class") == "battery")), None)
+    if battery is None and isinstance(vals.get(6), int) and 0 <= vals[6] <= 100:
+        battery = 6
+    mode = next((e for e in entities if e.get("platform") == "select" and VAC_MODE_WORDS & set(e.get("options", []))), None)
+    return {"status": status, "go": 2 if isinstance(vals.get(2), bool) else None, "power": 1 if isinstance(vals.get(1), bool) else None,
+            "mode": mode["dp"] if mode else None, "mode_options": list(mode.get("options", [])) if mode else [],
+            "battery": battery, "direction": direction, "fan": None, "fan_options": [], "locate": None}
+
+
+def vacuum_spec(cfg):
+    """Entity spec for a vacuum from {status, go, power, mode, mode_options, battery, fan, fan_options, locate}."""
+    ent = {"id": "vacuum", "platform": "vacuum", "name": "Vacuum", "enabled": True, "dp": int(cfg["status"]), "kind": "enum"}
+    for k in ("power", "go", "battery", "locate"):
+        if cfg.get(k):
+            ent[k] = {"dp": int(cfg[k])}
+    if cfg.get("mode"):
+        ent["mode"] = {"dp": int(cfg["mode"]), "options": [str(x) for x in cfg.get("mode_options") or []]}
+    if cfg.get("fan"):
+        ent["fan"] = {"dp": int(cfg["fan"]), "options": [str(x) for x in cfg.get("fan_options") or []], "labels": {}}
+    return ent
+
+
+def apply_vacuum(entities, spec, extra_hidden=()):
+    """Put the vacuum in the entity list and hide what it replaces (its on/off, start, locate, direction and fan data
+    points, and any plain 'DP n' entities). Battery, status and the mode select stay."""
+    gone = {spec[k]["dp"] for k in ("power", "go", "locate", "fan") if isinstance(spec.get(k), dict)} | set(extra_hidden)
+    out = [dict(e) for e in entities if e["id"] != "vacuum"]
+    for e in out:
+        if e.get("dp") in gone or re.fullmatch(r"DP \d+", e["name"]):
+            e["enabled"] = False
+    return [spec] + out
+
+
+def vacuum_state(ent, dps):
+    raw = dps.get(str(ent["dp"]))
+    if raw is None:
+        return None
+    key = str(raw).lower()
+    out = {"state": (ent.get("status_map") or {}).get(key) or VAC_STATE.get(key, "idle")}
+    b = ent.get("battery")
+    if b and isinstance(dps.get(str(b["dp"])), (int, float)):
+        out["battery_level"] = max(0, min(100, int(dps[str(b["dp"])])))
+    f = ent.get("fan")
+    if f and dps.get(str(f["dp"])) is not None:
+        out["fan_speed"] = (f.get("labels") or {}).get(str(dps[str(f["dp"])]), str(dps[str(f["dp"])]))
+    return json.dumps(out)
+
+
+def vacuum_command(ent, text):
+    t = text.strip()
+    f = ent.get("fan")
+    if t.startswith("fan:") and f:
+        label = t[4:]
+        raw = next((r for r, lab in (f.get("labels") or {}).items() if lab == label), label)
+        return {f["dp"]: raw}
+    t = t.lower()
+    go, power, mode, loc = ent.get("go"), ent.get("power"), ent.get("mode"), ent.get("locate")
+    modes = (mode or {}).get("options", [])
+    if t == "start":
+        if go:
+            out = {power["dp"]: True} if power else {}
+            out[go["dp"]] = True
+            return out
+        pick = next((m for m in ("smart", "auto") if m in modes), None)
+        return {mode["dp"]: pick} if mode and pick else {}
+    if t == "pause":
+        return {go["dp"]: False} if go else {}
+    if t == "stop":
+        if mode and "standby" in modes:
+            return {mode["dp"]: "standby"}
+        return {go["dp"]: False} if go else {}
+    if t == "return_to_base":
+        pick = next((m for m in ("chargego", "charge", "return") if m in modes), None)
+        return {mode["dp"]: pick} if mode and pick else {}
+    if t == "locate":
+        return {loc["dp"]: True} if loc else {}
+    return {}
+
+
 
 # ---------- values ----------
 def dps_used(ent):
-    return [ent[k]["dp"] for k in ("bright", "ct", "color", "mode") if isinstance(ent.get(k), dict)] + [ent["dp"]]
+    return [ent[k]["dp"] for k in ("bright", "ct", "color", "mode", "power", "go", "battery", "locate", "fan") if isinstance(ent.get(k), dict)] + [ent["dp"]]
 
 
 def _scale(ent):
@@ -189,10 +312,14 @@ def entity_state(ent, dps):
     """The payload to publish for an entity, or None when the device hasn't reported its DP yet."""
     if ent["platform"] == "light":
         return light_state(ent, dps)
+    if ent["platform"] == "vacuum":
+        return vacuum_state(ent, dps)
     raw = dps.get(str(ent["dp"]))
     if raw is None:
         return None
     kind = ent.get("kind")
+    if ent.get("labels") and not isinstance(raw, bool):
+        return ent["labels"].get(str(raw), str(raw))
     if ent["platform"] in ("switch", "binary_sensor"):
         return "ON" if raw in (True, 1, "true", "True") else "OFF"
     if kind == "int":
@@ -240,9 +367,12 @@ def entity_command(ent, payload):
         except ValueError:
             return {}
     if p == "select":
-        return {ent["dp"]: text} if text in ent.get("options", []) else {}
+        raw = next((r for r in ent.get("options", []) if (ent.get("labels") or {}).get(r, r) == text), None)
+        return {ent["dp"]: raw} if raw is not None else {}
     if p == "light":
         return light_command(ent, text)
+    if p == "vacuum":
+        return vacuum_command(ent, text)
     return {}
 
 
@@ -288,7 +418,13 @@ def discovery(dev, ent, base="tuya_local"):
     p = ent["platform"]
     dname = str(dev.get("name") or did)
     # every entity lives under ONE Home Assistant device, so the Tuya device's name goes in front of the entity's name
-    full = ent["name"] if ent["name"].lower().startswith(dname.lower()) else f"{dname} {ent['name']}"
+    words, dwords = set(re.findall(r"[a-z0-9]+", ent["name"].lower())), set(re.findall(r"[a-z0-9]+", dname.lower()))
+    if ent["platform"] == "vacuum" or (words and words <= dwords):
+        full = dname  # the entity's name only repeats the device's (Living Lamp / Living Room Lamp)
+    elif ent["name"].lower().startswith(dname.lower()):
+        full = ent["name"]
+    else:
+        full = f"{dname} {ent['name']}"
     cfg = {
         "name": full, "unique_id": uid, "default_entity_id": f"{p}.{slug(full)}",
         "state_topic": f"{tbase}/state",
@@ -296,7 +432,7 @@ def discovery(dev, ent, base="tuya_local"):
         "availability_mode": "all",
         "device": {"identifiers": ["tuya_local_hub"], "name": "Tuya Local", "manufacturer": "Tuya", "model": "Local control"},
     }
-    if p in ("switch", "number", "select", "light"):
+    if p in ("switch", "number", "select", "light", "vacuum"):
         cfg["command_topic"] = f"{tbase}/set"
     if p == "switch":
         cfg.update(payload_on="ON", payload_off="OFF")
@@ -307,7 +443,8 @@ def discovery(dev, ent, base="tuya_local"):
         if ent.get("unit"):
             cfg["unit_of_measurement"] = ent["unit"]
     elif p == "select":
-        cfg["options"] = ent.get("options", [])
+        labels = ent.get("labels") or {}
+        cfg["options"] = [labels.get(o, o) for o in ent.get("options", [])]
     elif p == "sensor":
         if ent.get("unit"):
             cfg["unit_of_measurement"] = ent["unit"]
@@ -316,6 +453,19 @@ def discovery(dev, ent, base="tuya_local"):
                 cfg[k] = ent[k]
         if ent.get("kind") == "enum":
             cfg["entity_category"] = "diagnostic"
+    elif p == "vacuum":
+        feats = ["start", "pause", "stop", "return_home", "status"]
+        if ent.get("battery"):
+            feats.append("battery")
+        if ent.get("locate"):
+            feats.append("locate")
+        cfg.update(command_topic=f"{tbase}/set", payload_start="start", payload_pause="pause", payload_stop="stop",
+                   payload_return_to_base="return_to_base", payload_locate="locate", supported_features=feats)
+        if ent.get("fan"):
+            lab = ent["fan"].get("labels") or {}
+            cfg["supported_features"].append("fan_speed")
+            cfg["set_fan_speed_topic"] = f"{tbase}/fan"
+            cfg["fan_speed_list"] = [lab.get(o, o) for o in ent["fan"].get("options", [])]
     elif p == "light":
         modes = []
         if ent.get("color"):

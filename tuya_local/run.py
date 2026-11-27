@@ -6,6 +6,7 @@ import ipaddress
 import json
 import os
 import queue
+import re
 import socket
 import threading
 import time
@@ -234,8 +235,8 @@ class Hub:
                 self.republish_all()
             return
         parts = msg.topic.split("/")
-        if len(parts) == 4 and parts[0] == BASE and parts[3] == "set":
-            ok, why = self.command(parts[1], parts[2], payload)
+        if len(parts) == 4 and parts[0] == BASE and parts[3] in ("set", "fan"):
+            ok, why = self.command(parts[1], parts[2], ("fan:" + payload) if parts[3] == "fan" else payload)
             if not ok:
                 log("Command not sent:", why)
 
@@ -536,8 +537,13 @@ def device_view(d):
     key = d.get("key") or ""
     ents = []
     for e in d.get("entities", []):
-        ents.append({"id": e["id"], "name": e["name"], "platform": e["platform"], "enabled": e.get("enabled", True),
-                     "value": hub.last_pub.get((did, e["id"]))})
+        item = {"id": e["id"], "name": e["name"], "platform": e["platform"], "enabled": e.get("enabled", True),
+                "value": hub.last_pub.get((did, e["id"]))}
+        if e["platform"] == "select" or (e["platform"] == "sensor" and e.get("options")):
+            item["options"], item["labels"] = e.get("options", []), e.get("labels") or {}
+        if e["platform"] == "vacuum" and e.get("fan"):
+            item["options"], item["labels"], item["fan"] = e["fan"].get("options", []), e["fan"].get("labels") or {}, True
+        ents.append(item)
     return {"id": did, "name": d.get("name") or did, "ip": d.get("ip", ""), "version": d.get("version", "auto"),
             "enabled": d.get("enabled", True), "category": d.get("category", ""), "product_name": d.get("product_name", ""),
             "has_key": bool(key), "key_tail": key[-4:] if key else "", "state": info.get("state"), "error": info.get("error", ""),
@@ -638,6 +644,12 @@ async def post_device_update(r):
                     e["enabled"] = bool(ch["enabled"])
                 if str(ch.get("name") or "").strip():
                     e["name"] = str(ch["name"]).strip()[:60]
+                if isinstance(ch.get("labels"), dict):  # friendly names for a select's options (or a vacuum's fan speeds)
+                    lab = {str(k): str(v).strip()[:40] for k, v in ch["labels"].items() if str(v).strip() and str(v).strip() != str(k)}
+                    if e["platform"] == "vacuum" and isinstance(e.get("fan"), dict):
+                        e["fan"]["labels"] = lab
+                    else:
+                        e["labels"] = lab
         store.save()
     hub.publish_device(d, old)
     if restart:
@@ -659,6 +671,81 @@ async def post_device_delete(r):
         hub.info.pop(did, None)
         hub.dps.pop(did, None)
     return web.json_response({"ok": True})
+
+
+def vac_guess(did):
+    d = hub.dev(did)
+    if not d:
+        return None
+    g = M.guess_vacuum(hub.dps.get(did) or {}, d.get("entities", []))
+    cur = next((e for e in d.get("entities", []) if e["platform"] == "vacuum"), None)
+    if cur:  # already set up: show what is saved
+        g.update(status=cur["dp"], mode_options=(cur.get("mode") or {}).get("options", g["mode_options"]))
+        for k in ("go", "power", "battery", "locate", "mode", "fan"):
+            g[k] = (cur.get(k) or {}).get("dp")
+        g["fan_options"] = (cur.get("fan") or {}).get("options", [])
+    g["done"] = bool(cur)
+    return g
+
+
+async def get_vac_guess(r):
+    g = vac_guess(r.query.get("id", ""))
+    if g is None:
+        raise web.HTTPNotFound()
+    return web.json_response(g)
+
+
+async def post_vacuum(r):
+    """Make a device a robot vacuum: one vacuum entity from the data points the user confirmed."""
+    b = await r.json()
+    d = hub.dev(b.get("id", ""))
+    if not d:
+        return web.json_response({"ok": False, "error": "Unknown device."}, status=404)
+
+    def num(k):
+        try:
+            return int(b.get(k)) if str(b.get(k) or "").strip() else None
+        except ValueError:
+            return None
+
+    cfg = {k: num(k) for k in ("status", "go", "power", "mode", "battery", "fan", "locate")}
+    if not cfg["status"]:
+        return web.json_response({"ok": False, "error": "Type the data point number that holds the vacuum's status (usually 5)."}, status=400)
+    cfg["mode_options"] = [x.strip() for x in str(b.get("mode_options") or "").split(",") if x.strip()]
+    cfg["fan_options"] = [x.strip() for x in str(b.get("fan_options") or "").split(",") if x.strip()]
+    sel = next((e for e in d.get("entities", []) if e["platform"] == "select" and e["dp"] == cfg["mode"]), None)
+    if sel and not cfg["mode_options"]:
+        cfg["mode_options"] = list(sel.get("options", []))
+    old = [dict(e) for e in d.get("entities", [])]
+    prev = next((e for e in old if e["platform"] == "vacuum"), None)
+    spec = M.vacuum_spec(cfg)
+    if prev and isinstance(prev.get("fan"), dict) and isinstance(spec.get("fan"), dict):
+        spec["fan"]["labels"] = prev["fan"].get("labels", {})
+    hide = {num("direction")} - {None}
+    with store.lock:
+        d["entities"] = M.apply_vacuum(d.get("entities", []), spec, hide)
+        d["needs_inference"] = False
+        store.save()
+    hub.publish_device(d, old)
+    return web.json_response({"ok": True})
+
+
+async def post_hide_unnamed(r):
+    """Turn off every entity that is just 'DP n' (data points nobody named)."""
+    b = await r.json()
+    d = hub.dev(b.get("id", ""))
+    if not d:
+        return web.json_response({"ok": False, "error": "Unknown device."}, status=404)
+    old = [dict(e) for e in d.get("entities", [])]
+    n = 0
+    with store.lock:
+        for e in d.get("entities", []):
+            if e.get("enabled", True) and re.fullmatch(r"DP \d+", e["name"]):
+                e["enabled"] = False
+                n += 1
+        store.save()
+    hub.publish_device(d, old)
+    return web.json_response({"ok": True, "hidden": n})
 
 
 async def post_control(r):
@@ -813,6 +900,9 @@ app.router.add_post("/api/device", post_device)
 app.router.add_get("/api/device", get_device)
 app.router.add_post("/api/device/update", post_device_update)
 app.router.add_post("/api/device/delete", post_device_delete)
+app.router.add_get("/api/device/vacuum", get_vac_guess)
+app.router.add_post("/api/device/vacuum", post_vacuum)
+app.router.add_post("/api/device/hide_unnamed", post_hide_unnamed)
 app.router.add_post("/api/control", post_control)
 app.router.add_post("/api/diagnose", post_diagnose)
 app.router.add_post("/api/login/qr", post_login_qr)
