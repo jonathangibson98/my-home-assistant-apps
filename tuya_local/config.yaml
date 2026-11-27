@@ -1,0 +1,39 @@
+name: "Tuya Local"
+version: "1.0.0"
+slug: tuya_local
+image: "ghcr.io/jonathangibson98/{arch}-addon-tuya_local"
+description: "Find your Tuya devices on the network, fix connections that stopped working, and control them locally. Replaces LocalTuya: devices show up in Home Assistant through MQTT."
+arch:
+  - aarch64
+  - amd64
+init: false
+homeassistant: "2025.1.0"
+
+# Tuya devices announce themselves with UDP broadcasts, which only reach an add-on on the host network.
+host_network: true
+
+ingress: true
+ingress_port: 8765
+panel_icon: "mdi:lan-connect"
+panel_title: "Tuya Local"
+
+# Entities are created with MQTT discovery.
+services:
+  - mqtt:want
+
+# Read-only: lets "Import from LocalTuya" read LocalTuya's saved devices.
+map:
+  - homeassistant_config:ro
+
+options:
+  mqtt_host: ""
+  mqtt_port: 1883
+  mqtt_username: ""
+  mqtt_password: ""
+  wallpaper: ""
+schema:
+  mqtt_host: str?
+  mqtt_port: port?
+  mqtt_username: str?
+  mqtt_password: password?
+  wallpaper: str?
