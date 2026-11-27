@@ -13,7 +13,7 @@
 3. **Find tab, Scan now**: devices on your network show up with their IP address. Saved devices get their IP address updated.
 4. **Devices tab**: each device connects by itself. Open *Entities in Home Assistant* to rename an entity or hide one you do not want. The *On / Off* buttons let you test a switch or light.
 
-New entities appear in Home Assistant under the device (Settings → Devices). Home Assistant names them from the device name and entity name, so rename the device on the Settings panel *before* you rely on its entity IDs.
+All entities appear under one Home Assistant device called **Tuya Local** (Settings → Devices). Each entity's name starts with its Tuya device's name, so rename the device on its Settings panel *before* you rely on the entity IDs. Renaming later changes the display name; Home Assistant keeps the old entity ID.
 
 ## When a device will not connect
 

@@ -285,15 +285,17 @@ def discovery(dev, ent, base="tuya_local"):
     did, eid = dev["id"], ent["id"]
     uid = f"tuya_local_{did}_{eid}"
     tbase = f"{base}/{did}/{eid}"
+    p = ent["platform"]
+    dname = str(dev.get("name") or did)
+    # every entity lives under ONE Home Assistant device, so the Tuya device's name goes in front of the entity's name
+    full = ent["name"] if ent["name"].lower().startswith(dname.lower()) else f"{dname} {ent['name']}"
     cfg = {
-        "name": ent["name"], "unique_id": uid,
+        "name": full, "unique_id": uid, "default_entity_id": f"{p}.{slug(full)}",
         "state_topic": f"{tbase}/state",
         "availability": [{"topic": f"{base}/status"}, {"topic": f"{base}/{did}/available"}],
         "availability_mode": "all",
-        "device": {"identifiers": [f"tuya_local_{did}"], "name": dev.get("name") or did, "manufacturer": "Tuya",
-                   "model": dev.get("product_name") or dev.get("category") or "Tuya device"},
+        "device": {"identifiers": ["tuya_local_hub"], "name": "Tuya Local", "manufacturer": "Tuya", "model": "Local control"},
     }
-    p = ent["platform"]
     if p in ("switch", "number", "select", "light"):
         cfg["command_topic"] = f"{tbase}/set"
     if p == "switch":
