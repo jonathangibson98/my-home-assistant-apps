@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.0
+
+Custom icons in the picture picker.
+
+- **Custom icons**: pictures you save in `/config/icons` or `/config/local_icons` (svg, png, jpg, webp, gif, one folder level down too) show up in a **Custom icons** section of the picker. Tap one to use it; it is copied into `www/personalized_info`.
+
 ## 1.6.0
 
 Tidy-up of the person page.
@@ -10,7 +16,6 @@ Tidy-up of the person page.
 - **Your own fields** only lists fields with no spot in the sections, so nothing shows up twice. Each field is in its own box, the name has its own box at the top of the page, and `nickname_1`, `nickname_2` hide once the nickname is filled in (with a Remove button).
 - Removed **Relationships between people** from the bottom of the People tab. Each person's own Relationships card is still on their page.
 - **Zone icons in the picture picker**: a new **Zone icons** section lists your Home Assistant zones with the icon you set on each one. Tap one to use it as the picture for a person or place (a place's own zone is listed first). Zones with no icon (or a non-Material-Design one) get a map pin. The icon is saved as a small round picture in `www/personalized_info`, so it also works as the `entity_picture`. It is fetched from the Material Design Icons set the first time and cached, so the add-on needs internet for an icon it has not used before. If you change a zone's icon later, pick it again to refresh.
-- **Custom icons**: pictures you save in `/config/icons` or `/config/local_icons` (svg, png, jpg, webp, gif, one folder level down too) show up in a **Custom icons** section of the picker. Tap one to use it; it is copied into `www/personalized_info`.
 
 ## 1.5.0
 
