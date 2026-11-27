@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.0
+
+- **Robot vacuums**: a device page now has a **Robot vacuum setup** panel. It guesses which data points are the status, start/pause, mode and battery, you check the numbers, and it creates one proper Home Assistant vacuum (start, pause, stop, return to dock, battery, status, optional fan speed and find-my-robot). Cloud sync sets this up on its own for vacuums it recognises.
+- **Friendly names for modes**: every select (and the vacuum's fan speeds) has a **Name the options** box. Type a friendly name next to each raw value; Home Assistant shows and sends the friendly one.
+- **No more "DP n" clutter**: unnamed data points are now off by default, there is a **Hide all unnamed "DP n" entities** button, and setting up the vacuum hides the data points it replaces.
+- Fixed doubled names like "Living Room Lamp Living Lamp".
+
 ## 1.1.0
 
 - **One Home Assistant device**: every entity from every Tuya device now lives under a single device called **Tuya Local**, instead of one device per lamp or plug. Each entity name starts with the Tuya device's name (for example `Dresser Lamp Light`), so entity IDs read `light.dresser_lamp_light`. Entities keep their unique IDs, so history and dashboards carry over. The old per-device entries are left empty in Settings → Devices: delete them there.

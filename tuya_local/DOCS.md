@@ -42,6 +42,12 @@ Things that are not mapped by hand (vacuums, climate, covers, fans) still work: 
 
 If the account has no data point list for a device (or you added it by hand), the add-on reads what the device reports and makes a switch for each on/off value and a sensor for each other value.
 
+## Robot vacuums and friendly names
+
+Open the device, then **Robot vacuum setup**. The data point numbers are filled in from what the vacuum reports (status is usually 5, start/pause 2, power 1, mode 3, battery 6). Fix any that look wrong and tap **Create vacuum**. It makes one vacuum entity and hides the loose switches and sensors it replaces. For fan speeds, enter the data point and its values, then name them in the vacuum's **Name the fan speeds** box.
+
+Any select entity has **Name the options**: type a friendly name beside each raw value (for example `smart` becomes `Whole house`). Leave a box empty to keep the original.
+
 ## Where things are stored
 
 Everything is in the add-on's private data folder (`/data/tuya.json`), including your login token and each device's local key. It is not written to `/config`. The web page only answers requests that come through Home Assistant.

@@ -1,5 +1,5 @@
 name: "Tuya Local"
-version: "1.1.0"
+version: "1.2.0"
 slug: tuya_local
 image: "ghcr.io/jonathangibson98/{arch}-addon-tuya_local"
 description: "Find your Tuya devices on the network, fix connections that stopped working, and control them locally. Replaces LocalTuya: devices show up in Home Assistant through MQTT."

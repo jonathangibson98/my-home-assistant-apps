@@ -44,6 +44,9 @@ summary{font-weight:600;cursor:pointer}
 .ent{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;margin-top:8px;font-size:14px}
 .ent .nm{min-width:0}.ent input[type=text]{padding:6px 8px}
 .ent .val{color:var(--dim);font-size:12px;word-break:break-all}
+.opt{display:grid;grid-template-columns:minmax(70px,auto) 1fr;gap:8px;align-items:center;margin-top:6px}
+.opt .raw{font-size:12px;color:var(--dim);word-break:break-all}.opt input{padding:6px 8px}
+details.sub{margin-top:6px;padding:8px}details.sub summary{font-weight:500;font-size:13px}
 .tag{font-size:11px;color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:1px 6px;margin-left:6px}
 .steps div{padding:6px 0;border-bottom:1px solid var(--line);font-size:14px}.steps div:last-child{border:0}
 .ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}
@@ -768,8 +771,18 @@ function entRow(d, en) {
   on.onchange = save; name.onchange = save;
   const test = ['switch', 'light'].includes(en.platform) ? h('span', {}, h('button', {className: 'sm', textContent: 'On', onclick: () => toggleTest(d, en, 'ON')}), ' ',
     h('button', {className: 'sm', textContent: 'Off', onclick: () => toggleTest(d, en, 'OFF')})) : h('span');
+  let labels = null;
+  if (en.options && en.options.length) {
+    const ins = en.options.map(o => {
+      const i = h('input', {type: 'text', value: (en.labels || {})[o] || '', placeholder: o, 'aria-label': 'Name for ' + o});
+      return h('div', {className: 'opt'}, h('span', {className: 'raw', textContent: o}), i);
+    });
+    const saveL = () => api('device/update', {id: d.id, entities: {[en.id]: {labels: Object.fromEntries(en.options.map((o, k) => [o, ins[k].querySelector('input').value]))}}});
+    ins.forEach(x => x.querySelector('input').onchange = saveL);
+    labels = h('details', {className: 'sub'}, h('summary', {textContent: en.fan ? 'Name the fan speeds' : 'Name the options'}), h('div', {className: 'meta', textContent: 'Type a friendly name next to each value. Leave a box empty to keep the original.'}), ins);
+  }
   return h('div', {className: 'ent'}, on, h('div', {className: 'nm'}, name, h('div', {className: 'val'}, h('span', {className: 'tag', textContent: en.platform}), ' ',
-    h('span', {'data-val': d.id + '/' + en.id, textContent: en.value == null ? '' : en.value}))), test);
+    h('span', {'data-val': d.id + '/' + en.id, textContent: en.value == null ? '' : en.value})), labels), test);
 }
 function settings(d) {
   const box = h('div');
@@ -802,6 +815,37 @@ async function check(d, btn, out) {
     h('div', {className: 'verdict', textContent: r.verdict || r.error || ''}));
   load();
 }
+function vacuumPanel(d) {
+  const box = h('div'), has = d.entities.some(e => e.platform === 'vacuum');
+  const det = h('details', {}, h('summary', {textContent: has ? 'Robot vacuum setup (done)' : 'Robot vacuum? Set it up'}), box);
+  const F = {};
+  const field = (key, label, hint, ph) => { F[key] = h('input', {type: 'text', inputmode: ph === 'list' ? 'text' : 'numeric', placeholder: ph === 'list' ? 'comma separated' : 'number', autocapitalize: 'none'});
+    return h('div', {}, h('label', {textContent: label}), F[key], hint ? h('div', {className: 'meta', textContent: hint}) : null); };
+  async function fill() {
+    const g = await (await fetch('api/device/vacuum?id=' + encodeURIComponent(d.id))).json();
+    const set = (k, v) => { F[k].value = v == null ? '' : (Array.isArray(v) ? v.join(', ') : v); };
+    box.replaceChildren(
+      h('div', {className: 'meta', textContent: 'Makes one proper vacuum entity (start, pause, stop, return to dock, battery, status). The numbers are the device\'s data point numbers, filled in from what it reports. Check them, then tap the button.'}),
+      field('status', 'Status data point', 'The one that says things like charging, charge_done, cleaning (usually 5).'),
+      field('go', 'Start / pause data point', 'On/off value that starts and pauses cleaning (usually 2). Leave empty if there is none.'),
+      field('power', 'Power data point', 'Usually 1. Optional.'),
+      field('mode', 'Mode data point', 'The one with smart, zone, chargego... (usually 3). Used to return to the dock.'),
+      field('mode_options', 'Mode values', 'Only if the mode data point has no select yet.', 'list'),
+      field('battery', 'Battery data point', 'Usually 6. Optional.'),
+      field('fan', 'Fan speed / suction data point', 'Optional. If it has one, name its speeds afterwards in the vacuum\'s entity row.'),
+      field('fan_options', 'Fan speed values', 'For example quiet, normal, strong, max.', 'list'),
+      field('locate', 'Find my robot data point', 'Optional. An on/off value that makes it beep.'),
+      field('direction', 'Remote-control direction data point (hidden)', 'Values like forward, turn_left, stop. Not needed.'),
+      h('div', {className: 'row'}, h('button', {className: 'pri', textContent: g.done ? 'Update vacuum' : 'Create vacuum', onclick: async () => {
+        const body = {id: d.id}; for (const k of Object.keys(F)) body[k] = F[k].value;
+        const r = await api('device/vacuum', body);
+        if (!r.ok) alert(r.error || 'Could not set it up.'); else { msg[d.id] = 'Vacuum set up. It shows in Home Assistant in a few seconds.'; load(); }
+      }})));
+    for (const k of ['status', 'go', 'power', 'mode', 'mode_options', 'battery', 'fan', 'fan_options', 'locate', 'direction']) set(k, g[k]);
+  }
+  det.addEventListener('toggle', () => { if (det.open && !box.childNodes.length) fill(); });
+  return det;
+}
 function deviceCard(d) {
   const out = h('div'); const btn = h('button', {className: 'sm', textContent: 'Check connection'});
   btn.onclick = () => check(d, btn, out);
@@ -811,8 +855,10 @@ function deviceCard(d) {
     h('div', {className: 'meta', textContent: [d.ip || 'no IP yet', d.protocol ? 'protocol ' + d.protocol : (d.version !== 'auto' ? 'protocol ' + d.version : 'protocol auto'), d.product_name || d.category].filter(Boolean).join(' · ')}),
     errBox(d), msg[d.id] ? h('div', {className: 'meta ok', textContent: msg[d.id]}) : null,
     h('div', {className: 'row'}, btn), out,
-    h('details', {}, h('summary', {textContent: 'Entities in Home Assistant (' + d.entities.filter(e => e.enabled).length + ')'}), ents),
-    settings(d));
+    h('details', {}, h('summary', {textContent: 'Entities in Home Assistant (' + d.entities.filter(e => e.enabled).length + ')'}),
+      d.entities.some(e => e.enabled && /^DP \d+$/.test(e.name)) ? h('div', {className: 'row'}, h('button', {className: 'sm', textContent: 'Hide all unnamed "DP n" entities', onclick: async () => { await api('device/hide_unnamed', {id: d.id}); load(); }})) : null,
+      ents),
+    vacuumPanel(d), settings(d));
 }
 function devicesView() {
   const v = h('div');
