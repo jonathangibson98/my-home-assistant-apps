@@ -1,0 +1,17 @@
+configuration:
+  mqtt_host:
+    name: MQTT host (optional)
+    description: Leave empty to use the Mosquitto add-on automatically.
+  mqtt_port:
+    name: MQTT port (optional)
+    description: Only used with an MQTT host. Defaults to 1883.
+  mqtt_username:
+    name: MQTT username (optional)
+    description: Only used with an MQTT host.
+  mqtt_password:
+    name: MQTT password (optional)
+    description: Only used with an MQTT host.
+  wallpaper:
+    name: Wallpaper
+    description: >-
+      Background image for this add-on's web UI. Leave empty to use your Home Assistant theme's wallpaper, "none" for no wallpaper, or an image: put it in /config/www and enter its file name (pic.jpg) or /local/pic.jpg, or a full https:// link.
