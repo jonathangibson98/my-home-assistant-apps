@@ -1402,15 +1402,94 @@ def list_www_images(limit=300):
     out.sort(key=lambda x: -x[0])
     return [o[1] for o in out[:limit]]
 
-async def get_pictures(r):
-    """What the picture picker offers: Home Assistant people with a picture, and images in the www folder."""
+# ---------- zone icons as pictures ----------
+ICON_CACHE = "/data/icons"  # glyph paths of the icons already fetched, so they keep working offline
+ICON_SOURCES = ("https://cdn.jsdelivr.net/npm/@mdi/svg@7/svg/{}.svg",
+                "https://raw.githubusercontent.com/Templarian/MaterialDesign-SVG/master/svg/{}.svg")
+ICON_RE = re.compile(r"^(mdi|hass):([a-z0-9]+(?:-[a-z0-9]+)*)$")
+
+def zone_icon_name(st):
+    """The icon set on a zone in Home Assistant (mdi:home, mdi:briefcase...), or a map pin when none is set."""
+    ic = str(((st or {}).get("attributes") or {}).get("icon") or "").strip().lower()
+    return ic if ICON_RE.match(ic) else "mdi:map-marker"
+
+def icon_path(name):
+    """The drawing path for a Material Design icon name, or None when it can't be had."""
+    m = ICON_RE.match(str(name or "").strip().lower())
+    if not m:
+        return None
+    short = m.group(2)
+    cache = os.path.join(ICON_CACHE, short + ".txt")
+    try:
+        with open(cache) as f:
+            got = f.read().strip()
+        if got:
+            return got
+    except OSError:
+        pass
+    for src in ICON_SOURCES:
+        try:
+            with urllib.request.urlopen(src.format(short), timeout=8) as resp:
+                svg = resp.read(200000).decode("utf-8", "ignore")
+        except Exception:
+            continue
+        m2 = re.search(r'<path[^>]*\sd="([^"]+)"', svg)
+        if m2:
+            try:
+                os.makedirs(ICON_CACHE, exist_ok=True)
+                with open(cache, "w") as f:
+                    f.write(m2.group(1))
+            except OSError:
+                pass
+            return m2.group(1)
+    return None
+
+def icon_svg(name):
+    """A round picture with the icon on it: shows in this page and works as an entity_picture in Home Assistant."""
+    d = icon_path(name)
+    if not d:
+        return None
+    return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><circle cx="24" cy="24" r="24" fill="#334155"/>'
+            f'<g transform="translate(9 9) scale(1.25)"><path d="{d}" fill="#e2e8f0"/></g></svg>')
+
+async def get_icon(r):
+    """One icon drawn as a picture, for the picker's preview."""
+    svg = await asyncio.get_running_loop().run_in_executor(None, icon_svg, r.query.get("name", ""))
+    if not svg:
+        raise web.HTTPNotFound()
+    return web.Response(text=svg, content_type="image/svg+xml", headers={"Cache-Control": "max-age=86400"})
+
+async def post_zone_icon(r):
+    """Use a zone's own icon as the picture. Saved as a file, so it works like any other uploaded picture."""
+    zone = r.query.get("zone", "")
     loop = asyncio.get_running_loop()
     states = await loop.run_in_executor(None, ha_states)
+    if not zone.startswith("zone.") or zone not in states:
+        return web.json_response({"ok": False, "error": "That zone was not found in Home Assistant."}, status=400)
+    svg = await loop.run_in_executor(None, icon_svg, zone_icon_name(states[zone]))
+    if not svg:
+        return web.json_response({"ok": False, "error": "Could not get that icon. The add-on needs internet the first time it uses an icon."}, status=502)
+    name = f"zoneicon_{slug(zone[5:])}.svg"  # shared by everyone who picks this zone; picking again refreshes it
+    try:
+        os.makedirs(PHOTO_DIR, exist_ok=True)
+        with open(os.path.join(PHOTO_DIR, name), "w") as f:
+            f.write(svg)
+    except OSError as e:
+        return web.json_response({"ok": False, "error": f"Could not save it: {e}"}, status=500)
+    return web.json_response({"ok": True, "name": name, "ui": photo_ui(name)})
+
+async def get_pictures(r):
+    """What the picture picker offers: Home Assistant people with a picture, zone icons, and images in the www folder."""
+    loop = asyncio.get_running_loop()
+    states = await loop.run_in_executor(None, ha_states)
+    zones = sorted(({"id": e, "name": (s.get("attributes") or {}).get("friendly_name", e), "icon": zone_icon_name(s),
+                     "url": "api/icon?name=" + urllib.parse.quote(zone_icon_name(s))}
+                    for e, s in states.items() if e.startswith("zone.")), key=lambda x: x["name"].lower())
     people = sorted(({"id": e, "name": (s.get("attributes") or {}).get("friendly_name", e), "url": (s.get("attributes") or {}).get("entity_picture")}
                      for e, s in states.items() if e.startswith("person.") and (s.get("attributes") or {}).get("entity_picture")),
                     key=lambda x: x["name"].lower())
     images = await loop.run_in_executor(None, list_www_images)
-    return web.json_response({"people": people, "images": images, "www_ok": os.path.isdir(WWW_DIR)})
+    return web.json_response({"people": people, "zones": zones, "images": images, "www_ok": os.path.isdir(WWW_DIR)})
 
 async def get_img(r):
     path = photo_file(r.match_info["name"])
@@ -1953,6 +2032,8 @@ app.router.add_get("/api/schema", get_schema)
 app.router.add_post("/api/photo", post_photo)
 app.router.add_get("/img/{name}", get_img)
 app.router.add_get("/api/pictures", get_pictures)
+app.router.add_get("/api/icon", get_icon)
+app.router.add_post("/api/zone_icon", post_zone_icon)
 app.router.add_post("/api/profile_ai", post_profile_ai)
 app.router.add_get("/api/zone_suggest", get_zone_suggest)
 app.router.add_post("/api/settings", post_settings)

@@ -1112,6 +1112,16 @@ async function openPicSheet(kind, key, obj) {
   const tile = (value, label, thumb, ui) => h('button', {className: 'po' + (value === cur ? ' on' : ''), onclick: () => choose(value, ui || thumb)},
     h('div', {className: 'avatar'}, thumb ? h('img', {src: thumb, alt: '', loading: 'lazy', onerror: e => e.target.remove()}) : h('b', {textContent: 'auto'})),
     h('small', {textContent: label}));
+  // a zone's own icon (the one set on the zone in Home Assistant), saved as a picture
+  const zoneTile = z => h('button', {className: 'po' + (cur === 'zoneicon_' + z.id.slice(5).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') + '.svg' ? ' on' : ''), title: z.icon, onclick: async () => {
+    msg.replaceChildren(h('div', {className: 'note', textContent: 'Getting the icon…'}));
+    try {
+      const r = await (await fetch('api/zone_icon?zone=' + encodeURIComponent(z.id), {method: 'POST'})).json();
+      if (!r.ok) { fail(r.error || 'Could not use that icon.'); return; }
+      choose(r.name, r.ui);
+    } catch (e) { fail('Could not use that icon.'); }
+  }}, h('div', {className: 'avatar'}, h('img', {src: z.url, alt: '', loading: 'lazy', onerror: e => e.target.remove()})),
+    h('small', {textContent: z.name}));
   const ov = h('div', {id: 'picov'}, h('div', {className: 'sheetbk', onclick: closePicSheet}),
     h('div', {className: 'sheet'},
       h('h3', {textContent: 'Picture for ' + name}), h('div', {className: 'note', textContent: 'Tap one to use it. You can change it any time.'}), msg,
@@ -1123,14 +1133,19 @@ async function openPicSheet(kind, key, obj) {
       }})),
       grids, h('div', {className: 'add'}, h('button', {textContent: 'Close', onclick: closePicSheet}))));
   document.body.append(ov);
-  let data = {people: [], images: [], www_ok: true};
+  let data = {people: [], zones: [], images: [], www_ok: true};
   try { data = await (await fetch('api/pictures')).json(); } catch (e) { fail('Could not load your pictures.'); }
   if (!document.getElementById('picov')) return;
   const live = kind === 'person' ? ((LIVE.people || {})[key] || {}).picture : '';
+  const mine = kind === 'place' ? String((D.places[key] || {}).zone || '') : '';   // a place linked to a zone: that zone goes first
+  const zones = (data.zones || []).slice().sort((a, b) => (b.id === mine) - (a.id === mine));
   grids.replaceChildren(
     h('div', {className: 'psec', textContent: 'AUTOMATIC'}), h('div', {className: 'pgrid'}, tile('', 'Automatic', '')),
     h('div', {className: 'note', textContent: kind === 'person' ? 'Automatic uses the picture on their Home Assistant person, if they have one.' : 'Automatic means no picture.'}),
     ...(data.people.length ? [h('div', {className: 'psec', textContent: 'HOME ASSISTANT PEOPLE'}), h('div', {className: 'pgrid'}, ...data.people.map(p => tile(p.url, p.name, p.url)))] : []),
+    ...(zones.length ? [h('div', {className: 'psec', textContent: 'ZONE ICONS'}),
+      h('div', {className: 'note', textContent: 'The icon you set on the zone in Home Assistant.' + (kind === 'place' && mine ? ' This place\'s zone is first.' : '')}),
+      h('div', {className: 'pgrid'}, ...zones.map(zoneTile))] : []),
     h('div', {className: 'psec', textContent: 'YOUR IMAGES'}),
     data.images.length ? h('div', {className: 'pgrid'}, ...data.images.map(i => tile(i.value, i.name.split('/').pop(), i.url)))
       : h('div', {className: 'note', textContent: data.www_ok ? 'No pictures in your www folder yet. Upload one above.' : 'The add-on cannot see your Home Assistant config folder yet. Update and restart the add-on.'}));
