@@ -1,4 +1,4 @@
-import asyncio, datetime, json, os, random, re, shutil, time, urllib.request
+import asyncio, datetime, json, os, random, re, shutil, time, urllib.parse, urllib.request
 import yaml
 import paho.mqtt.client as mqtt
 import extra_links as XL
@@ -10,6 +10,7 @@ FILE = f"{DIR}/people.yaml"          # household, friends, other
 MUSIC_FILE = f"{DIR}/music.yaml"     # music lives in its own file now
 PLACES_FILE = f"{DIR}/places.yaml"   # places (addresses, workplaces) live here
 PROFILES_FILE = f"{DIR}/profiles.yaml"  # the profile sections (about, work, health, vehicles...) for each person
+WWW_DIR = "/homeassistant/www"
 PHOTO_DIR = "/homeassistant/www/personalized_info"  # pictures of people and places; HA serves it at /local/personalized_info/
 PHOTO_URL = "/local/personalized_info"
 PROFILE_AI_FILE = "/data/profile_ai.json"
@@ -1371,6 +1372,42 @@ async def post_photo(r):
         return web.json_response({"ok": False, "error": f"Could not save it: {e}"}, status=500)
     return web.json_response({"ok": True, "name": name, "ui": photo_ui(name)})
 
+def list_www_images(limit=300):
+    """Pictures in Home Assistant's www folder (newest first) for the picture picker. Ones this add-on saved are
+    stored by file name; others by their /local/ link."""
+    out, base = [], os.path.realpath(WWW_DIR)
+    if not os.path.isdir(base):
+        return out
+    for root, dirs, files in os.walk(base):
+        depth = 0 if root == base else os.path.relpath(root, base).count(os.sep) + 1
+        dirs[:] = [x for x in dirs if not x.startswith(".") and x not in ("community", "hacsfiles", "node_modules") and depth < 3]
+        for f in files:
+            if not f.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".gif")):
+                continue
+            full = os.path.join(root, f)
+            try:
+                st = os.stat(full)
+            except OSError:
+                continue
+            if st.st_size > 15 * 1024 * 1024:
+                continue
+            rel = os.path.relpath(full, base).replace(os.sep, "/")
+            own = os.path.realpath(root) == os.path.realpath(PHOTO_DIR)
+            out.append((st.st_mtime, {"name": rel, "value": f if own else "/local/" + urllib.parse.quote(rel),
+                                      "url": f"img/{f}?v={int(st.st_mtime)}" if own else "/local/" + urllib.parse.quote(rel)}))
+    out.sort(key=lambda x: -x[0])
+    return [o[1] for o in out[:limit]]
+
+async def get_pictures(r):
+    """What the picture picker offers: Home Assistant people with a picture, and images in the www folder."""
+    loop = asyncio.get_running_loop()
+    states = await loop.run_in_executor(None, ha_states)
+    people = sorted(({"id": e, "name": (s.get("attributes") or {}).get("friendly_name", e), "url": (s.get("attributes") or {}).get("entity_picture")}
+                     for e, s in states.items() if e.startswith("person.") and (s.get("attributes") or {}).get("entity_picture")),
+                    key=lambda x: x["name"].lower())
+    images = await loop.run_in_executor(None, list_www_images)
+    return web.json_response({"people": people, "images": images, "www_ok": os.path.isdir(WWW_DIR)})
+
 async def get_img(r):
     path = photo_file(r.match_info["name"])
     if not path:
@@ -1911,6 +1948,7 @@ app.router.add_get("/api/preview", get_preview)
 app.router.add_get("/api/schema", get_schema)
 app.router.add_post("/api/photo", post_photo)
 app.router.add_get("/img/{name}", get_img)
+app.router.add_get("/api/pictures", get_pictures)
 app.router.add_post("/api/profile_ai", post_profile_ai)
 app.router.add_get("/api/zone_suggest", get_zone_suggest)
 app.router.add_post("/api/settings", post_settings)

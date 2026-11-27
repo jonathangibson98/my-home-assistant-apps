@@ -63,6 +63,16 @@ input[type=checkbox]{width:22px;height:22px}
 .hint{font-size:12px;color:var(--dim);margin-top:6px}
 .bday{background:var(--card);border-radius:10px;padding:10px 12px;margin-top:10px;font-size:14px}
 h1{font-size:20px;margin:0 0 4px}
+.sheetbk{position:absolute;inset:0;background:rgba(0,0,0,.6)}
+#picov{position:fixed;inset:0;z-index:30;display:flex;align-items:flex-end;justify-content:center}
+#picov .sheet{position:relative;width:100%;max-width:560px;max-height:86vh;overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:18px 18px 0 0;padding:16px 14px calc(18px + env(safe-area-inset-bottom,0px))}
+#picov h3{margin:0 0 2px;font-size:18px}
+#picov .pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:8px;margin-top:8px}
+.po{display:flex;flex-direction:column;align-items:center;gap:4px;background:rgba(255,255,255,.05);border:2px solid transparent;border-radius:12px;padding:8px 4px;color:var(--txt);min-width:0}
+.po.on{border-color:var(--acc)}.po .avatar{width:56px;height:56px;margin:0;font-size:18px}
+.po small{font-size:11px;color:var(--dim);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.psec{font-size:12px;color:var(--dim);font-weight:700;margin:16px 0 0;letter-spacing:.02em}
+label.upl{display:inline-block;cursor:pointer;background:var(--acc);color:#fff;border-radius:10px;padding:10px 16px;font-size:14px;font-weight:700}
 .rel{border:1px solid var(--line,rgba(255,255,255,.14));border-radius:14px;padding:10px;margin:8px 0}.rel .top{display:flex;gap:10px;align-items:center;margin-bottom:6px}.rel .top b{flex:1}.rel select,.rel input{margin:3px 0}.people{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
 .person{background:var(--card);border-radius:12px;padding:14px 10px;text-align:center;cursor:pointer;border:1px solid transparent;min-width:0}
 .person:hover,.person:focus-visible{border-color:var(--acc)}
@@ -1036,7 +1046,7 @@ async function fillEveryone(btn, action = 'fill') {
 let SCHEMA = [], PERSON = null;
 const PICS = {};  // pictures just uploaded, until the page is reloaded
 const initial = n => (String(n || '?').trim()[0] || '?').toUpperCase();
-const isUrl = v => /^(https?:\/\/|\/)/.test(v);
+const isUrl = v => /^(https?:\/\/|\/)\S+$/.test(String(v || '').trim());
 const emptyVal = v => v === '' || v == null || v === false || (Array.isArray(v) && !v.length);
 
 function avatar(url, name, size) {
@@ -1071,27 +1081,61 @@ function shrink(file, max) {
     i.src = u;
   });
 }
-function photoRow(kind, key, obj) {
+function closePicSheet() { const o = document.getElementById('picov'); if (o) o.remove(); }
+// a sheet to pick a picture: automatic, upload, a link, Home Assistant people, and the images in your www folder
+async function openPicSheet(kind, key, obj) {
+  closePicSheet();
+  const cur = String(obj.photo || ''), name = kind === 'person' ? ((D.household[key] || D.friends[key] || {}).name || key) : ((D.places[key] || {}).name || key);
+  const msg = h('div'), grids = h('div', {}, h('div', {className: 'note', textContent: 'Loading pictures…'}));
+  const choose = (value, ui) => {
+    if (value) { obj.photo = value; if (ui) PICS[kind + '_' + key] = ui; } else delete obj.photo;
+    touch(); closePicSheet(); draw();
+  };
+  const fail = t => msg.replaceChildren(h('div', {className: 'note', style: 'color:var(--bad,#f87171)', textContent: t}));
   const file = h('input', {type: 'file', accept: 'image/*', hidden: true});
   file.onchange = async () => {
     const f = file.files[0];
     if (!f) return;
-    status('Preparing the picture...');
+    msg.replaceChildren(h('div', {className: 'note', textContent: 'Preparing the picture…'}));
     try {
       const blob = await shrink(f, 512);
       const r = await (await fetch('api/photo?kind=' + kind + '&key=' + encodeURIComponent(key),
         {method: 'POST', headers: {'Content-Type': blob.type}, body: blob})).json();
-      if (!r.ok) { status(r.error || 'Could not save the picture.', 'bad'); return; }
-      obj.photo = r.name; PICS[kind + '_' + key] = r.ui; touch(); draw();
-    } catch (e) { status('That picture could not be used.', 'bad'); }
+      if (!r.ok) { fail(r.error || 'Could not save the picture.'); return; }
+      choose(r.name, r.ui);
+    } catch (e) { fail('That picture could not be used.'); }
   };
-  return h('div', {className: 'add photorow'}, file,
-    h('button', {textContent: obj.photo ? 'Change picture' : 'Add a picture', onclick: () => file.click()}),
-    h('button', {textContent: 'Use a link', onclick: () => {
-      const u = prompt('Link to a picture (starts with https://)', isUrl(String(obj.photo || '')) ? obj.photo : '');
-      if (u && isUrl(u.trim())) { obj.photo = u.trim(); touch(); draw(); }
-    }}),
-    obj.photo ? h('button', {className: 'del', textContent: 'Remove picture', onclick: () => { delete obj.photo; touch(); draw(); }}) : null);
+  const link = h('input', {type: 'text', placeholder: 'or paste a picture link', autocapitalize: 'none', value: isUrl(cur) && !cur.startsWith('/local/') ? cur : ''});
+  const tile = (value, label, thumb, ui) => h('button', {className: 'po' + (value === cur ? ' on' : ''), onclick: () => choose(value, ui || thumb)},
+    h('div', {className: 'avatar'}, thumb ? h('img', {src: thumb, alt: '', loading: 'lazy', onerror: e => e.target.remove()}) : h('b', {textContent: 'auto'})),
+    h('small', {textContent: label}));
+  const ov = h('div', {id: 'picov'}, h('div', {className: 'sheetbk', onclick: closePicSheet}),
+    h('div', {className: 'sheet'},
+      h('h3', {textContent: 'Picture for ' + name}), h('div', {className: 'note', textContent: 'Tap one to use it. You can change it any time.'}), msg,
+      h('div', {className: 'add'}, h('label', {className: 'upl'}, 'Upload from this device', file)),
+      h('div', {style: 'display:flex;gap:8px;align-items:center;margin-top:10px'}, link, h('button', {style: 'flex:none', textContent: 'Use link', onclick: () => {
+        const u = link.value.trim();
+        if (!isUrl(u)) { fail('Paste a link that starts with https://'); return; }
+        choose(u);
+      }})),
+      grids, h('div', {className: 'add'}, h('button', {textContent: 'Close', onclick: closePicSheet}))));
+  document.body.append(ov);
+  let data = {people: [], images: [], www_ok: true};
+  try { data = await (await fetch('api/pictures')).json(); } catch (e) { fail('Could not load your pictures.'); }
+  if (!document.getElementById('picov')) return;
+  const live = kind === 'person' ? ((LIVE.people || {})[key] || {}).picture : '';
+  grids.replaceChildren(
+    h('div', {className: 'psec', textContent: 'AUTOMATIC'}), h('div', {className: 'pgrid'}, tile('', 'Automatic', '')),
+    h('div', {className: 'note', textContent: kind === 'person' ? 'Automatic uses the picture on their Home Assistant person, if they have one.' : 'Automatic means no picture.'}),
+    ...(data.people.length ? [h('div', {className: 'psec', textContent: 'HOME ASSISTANT PEOPLE'}), h('div', {className: 'pgrid'}, ...data.people.map(p => tile(p.url, p.name, p.url)))] : []),
+    h('div', {className: 'psec', textContent: 'YOUR IMAGES'}),
+    data.images.length ? h('div', {className: 'pgrid'}, ...data.images.map(i => tile(i.value, i.name.split('/').pop(), i.url)))
+      : h('div', {className: 'note', textContent: data.www_ok ? 'No pictures in your www folder yet. Upload one above.' : 'The add-on cannot see your Home Assistant config folder yet. Update and restart the add-on.'}));
+}
+
+function photoRow(kind, key, obj) {
+  return h('div', {className: 'add photorow'},
+    h('button', {textContent: obj.photo ? 'Change picture' : 'Add a picture', onclick: () => openPicSheet(kind, key, obj)}));
 }
 
 function people() {
